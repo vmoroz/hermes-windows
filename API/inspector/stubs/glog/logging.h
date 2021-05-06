@@ -13,25 +13,25 @@
 #define CHECK_GE(a, b) !(a >= b) && GlogStub::LogMessageFatal{}.stream()
 #define DCHECK(b) !(b) && GlogStub::LogMessageFatal{}.stream()
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_LT(v1, v2) CHECK((v1) < (v2))
 #else
 #define DCHECK_LT(v1, v2)
 #endif
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_GT(v1, v2) CHECK((v1) > (v2))
 #else
 #define DCHECK_GT(v1, v2)
 #endif
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_LE(v1, v2) CHECK((v1) <= (v2))
 #else
 #define DCHECK_LE(v1, v2)
 #endif
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_GE(v1, v2) CHECK((v1) >= (v2))
 #else
 #define DCHECK_GE(v1, v2)
@@ -39,13 +39,13 @@
 
 #define CHECK_EQ(v1, v2) CHECK((v1) == (v2))
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_EQ(v1, v2) CHECK((v1) == (v2))
 #else
-#define DCHECK_EQ(v1, v2) GlogStub::LogMessageFatal{}.stream()
+#define DCHECK_EQ(v1, v2) GlogStub::GetNullLog()
 #endif
 
-#ifdef DEBUG
+#ifdef _DEBUG
 #define DCHECK_NE(v1, v2) CHECK((v1) != (v2))
 #else
 #define DCHECK_NE(v1, v2)
