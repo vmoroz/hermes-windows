@@ -284,14 +284,15 @@ echo $FOLLY_BUILTINS_H
 $RN_INSPECTORINTERFACES_H="$RN_DIR/ReactCommon/jsinspector/InspectorInterfaces.h"
 # $RN_INSPECTORINTERFACES_H="E:\github\hermes-windows\hermes-windows\workspace\react-native-clone\react-native\ReactCommon\jsinspector\InspectorInterfaces.h"
 echo $RN_INSPECTORINTERFACES_H
-(Get-Content -path $RN_INSPECTORINTERFACES_H) -replace("extern IInspector &getInspectorInstance", "extern __declspec(dllexport) IInspector &getInspectorInstance") | Set-Content -Path $RN_INSPECTORINTERFACES_H
+(Get-Content -path $RN_INSPECTORINTERFACES_H) -replace("extern IInspector &getInspectorInstance", "extern __declspec(dllexport) IInspector& __cdecl getInspectorInstance") | Set-Content -Path $RN_INSPECTORINTERFACES_H
 
 # E:\github\hermes-windows\hermes-windows\workspace\react-native-clone\react-native\ReactCommon\hermes\inspector\chrome\Registration.h
 # extern void enableDebugging(
 # extern __declspec(dllexport) void enableDebugging(
 $RN_INSPECTOR_REGISTRATION_H="$RN_DIR/ReactCommon/hermes/inspector/chrome/Registration.h"
 echo $RN_INSPECTOR_REGISTRATION_H
-(Get-Content -path $RN_INSPECTOR_REGISTRATION_H) -replace("extern void enableDebugging", "extern __declspec(dllexport) void enableDebugging") | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H
+(Get-Content -path $RN_INSPECTOR_REGISTRATION_H) -replace("extern void enableDebugging", "extern __declspec(dllexport) void __cdecl enableDebugging") | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H
+(Get-Content -path $RN_INSPECTOR_REGISTRATION_H) -replace("extern void disableDebugging", "extern __declspec(dllexport) void __cdecl disableDebugging") | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H
 
 
 echo $FOLLY_DIR
