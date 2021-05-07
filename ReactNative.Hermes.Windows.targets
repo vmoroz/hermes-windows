@@ -16,7 +16,7 @@
       <DelayLoadDLLs>%(DelayLoadDLLs);hermes.dll;hermesinspector.dll</DelayLoadDLLs>
     </Link>
     <ClCompile>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include\hermesinspector;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)include</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup Condition="'$(Configuration)' == 'Debug' And '$(HermesNoDLLCopy)' == ''">
