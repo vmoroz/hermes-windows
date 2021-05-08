@@ -3,16 +3,24 @@ param(
     [string]$WorkSpacePath = "$SourcesPath\workspace",
     [string]$OutputPath = "$WorkSpacePath\out",
     [bool]$NoSetup = $False,
+    
     [ValidateSet("x64", "x86", "arm", "arm64")]
     [String[]]$Platform = @("x64"),
+
+    [ValidateSet("x64", "x86", "arm", "arm64")]
+    [String]$ToolsPlatform = @("x86"), # Platform used for building tools when cross compiling
+    
+    [ValidateSet("debug", "release")]
+    [String]$ToolsConfiguration = @("release"), # Platform used for building tools when cross compiling
+    
     [ValidateSet("debug", "release")]
     [String[]]$Configuration = @("debug"),
+    
     [ValidateSet("win32", "uwp")]
     [String[]]$AppPlatform = ("win32", "uwp"),
-    [switch]$ToolsBuild,
-    [switch]$CompilerBuild,
-    [switch]$DllBuild,
-    [switch]$TestBuild
+    
+    [switch]$RunTests,
+    [switch]$Incremental
 )
 
 function Find-Path($exename) {
@@ -95,122 +103,172 @@ function Invoke-Environment($Command, $arg) {
     }}
 }
 
-function Run-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR) {
-    $Triplet = "$AppPlatform-$Platform-$Configuration"
-    $compilerPath =Join-Path $SourcesPath "build\hermesc"
-    if ($CompilerBuild.IsPresent) {
-        Write-Host "Building hermes compiler for cross compilation ..."
-        $buildPath = $compilerPath
-    } else {
-        Write-Host "Building $Triplet..."
-        $buildPath = Join-Path $SourcesPath "build\$Triplet"
+function get-CommonArgs($Platform, $Configuration, $AppPlatform, [ref]$genArgs) {
+    # $genArgs.Value += '-G'
+    $genArgs.Value += 'Ninja'
+
+    $genArgs.Value += ('-DPYTHON_EXECUTABLE={0}' -f $PYTHON_PATH)
+    $genArgs.Value += ('-DCMAKE_BUILD_TYPE={0}' -f (Get-CMakeConfiguration $Configuration))
+
+    $genArgs.Value += '-DHERMESVM_PLATFORM_LOGGING=On'
+
+    # 32-bit (ARM, x86) debug builds are failing with Hades GC !
+    # This is a temporary fix to unblock RN65 snapshot.
+    $genArgs.Value += "-DHERMESVM_GCKIND=NONCONTIG_GENERATIONAL"
+}
+
+function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $incrementalBuild) {
+
+    if (!$incrementalBuild -and (Test-Path -Path $buildPath)) {
+        Remove-Item $buildPath -Recurse -ErrorAction Ignore
     }
     
-    # Flag useful for developement/debugging
-    $skipBuild = $False
-    $reuseCompilerBuilds = $True;
+    New-Item -ItemType "directory" -Path $buildPath -ErrorAction Ignore | Out-Null
+    Push-Location $buildPath
 
-    if(!$skipBuild) {
-        if ($CompilerBuild.IsPresent) {
-            if(!$reuseCompilerBuilds) {
-                if (Test-Path -Path $compilerPath) {
-                    Remove-Item $compilerPath -Recurse -ErrorAction Ignore
-                }
-            }
-            New-Item -ItemType "directory" -Path $compilerPath -ErrorAction Ignore | Out-Null
-            Push-Location $compilerPath
-        } else {
+    $genCall = ('cmake {0}' -f ($genArgs -Join ' ')) + " $SourcesPath";
+    Write-Host $genCall
+    $ninjaCmd = "ninja"
 
-            if ((Test-Path -Path $buildPath)) {
-                Remove-Item $buildPath -Recurse -ErrorAction Ignore
-            }
+    foreach ( $target in $targets )
+    {
+        $ninjaCmd = $ninjaCmd + " " + $target
+    }
 
-            New-Item -ItemType "directory" -Path $buildPath | Out-Null
-            Push-Location $buildPath
-        }
+    echo $ninjaCmd
 
-        $genArgs = @('-G')
-        $genArgs += 'Ninja'
+    # See https://developercommunity.visualstudio.com/content/problem/257260/vcvarsallbat-reports-the-input-line-is-too-long-if.html
+    $Bug257260 = $false
 
-        $genArgs += ('-DPYTHON_EXECUTABLE={0}' -f $PYTHON_PATH)
-        $genArgs += ('-DCMAKE_BUILD_TYPE={0}' -f (Get-CMakeConfiguration $Configuration))
-        $genArgs += '-DHERMES_ENABLE_DEBUGGER=On'
-        $genArgs += '-DHERMESVM_PLATFORM_LOGGING=On'
+    if ($Bug257260) {
+        Invoke-Environment $VCVARS_PATH (Get-VCVarsParam $Platform $AppPlatform)
+        Invoke-Expression $genCall
+        ninja $ninjaCmd
+    } else {
+        cmd /c "`"$VCVARS_PATH`" $(Get-VCVarsParam $Platform $AppPlatform) && $genCall 2>&1 && ${ninjaCmd}"
+    }
+
+    Pop-Location
+}
+
+function Invoke-Compiler-Build($SourcesPath, $buildPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR, $incrementalBuild) {
+    $genArgs = @('-G');
+    get-CommonArgs $Platform $Configuration $AppPlatform ([ref]$genArgs)
+
+    $genArgs += "-DREACT_NATIVE_SOURCE=$RNDIR"
+    $genArgs += "-DFOLLY_SOURCE=$FOLLYDIR"
+    $genArgs += "-DBOOST_SOURCE=$BOOSTDIR"
+
+    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('hermes','hermesc') $$incrementalBuild
+    Pop-Location
+}
+
+function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR, $incrementalBuild, $WithHermesDebugger) {
+    $genArgs = @('-G');
+    get-CommonArgs $Platform $Configuration $AppPlatform ([ref]$genArgs)
+
+    $targets = @('libhermes');
+
+    if($WithHermesDebugger) {
+        $genArgs += '-DHERMES_ENABLE_DEBUGGER=ON'
 
         $genArgs += "-DREACT_NATIVE_SOURCE=$RNDIR"
         $genArgs += "-DFOLLY_SOURCE=$FOLLYDIR"
         $genArgs += "-DBOOST_SOURCE=$BOOSTDIR"
 
-        # 32-bit (ARM, x86) debug builds are failing with Hades GC !
-        # This is a temporary fix to unblock RN65.
-        $genArgs += "-DHERMESVM_GCKIND=NONCONTIG_GENERATIONAL"
-      
-        if ($AppPlatform -eq "uwp") {
-            $genArgs += '-DCMAKE_CXX_STANDARD=17'
-            $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
-            $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.15063"'
-            $genArgs += "-DIMPORT_HERMESC=$compilerPath\ImportHermesc.cmake"
-        }
-        
-        $genCall = ('cmake {0}' -f ($genArgs -Join ' ')) + " $SourcesPath";
-
-        Write-Host $genCall
-
-        $ninjaCmd = "ninja"
-            
-        if ($ToolsBuild.IsPresent) {
-            $ninjaCmd = $ninjaCmd + " hermes"
-        }
-        
-        if ($DllBuild.IsPresent) {
-            $ninjaCmd = $ninjaCmd + " libhermes hermesinspector"
-        }
-        
-        if ($TestBuild.IsPresent) {
-            $ninjaCmd = $ninjaCmd + " check-hermes"
-        }
-
-        if ($CompilerBuild.IsPresent) {
-            $ninjaCmd = $ninjaCmd + " hermesc"
-        }
-
-        # else build everything
-
-        echo $ninjaCmd
-
-        # See https://developercommunity.visualstudio.com/content/problem/257260/vcvarsallbat-reports-the-input-line-is-too-long-if.html
-        $Bug257260 = $false
-
-        if ($Bug257260) {
-            Invoke-Environment $VCVARS_PATH (Get-VCVarsParam $Platform $AppPlatform)
-            Invoke-Expression $genCall
-            ninja $ninjaCmd
-        } else {
-            cmd /c "`"$VCVARS_PATH`" $(Get-VCVarsParam $Platform $AppPlatform) && $genCall 2>&1 && ${ninjaCmd}"
-        }
+        $targets += 'hermesinspector'
+    } else {
+        $genArgs += '-DHERMES_ENABLE_DEBUGGER=OFF'
     }
 
-    # Now copy the needed build outputs        
-    if ($DllBuild.IsPresent) {
-        if (!(Test-Path -Path "$OutputPath\lib\$AppPlatform\$Configuration\$Platform")) {
-            New-Item -ItemType "directory" -Path "$OutputPath\lib\$AppPlatform\$Configuration\$Platform" | Out-Null
-        }
-
-        Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination "$OutputPath\lib\$AppPlatform\$Configuration\$Platform"
-        Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination "$OutputPath\lib\$AppPlatform\$Configuration\$Platform"
-
-        Copy-Item "$buildPath\API\inspector\hermesinspector.dll" -Destination "$OutputPath\lib\$AppPlatform\$Configuration\$Platform"
-        Copy-Item "$buildPath\API\inspector\hermesinspector.lib" -Destination "$OutputPath\lib\$AppPlatform\$Configuration\$Platform"
+    if ($AppPlatform -eq "uwp") {
+        $genArgs += '-DCMAKE_CXX_STANDARD=17'
+        $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
+        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.15063"'
+        $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 
-    if ($ToolsBuild.IsPresent) {
-        $toolsPath = "$OutputPath\tools\$Configuration\$Platform"
-        if (!(Test-Path -Path $toolsPath)) {
-            New-Item -ItemType "directory" -Path $toolsPath | Out-Null
-        }
+    Invoke-BuildImpl $SourcesPath $buildPath $genArgs $targets $incrementalBuild
+}
+
+function Invoke-Test-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform,  $incrementalBuild) {
+    $genArgs = "";
+    get-CommonArgs([ref]$genArgs)
+
+    $genArgs += '-DHERMES_ENABLE_DEBUGGER=On'
+
+    if ($AppPlatform -eq "uwp") {
+        $genArgs += '-DCMAKE_CXX_STANDARD=17'
+        $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
+        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.15063"'
+        $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
+    }
+
+    Invoke-Build($SourcesPath, $buildPath, $genArgs, @('check-hermes')) $incrementalBuild
+}
+
+function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR) {
+
+    Write-Host "Invoke-Build called with SourcesPath: " $SourcesPath ", OutputPath: " $OutputPath ", Platform: " $Platform ", Configuration: " $Configuration ", AppPlatform: " $AppPlatform ", RNDIR: " $RNDIR ", FOLLYDIR: " $FOLLYDIR ", BOOSTDIR: " $BOOSTDIR
+    $Triplet = "$AppPlatform-$Platform-$Configuration"
+    $compilerAndToolsBuildPath = Join-Path $SourcesPath "build\tools"
+    $compilerPath = Join-Path $compilerAndToolsBuildPath "bin\hermesc.exe"
     
-        Copy-Item "$buildPath\bin\hermes.exe" -Destination $toolsPath
+    # Build compiler if it doesn't exist (To be precise, we need it only for when building for uwp i.e. cross compilation !). 
+    if (!(Test-Path -Path $compilerPath)) {
+        Invoke-Compiler-Build $SourcesPath $compilerAndToolsBuildPath $toolsPlatform $toolsConfiguration "win32" $RNDIR $FOLLYDIR $BOOSTDIR $True
     }
+    
+    $buildPath = Join-Path $SourcesPath "build\$Triplet"
+    $buildPathWithDebugger = Join-Path $buildPath "withdebugger"
+    
+    if ($Configuration -eq "release") {
+        $WithHermesDebugger = $False
+        Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
+
+        $WithHermesDebugger = $True
+        $buildPath2 = Join-Path $buildPath "withdebugger"
+        Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
+    }
+    
+
+    if ($RunTests.IsPresent) {
+        Invoke-Test-Build($SourcesPath, $buildPath, $Platform, $Configuration, $AppPlatform);
+    }
+    
+    $finalOutputPath = "$OutputPath\lib\$AppPlatform\$Configuration\$Platform";
+    if (!(Test-Path -Path $finalOutputPath)) {
+        New-Item -ItemType "directory" -Path $finalOutputPath | Out-Null
+    }
+
+    Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
+    Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
+
+    if (!($Configuration -eq "release")) {
+        Copy-Item "$buildPath\API\inspector\hermesinspector.dll" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPath\API\inspector\hermesinspector.lib" -Destination $finalOutputPath -force | Out-Null
+    }
+
+    if ($Configuration -eq "release") {
+
+        $finalOutputPathWithDebugger = Join-Path $finalOutputPath "withdebugger"
+        if (!(Test-Path -Path $finalOutputPathWithDebugger)) {
+            New-Item -ItemType "directory" -Path $finalOutputPathWithDebugger | Out-Null
+        }
+
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
+
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
+    }
+
+    $toolsPath = "$OutputPath\tools\$toolsConfiguration\$toolsPlatform"
+    if (!(Test-Path -Path $toolsPath)) {
+        New-Item -ItemType "directory" -Path $toolsPath | Out-Null
+    }
+
+    Copy-Item "$compilerAndToolsBuildPath\bin\hermes.exe" -Destination $toolsPath
 
     Pop-Location
 }
@@ -238,7 +296,6 @@ pushd $WorkSpacePath
 $FOLLY_DIR="$WorkSpacePath\folly_src\folly-2020.01.13.00\".Replace("\", "/")
 $BOOST_DIR="$WorkSpacePath\boost.1.72.0.0\".Replace("\", "/")
 $RN_DIR="$WorkSpacePath\react-native-clone\react-native\\".Replace("\", "/")
-
 
 if(!$NoSetup) {
 
@@ -342,7 +399,7 @@ Copy-Item "$RN_DIR\ReactCommon\hermes\inspector\chrome\*.h" -Destination "$Outpu
 foreach ($Plat in $Platform) {
     foreach ($Config in $Configuration) {
         foreach ($AppPlat in $AppPlatform) {
-            Run-Build -SourcesPath $SourcesPath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlat -RNDIR $RN_DIR -FOLLYDIR $FOLLY_DIR -BOOSTDIR $BOOST_DIR
+            Invoke-Build -SourcesPath $SourcesPath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlat -RNDIR $RN_DIR -FOLLYDIR $FOLLY_DIR -BOOSTDIR $BOOST_DIR
         }
     }
 }
