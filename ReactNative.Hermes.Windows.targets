@@ -10,13 +10,18 @@
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Debug'">%(AdditionalLibraryDirectories);$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\debug\$(HermesPlatform)</AdditionalLibraryDirectories>
-      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Release'">%(AdditionalLibraryDirectories);$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>%(AdditionalDependencies);hermes.lib;hermesinspector.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' == 'false'">%(AdditionalLibraryDirectories);$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">%(AdditionalLibraryDirectories);$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)\withdebugger\</AdditionalLibraryDirectories>
+      <AdditionalDependencies>%(AdditionalDependencies);hermes.lib;</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)' == 'Debug' Or '$(EnableHermesInspectorInReleaseFlavor)' == 'true'" >%(AdditionalDependencies);hermesinspector.lib</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(HermesAppPlatform)' == 'uwp'">%(AdditionalDependencies);dloadhelper.lib</AdditionalDependencies>
-      <DelayLoadDLLs>%(DelayLoadDLLs);hermes.dll;hermesinspector.dll</DelayLoadDLLs>
+      <DelayLoadDLLs>%(DelayLoadDLLs);hermes.dll</DelayLoadDLLs>
+      <DelayLoadDLLs Condition="'$(Configuration)' == 'Debug' Or '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">%(DelayLoadDLLs);hermesinspector.dll</DelayLoadDLLs>
     </Link>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include\hermesinspector;%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)' == 'Debug' Or '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">$(MSBuildThisFileDirectory)include\hermesinspector;%(AdditionalIncludeDirectories);</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(Configuration)' == 'Debug' Or '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">HERMES_ENABLE_DEBUGGER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup Condition="'$(Configuration)' == 'Debug' And '$(HermesNoDLLCopy)' == ''">
@@ -25,6 +30,8 @@
   </ItemGroup>
   <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(HermesNoDLLCopy)' == ''">
     <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)\hermes.dll" />
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)\hermesinspector.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(HermesNoDLLCopy)' == '' And '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">
+    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\$(HermesAppPlatform)\release\$(HermesPlatform)\withdebugger\hermesinspector.dll" />
   </ItemGroup>
 </Project>
