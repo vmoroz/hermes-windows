@@ -229,6 +229,9 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
         $WithHermesDebugger = $True
         $buildPath2 = Join-Path $buildPath "withdebugger"
         Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
+    } else {
+        $WithHermesDebugger = $True
+        Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
     }
     
 
