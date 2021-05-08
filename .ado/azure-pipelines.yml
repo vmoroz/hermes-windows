@@ -13,7 +13,6 @@ jobs:
   - job: HermesBuildAll
     timeoutInMinutes: 90
     displayName: (PR) Build the Hermes binary for supported architectures and flavors
-    enabled: false
     strategy:
       matrix:
         DebugX64:
@@ -44,6 +43,7 @@ jobs:
     steps:
       - task: PowerShell@2
         displayName: Run the build script
+        enabled: false
         inputs:
           targetType: filePath
           filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
