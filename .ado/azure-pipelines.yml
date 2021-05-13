@@ -11,8 +11,8 @@ pool:
 
 jobs:
   - job: HermesBuildAll
-    timeoutInMinutes: 50
-    displayName: Build the Hermes binary for supported architectures and flavors
+    timeoutInMinutes: 90
+    displayName: (PR) Build the Hermes binary for supported architectures and flavors
     strategy:
       matrix:
         DebugX64:
@@ -42,30 +42,18 @@ jobs:
 
     steps:
       - task: PowerShell@2
-        displayName: Build Hermes Compiler
-        inputs:
-          targetType: filePath
-          filePath: $(Build.SourcesDirectory)\cibuild.ps1
-          arguments:
-            -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
-            -Platform:x86
-            -Configuration:Release
-            -AppPlatform:win32
-            -CompilerBuild
-
-      - task: PowerShell@2
         displayName: Run the build script
+        enabled: false
         inputs:
           targetType: filePath
-          filePath: $(Build.SourcesDirectory)\cibuild.ps1
+          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
           arguments:
             -SourcesPath:$(Build.SourcesDirectory)
             -OutputPath:$(Build.ArtifactStagingDirectory)
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
-
+      
       - task: PublishBuildArtifacts@1
         displayName: "Publish artifacts"
         inputs:
@@ -73,8 +61,8 @@ jobs:
           pathtoPublish: $(Build.ArtifactStagingDirectory)
 
   - job: HermesBuildForPublish
-    timeoutInMinutes: 50
-    displayName: Build the Hermes binary for supported architectures and flavors
+    timeoutInMinutes: 90
+    displayName: (Publish) Build the Hermes binary for supported architectures and flavors
     strategy:
       matrix:
         DebugX64:
@@ -98,43 +86,16 @@ jobs:
 
     steps:
       - task: PowerShell@2
-        displayName: Build Hermes Compiler
+        displayName: Run the build script for publish
         inputs:
           targetType: filePath
-          filePath: $(Build.SourcesDirectory)\cibuild.ps1
-          arguments:
-            -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
-            -Platform:x86
-            -Configuration:Release
-            -AppPlatform:win32
-            -CompilerBuild
-
-      - task: PowerShell@2
-        displayName: Run the build script
-        inputs:
-          targetType: filePath
-          filePath: $(Build.SourcesDirectory)\cibuild.ps1
+          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
           arguments:
             -SourcesPath:$(Build.SourcesDirectory)
             -OutputPath:$(Build.ArtifactStagingDirectory)
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
-            -DllBuild
-
-      - task: PowerShell@2
-        displayName: Build Hermes Win32 CLI executable
-        inputs:
-          targetType: filePath
-          filePath: $(Build.SourcesDirectory)\cibuild.ps1
-          arguments:
-            -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
-            -Platform:x86
-            -Configuration:release
-            -AppPlatform:win32
-            -ToolsBuild
 
       - task: PublishBuildArtifacts@1
         displayName: "Publish artifacts"

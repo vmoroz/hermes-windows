@@ -18,6 +18,7 @@ buck-out
 
 # Win
 out
+workspace
 
 # CocoaPods testing
 build
