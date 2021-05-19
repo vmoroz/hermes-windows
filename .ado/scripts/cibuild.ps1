@@ -119,10 +119,6 @@ function get-CommonArgs($Platform, $Configuration, $AppPlatform, [ref]$genArgs) 
     $genArgs.Value += ('-DCMAKE_BUILD_TYPE={0}' -f (Get-CMakeConfiguration $Configuration))
 
     $genArgs.Value += '-DHERMESVM_PLATFORM_LOGGING=On'
-
-    # 32-bit (ARM, x86) debug builds are failing with Hades GC !
-    # This is a temporary fix to unblock RN65 snapshot.
-    #  $genArgs.Value += "-DHERMESVM_GCKIND=NONCONTIG_GENERATIONAL"
 }
 
 function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $incrementalBuild, $Platform, $Configuration, $AppPlatform) {
