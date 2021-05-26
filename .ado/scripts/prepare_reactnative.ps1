@@ -36,12 +36,12 @@ Pop-Location
 # extern IInspector &getInspectorInstance();
 # extern __declspec(dllexport) IInspector &getInspectorInstance();
 $RN_INSPECTORINTERFACES_H="$RN_DIR/ReactCommon/jsinspector/InspectorInterfaces.h"
-(Get-Content -path $RN_INSPECTORINTERFACES_H  | Out-Null) -Replace "extern IInspector &getInspectorInstance", "extern __declspec(dllexport) IInspector& __cdecl getInspectorInstance" | Set-Content -Path $RN_INSPECTORINTERFACES_H | Out-Null
+(Get-Content -path $RN_INSPECTORINTERFACES_H ) -Replace "extern IInspector &getInspectorInstance", "extern __declspec(dllexport) IInspector& __cdecl getInspectorInstance" | Set-Content -Path $RN_INSPECTORINTERFACES_H | Out-Null
 
 # extern void enableDebugging(
 # extern __declspec(dllexport) void enableDebugging(
 $RN_INSPECTOR_REGISTRATION_H="$RN_DIR/ReactCommon/hermes/inspector/chrome/Registration.h"
-(Get-Content -path $RN_INSPECTOR_REGISTRATION_H  | Out-Null) -Replace "extern void enableDebugging", "extern __declspec(dllexport) void __cdecl enableDebugging" | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H | Out-Null
-(Get-Content -path $RN_INSPECTOR_REGISTRATION_H  | Out-Null) -Replace "extern void disableDebugging", "extern __declspec(dllexport) void __cdecl disableDebugging" | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H | Out-Null
+(Get-Content -path $RN_INSPECTOR_REGISTRATION_H) -Replace "extern void enableDebugging", "extern __declspec(dllexport) void __cdecl enableDebugging" | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H | Out-Null
+(Get-Content -path $RN_INSPECTOR_REGISTRATION_H) -Replace "extern void disableDebugging", "extern __declspec(dllexport) void __cdecl disableDebugging" | Set-Content -Path $RN_INSPECTOR_REGISTRATION_H | Out-Null
 
 return $RN_DIR
