@@ -25,16 +25,29 @@ jobs:
     steps:
       - task: PowerShell@2
         displayName: Run the build script for uwp
-        enabled: false
+        enabled: true
         inputs:
           targetType: filePath
           filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
           arguments:
             -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
+            -OutputPath:$(Build.ArtifactStagingDirectory)\uwp
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
+
+      - task: PowerShell@2
+        displayName: Run the build script for uwp
+        enabled: true
+        inputs:
+          targetType: filePath
+          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
+          arguments:
+            -SourcesPath:$(Build.SourcesDirectory)
+            -OutputPath:$(Build.ArtifactStagingDirectory)\win32
+            -Platform:$(BuildPlatform)
+            -Configuration:$(BuildConfiguration)
+            -AppPlatform:win32
 
 
       - task: PublishBuildArtifacts@1
