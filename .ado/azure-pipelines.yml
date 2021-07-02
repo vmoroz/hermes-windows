@@ -21,39 +21,52 @@ jobs:
         DebugX86:
           BuildConfiguration: debug
           BuildPlatform: x86
-        DebugARM:
-          BuildConfiguration: debug
-          BuildPlatform: arm
-        DebugARM64:
-          BuildConfiguration: debug
-          BuildPlatform: arm64
-        ReleaseX64:
-          BuildConfiguration: release
-          BuildPlatform: x64
-        ReleaseX86:
-          BuildConfiguration: release
-          BuildPlatform: x86
-        ReleaseARM:
-          BuildConfiguration: release
-          BuildPlatform: arm
-        ReleaseARM64:
-          BuildConfiguration: release
-          BuildPlatform: arm64
+        # DebugARM:
+        #   BuildConfiguration: debug
+        #   BuildPlatform: arm
+        # DebugARM64:
+        #   BuildConfiguration: debug
+        #   BuildPlatform: arm64
+        # ReleaseX64:
+        #   BuildConfiguration: release
+        #   BuildPlatform: x64
+        # ReleaseX86:
+        #   BuildConfiguration: release
+        #   BuildPlatform: x86
+        # ReleaseARM:
+        #   BuildConfiguration: release
+        #   BuildPlatform: arm
+        # ReleaseARM64:
+        #   BuildConfiguration: release
+        #   BuildPlatform: arm64
 
     steps:
       - task: PowerShell@2
-        displayName: Run the build script
+        displayName: Run the build script for uwp
         enabled: false
         inputs:
           targetType: filePath
           filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
           arguments:
             -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
+            -OutputPath:$(Build.ArtifactStagingDirectory)\uwp
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
-      
+
+      - task: PowerShell@2
+        displayName: Run the build script for win32
+        enabled: false
+        inputs:
+          targetType: filePath
+          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
+          arguments:
+            -SourcesPath:$(Build.SourcesDirectory)
+            -OutputPath:$(Build.ArtifactStagingDirectory)\win32
+            -Platform:$(BuildPlatform)
+            -Configuration:$(BuildConfiguration)
+            -AppPlatform:win32
+
       - task: PublishBuildArtifacts@1
         displayName: "Publish artifacts"
         inputs:
@@ -96,6 +109,7 @@ jobs:
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
+            -TagSource
 
       - task: PublishBuildArtifacts@1
         displayName: "Publish artifacts"

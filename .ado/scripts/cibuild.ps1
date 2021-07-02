@@ -1,5 +1,5 @@
 param(
-    [string]$SourcesPath = "$PSScriptRoot\..",
+    [string]$SourcesPath = "$PSScriptRoot\..\..",
     [string]$WorkSpacePath = "$SourcesPath\workspace",
     [string]$OutputPath = "$WorkSpacePath\out",
     [bool]$NoSetup = $False,
@@ -17,10 +17,11 @@ param(
     [String[]]$Configuration = @("debug"),
     
     [ValidateSet("win32", "uwp")]
-    [String[]]$AppPlatform = ("win32", "uwp"),
+    [String]$AppPlatform = "uwp",
     
     [switch]$RunTests,
-    [switch]$Incremental
+    [switch]$Incremental,
+    [switch]$TagSource
 )
 
 function Find-Path($exename) {
@@ -159,7 +160,7 @@ function Invoke-Compiler-Build($SourcesPath, $buildPath, $Platform, $Configurati
     $genArgs += "-DFOLLY_SOURCE=$FOLLYDIR"
     $genArgs += "-DBOOST_SOURCE=$BOOSTDIR"
 
-    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('hermes','hermesc') $$incrementalBuild
+    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('hermes','hermesc') $incrementalBuild
     Pop-Location
 }
 
@@ -219,7 +220,7 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
         Invoke-Compiler-Build $SourcesPath $compilerAndToolsBuildPath $toolsPlatform $toolsConfiguration "win32" $RNDIR $FOLLYDIR $BOOSTDIR $True
     }
     
-    $buildPath = Join-Path $SourcesPath "build\$Triplet"
+    $buildPath = Join-Path $WorkSpacePath "build\$Triplet"
     $buildPathWithDebugger = Join-Path $buildPath "withdebugger"
     
     if ($Configuration -eq "release") {
@@ -239,7 +240,7 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
         Invoke-Test-Build($SourcesPath, $buildPath, $Platform, $Configuration, $AppPlatform);
     }
     
-    $finalOutputPath = "$OutputPath\lib\$AppPlatform\$Configuration\$Platform";
+    $finalOutputPath = "$OutputPath\lib\native\$Configuration\$Platform";
     if (!(Test-Path -Path $finalOutputPath)) {
         New-Item -ItemType "directory" -Path $finalOutputPath | Out-Null
     }
@@ -266,12 +267,17 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
         Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
     }
 
-    $toolsPath = "$OutputPath\tools\$toolsConfiguration\$toolsPlatform"
+    $toolsPath = "$OutputPath\tools\native\$toolsConfiguration\$toolsPlatform"
     if (!(Test-Path -Path $toolsPath)) {
         New-Item -ItemType "directory" -Path $toolsPath | Out-Null
     }
-
     Copy-Item "$compilerAndToolsBuildPath\bin\hermes.exe" -Destination $toolsPath
+
+    $flagsPath = "$OutputPath\build\flags\$Triplet"
+    if (!(Test-Path -Path $flagsPath)) {
+        New-Item -ItemType "directory" -Path $flagsPath | Out-Null
+    }
+    Copy-Item "$buildPath\build.ninja" -Destination $flagsPath -force | Out-Null
 
     Pop-Location
 }
@@ -401,9 +407,7 @@ Copy-Item "$RN_DIR\ReactCommon\hermes\inspector\chrome\*.h" -Destination "$Outpu
 
 foreach ($Plat in $Platform) {
     foreach ($Config in $Configuration) {
-        foreach ($AppPlat in $AppPlatform) {
-            Invoke-Build -SourcesPath $SourcesPath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlat -RNDIR $RN_DIR -FOLLYDIR $FOLLY_DIR -BOOSTDIR $BOOST_DIR
-        }
+        Invoke-Build -SourcesPath $SourcesPath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlatform -RNDIR $RN_DIR -FOLLYDIR $FOLLY_DIR -BOOSTDIR $BOOST_DIR
     }
 }
 
@@ -415,6 +419,11 @@ if (!(Test-Path -Path "$OutputPath\license")) {
 Copy-Item "$SourcesPath\LICENSE" -Destination "$OutputPath\license\" -force 
 Copy-Item "$SourcesPath\ReactNative.Hermes.Windows.targets" -Destination "$OutputPath\build\native\" -force
 
+if (!(Test-Path -Path "$OutputPath\build\netstandard1.0\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\build\netstandard1.0\" | Out-Null
+}
+Copy-Item "$SourcesPath\ReactNative.Hermes.Windows.Net.targets" -Destination "$OutputPath\build\netstandard1.0\ReactNative.Hermes.Windows.targets" -force
+
 # process version information
 
 $gitRevision = ((git rev-parse --short HEAD) | Out-String).Trim()
@@ -424,6 +433,11 @@ $npmPackage = (Get-Content (Join-Path $SourcesPath "npm\package.json") | Out-Str
 (Get-Content "$SourcesPath\ReactNative.Hermes.Windows.nuspec") -replace ('VERSION_DETAILS', "Hermes version: $npmPackage; Git revision: $gitRevision") | Set-Content "$OutputPath\ReactNative.Hermes.Windows.nuspec"
 
 $npmPackage | Set-Content "$OutputPath\version"
+if($TagSource.IsPresent) {
+    $tagName = "v$npmPackage"
+    $tagMessage = "Hermes build for react native for windows versioned $npmPackage"
+    git tag -a $tagName -m "$tagMessage"
+}
 
 $elapsedTime = $(get-date) - $StartTime
 
