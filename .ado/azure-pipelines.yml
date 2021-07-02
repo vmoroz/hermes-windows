@@ -25,7 +25,7 @@ jobs:
     steps:
       - task: PowerShell@2
         displayName: Run the build script for uwp
-        enabled: true
+        enabled: false
         inputs:
           targetType: filePath
           filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
@@ -38,7 +38,7 @@ jobs:
 
       - task: PowerShell@2
         displayName: Run the build script for uwp
-        enabled: true
+        enabled: false
         inputs:
           targetType: filePath
           filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
@@ -134,6 +134,7 @@ jobs:
           buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
           versioningScheme: byEnvVar
           versionEnvVar: Version
+          includeSymbols: true
 
       - task: PublishBuildArtifacts@1
         displayName: "Publish final nuget artifacts"

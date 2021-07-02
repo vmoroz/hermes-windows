@@ -247,10 +247,12 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
 
     Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
     Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
+    Copy-Item "$buildPath\API\hermes\hermes.pdb" -Destination $finalOutputPath -force | Out-Null
 
     if (!($Configuration -eq "release")) {
         Copy-Item "$buildPath\API\inspector\hermesinspector.dll" -Destination $finalOutputPath -force | Out-Null
         Copy-Item "$buildPath\API\inspector\hermesinspector.lib" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPath\API\inspector\hermesinspector.pdb" -Destination $finalOutputPath -force | Out-Null
     }
 
     if ($Configuration -eq "release") {
@@ -261,9 +263,11 @@ function Invoke-Build($SourcesPath, $OutputPath, $Platform, $Configuration, $App
         }
 
         Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
         Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
 
         Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
         Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
     }
 
@@ -402,6 +406,34 @@ if (!(Test-Path -Path "$OutputPath\build\native\include\hermesinspector\hermes\i
     New-Item -ItemType "directory" -Path "$OutputPath\build\native\include\hermesinspector\hermes\inspector\chrome" | Out-Null
 }
 Copy-Item "$RN_DIR\ReactCommon\hermes\inspector\chrome\*.h" -Destination "$OutputPath\build\native\include\hermesinspector\hermes\inspector\chrome" -force -Recurse
+
+# Copy sources
+
+if (!(Test-Path -Path "$OutputPath\src\API\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\src\API\" | Out-Null
+}
+
+if (!(Test-Path -Path "$OutputPath\src\external\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\src\external\" | Out-Null
+}
+
+if (!(Test-Path -Path "$OutputPath\src\include\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\src\include\" | Out-Null
+}
+
+if (!(Test-Path -Path "$OutputPath\src\lib\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\src\lib\" | Out-Null
+}
+
+if (!(Test-Path -Path "$OutputPath\src\public\")) {
+    New-Item -ItemType "directory" -Path "$OutputPath\src\public\" | Out-Null
+}
+
+Copy-Item "$SourcesPath\API\*" -Destination "$OutputPath\src\API\" -force -Recurse
+Copy-Item "$SourcesPath\external\*" -Destination "$OutputPath\src\external\" -force -Recurse
+Copy-Item "$SourcesPath\include\*" -Destination "$OutputPath\src\include\" -force -Recurse
+Copy-Item "$SourcesPath\lib\*" -Destination "$OutputPath\src\lib\" -force -Recurse
+Copy-Item "$SourcesPath\public\*" -Destination "$OutputPath\src\public\" -force -Recurse
 
 # run the actual builds
 
