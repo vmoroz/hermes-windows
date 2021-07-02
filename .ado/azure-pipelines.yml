@@ -21,24 +21,6 @@ jobs:
         DebugX86:
           BuildConfiguration: debug
           BuildPlatform: x86
-        # DebugARM:
-        #   BuildConfiguration: debug
-        #   BuildPlatform: arm
-        # DebugARM64:
-        #   BuildConfiguration: debug
-        #   BuildPlatform: arm64
-        # ReleaseX64:
-        #   BuildConfiguration: release
-        #   BuildPlatform: x64
-        # ReleaseX86:
-        #   BuildConfiguration: release
-        #   BuildPlatform: x86
-        # ReleaseARM:
-        #   BuildConfiguration: release
-        #   BuildPlatform: arm
-        # ReleaseARM64:
-        #   BuildConfiguration: release
-        #   BuildPlatform: arm64
 
     steps:
       - task: PowerShell@2
