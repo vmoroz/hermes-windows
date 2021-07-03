@@ -468,6 +468,10 @@ $npmPackage | Set-Content "$OutputPath\version"
 if($TagSource.IsPresent) {
     $tagName = "v$npmPackage"
     $tagMessage = "Hermes build for react native for windows versioned $npmPackage"
+
+    git config --global user.email "anandrag@microsoft.com"
+    git config --global user.name "anandrag"
+
     git tag -a $tagName -m "$tagMessage"
 }
 
