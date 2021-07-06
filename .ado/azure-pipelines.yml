@@ -74,6 +74,9 @@ jobs:
         DebugARM64:
           BuildConfiguration: debug
           BuildPlatform: arm64
+        DebugARM:
+          BuildConfiguration: debug
+          BuildPlatform: arm
         ReleaseX64:
           BuildConfiguration: release
           BuildPlatform: x64
@@ -83,6 +86,9 @@ jobs:
         ReleaseARM64:
           BuildConfiguration: release
           BuildPlatform: arm64
+        ReleaseARM:
+          BuildConfiguration: release
+          BuildPlatform: arm
 
     steps:
       - task: PowerShell@2
@@ -133,6 +139,16 @@ jobs:
         inputs:
           command: pack
           packagesToPack: $(System.DefaultWorkingDirectory)\HermesArtifacts\ReactNative.Hermes.Windows.nuspec
+          packDestination: $(System.DefaultWorkingDirectory)\NugetRootFinal
+          buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
+          versioningScheme: byEnvVar
+          versionEnvVar: Version
+        
+      - task: NuGetCommand@2
+        displayName: 'NuGet Pack'
+        inputs:
+          command: pack
+          packagesToPack: $(System.DefaultWorkingDirectory)\HermesArtifacts\ReactNative.Hermes.Windows.Fat.nuspec
           packDestination: $(System.DefaultWorkingDirectory)\NugetRootFinal
           buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
           versioningScheme: byEnvVar
