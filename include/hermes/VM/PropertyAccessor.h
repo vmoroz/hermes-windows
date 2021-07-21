@@ -39,8 +39,7 @@ class PropertyAccessor final : public GCCell {
   GCPointer<Callable> getter{};
   GCPointer<Callable> setter{};
 
-#if (defined(HERMESVM_GC_HADES) || defined(HERMESVM_GC_RUNTIME)) && \
-    defined(HERMESVM_COMPRESSED_POINTERS)
+#if (defined(HERMESVM_GC_HADES) || defined(HERMESVM_GC_RUNTIME))
   // Unused padding just to meet the minimum allocation requirements from Hades.
   int8_t _padding_[4];
 #endif
