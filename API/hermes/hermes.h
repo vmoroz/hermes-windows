@@ -60,9 +60,19 @@ class Debugger;
 
 class HermesRuntimeImpl;
 
+struct IHermesString {
+  virtual const char* c_str() = 0;
+  virtual ~IHermesString(){};
+};
+
 /// Represents a Hermes JS runtime.
 class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
  public:
+
+  virtual std::unique_ptr<IHermesString> __utf8(const facebook::jsi::PropNameID&) = 0;
+  virtual std::unique_ptr<IHermesString> __utf8(const facebook::jsi::String &) = 0;
+  virtual std::unique_ptr<IHermesString> __description() = 0;
+
   static bool isHermesBytecode(const uint8_t *data, size_t len);
   // Returns the supported bytecode version.
   static uint32_t getBytecodeVersion();
@@ -223,7 +233,7 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       const std::shared_ptr<const jsi::Buffer> &sourceMapBuf,
       const std::string &sourceURL);
 
- private:
+private:
   // Only HermesRuntimeImpl can subclass this.
   HermesRuntime() = default;
   friend class HermesRuntimeImpl;

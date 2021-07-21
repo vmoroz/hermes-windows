@@ -13,11 +13,11 @@ param(
     [String]$ToolsConfiguration = @("release"), # Platform used for building tools when cross compiling
     
     [ValidateSet("debug", "release")]
-    [String[]]$Configuration = @("debug"),
+    [String[]]$Configuration = @("release"),
     
     [ValidateSet("win32", "uwp")]
     [String]$AppPlatform = "uwp",
-    
+   
     [switch]$RunTests,
     [switch]$Incremental,
     [switch]$UseVS,
@@ -87,7 +87,7 @@ function Get-CMakeConfiguration($config) {
     $val = switch ($config)
     {
         "debug" {"Debug"}
-        "release" {"MinSizeRel"}
+        "release" {"Release"}
         default {"Debug"}
     }
 
@@ -126,6 +126,7 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
 
     Write-Host "Invoke-BuildImpl called with SourcesPath: " $SourcesPath", buildPath: " $buildPath  ", genArgs: " $genArgs ", targets: " $targets ", incrementalBuild: " $incrementalBuild", Platform: " $Platform ", Configuration: " $Configuration ", AppPlatform: " $AppPlatform
 
+    # Retain the build folder for incremental builds only.
     if (!$incrementalBuild -and (Test-Path -Path $buildPath)) {
         Remove-Item $buildPath -Recurse -ErrorAction Ignore
     }
@@ -152,7 +153,7 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
         Invoke-Expression $genCall
         
         if($UseVS.IsPresent) {
-
+            exit  1;
         } else {
             ninja $ninjaCmd
         }
@@ -178,7 +179,7 @@ function Invoke-Compiler-Build($SourcesPath, $buildPath, $Platform, $Configurati
     Pop-Location
 }
 
-function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR, $incrementalBuild, $WithHermesDebugger) {
+function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR, $incrementalBuild, $WithHermesDebugger, $CheckedStlIterators) {
     $genArgs = @();
     get-CommonArgs $Platform $Configuration $AppPlatform ([ref]$genArgs)
 
@@ -194,6 +195,10 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
         $targets += 'hermesinspector'
     } else {
         $genArgs += '-DHERMES_ENABLE_DEBUGGER=OFF'
+    }
+
+    if($CheckedStlIterators) {
+        $genArgs += '-DHERMES_MSVC_CHECKED_ITERATORS=ON'
     }
 
     if ($AppPlatform -eq "uwp") {
@@ -236,13 +241,21 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
     
     $buildPath = Join-Path $WorkSpacePath "build\$Triplet"
     $buildPathWithDebugger = Join-Path $buildPath "withdebugger"
+    $buildPathWithDebuggerAndCheckedIter = Join-Path $buildPath "withCheckedIter"
     
     if ($Configuration -eq "release") {
+        $CheckedStlIterators = $False
         $WithHermesDebugger = $False
-        Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
+        Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
 
+        $CheckedStlIterators = $False
         $WithHermesDebugger = $True
-        Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
+        Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
+
+        $CheckedStlIterators = $True
+        $WithHermesDebugger = $True
+        Invoke-Dll-Build $SourcesPath $buildPathWithDebuggerAndCheckedIter $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
+
     } else {
         $WithHermesDebugger = $True
         Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger
@@ -258,34 +271,42 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
         New-Item -ItemType "directory" -Path $finalOutputPath | Out-Null
     }
 
-    Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
-    Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
-    Copy-Item "$buildPath\API\hermes\hermes.pdb" -Destination $finalOutputPath -force | Out-Null
+    if ($Configuration -eq "release") {
+        # We are now including debugger by default .. 
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.pdb" -Destination $finalOutputPath -force | Out-Null
 
-    if (!($Configuration -eq "release")) {
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.pdb" -Destination $finalOutputPath -force | Out-Null
+    
+        $finalOutputPathWithCheckedIter = Join-Path $finalOutputPath "checkediter"
+        if (!(Test-Path -Path $finalOutputPathWithCheckedIter)) {
+            New-Item -ItemType "directory" -Path $finalOutputPathWithCheckedIter | Out-Null
+        }
+
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.dll" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.lib" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.pdb" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithCheckedIter -force | Out-Null
+    } else {
+        Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
+        Copy-Item "$buildPath\API\hermes\hermes.pdb" -Destination $finalOutputPath -force | Out-Null
+
         Copy-Item "$buildPath\API\inspector\hermesinspector.dll" -Destination $finalOutputPath -force | Out-Null
         Copy-Item "$buildPath\API\inspector\hermesinspector.lib" -Destination $finalOutputPath -force | Out-Null
         Copy-Item "$buildPath\API\inspector\hermesinspector.pdb" -Destination $finalOutputPath -force | Out-Null
     }
 
-    if ($Configuration -eq "release") {
-
-        $finalOutputPathWithDebugger = Join-Path $finalOutputPath "withdebugger"
-        if (!(Test-Path -Path $finalOutputPathWithDebugger)) {
-            New-Item -ItemType "directory" -Path $finalOutputPathWithDebugger | Out-Null
-        }
-
-        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
-        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
-        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
-
-        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
-        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
-        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
+    if (!(Test-Path -Path "$OutputPath\lib\uap\")) {
+        New-Item -ItemType "directory" -Path "$OutputPath\lib\uap\" | Out-Null
+        New-Item -Path "$OutputPath\lib\uap\" -Name "_._" -ItemType File
     }
-
-    New-Item -ItemType "directory" -Path "$OutputPath\lib\uap\" | Out-Null
-    New-Item -Path "$OutputPath\lib\uap\" -Name "_._" -ItemType File
 
     $toolsPath = "$OutputPath\tools\native\$toolsConfiguration\$toolsPlatform"
     if (!(Test-Path -Path $toolsPath)) {
@@ -317,12 +338,14 @@ function Copy-Headers($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Con
 
     Write-Output "$RNDIR\ReactCommon\hermes\**\*.h"
 
+    Copy-Item "$SourcesPath\include\hermes\BCGen\HBC\BytecodeVersion.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\API\jsi\jsi\*" -Destination "$OutputPath\build\native\include\jsi" -force -Recurse
     Copy-Item "$SourcesPath\API\hermes\hermes.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\API\hermes\DebuggerAPI.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\public\hermes\*" -Destination "$OutputPath\build\native\include\hermes" -force -Recurse
     Copy-Item "$RNDIR\ReactCommon\jsinspector\*.h" -Destination "$OutputPath\build\native\include\hermesinspector" -force -Recurse
     Copy-Item "$RNDIR\ReactCommon\hermes\**\*.h" -Destination "$OutputPath\build\native\include\hermesinspector" -force -Recurse
+    Copy-Item "$SourcesPath\API\inspector\InspectorProxy.h" -Destination "$OutputPath\build\native\include\hermesinspector" -force
 
     if (!(Test-Path -Path "$OutputPath\build\native\include\hermesinspector\jsinspector")) {
         New-Item -ItemType "directory" -Path "$OutputPath\build\native\include\hermesinspector\jsinspector" | Out-Null
