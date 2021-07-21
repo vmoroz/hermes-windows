@@ -3,14 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-if(NOT HERMES_IS_ANDROID)
-  # We need FindICU from 3.7
-  cmake_minimum_required(VERSION 3.7.0)
-else()
-  # We'll be using ICU through Java, so we don't need FindICU.
-  # 3.6.0 is the minimum version shipped with the Android SDK.
-  cmake_minimum_required(VERSION 3.6.0)
-endif()
+cmake_minimum_required(VERSION 3.7.0)
 
 # Set the VERSION variables based on the project command
 if (POLICY CMP0048)
@@ -62,12 +55,23 @@ endif()
 # https://cmake.org/cmake/help/latest/variable/CMAKE_OSX_SYSROOT.html
 set(CMAKE_OSX_SYSROOT ${HERMES_APPLE_TARGET_PLATFORM})
 
+if(HERMES_APPLE_TARGET_PLATFORM MATCHES "catalyst")
+  set(CMAKE_OSX_SYSROOT "macosx")
+  set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
+  set(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} "-target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
+  set(CMAKE_THREAD_LIBS_INIT "-lpthread")
+  set(CMAKE_HAVE_THREADS_LIBRARY 1)
+  set(CMAKE_USE_WIN32_THREADS_INIT 0)
+  set(CMAKE_USE_PTHREADS_INIT 1)
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
+endif()
+
 # This must be consistent with the release_version in:
 # - android/build.gradle
 # - npm/package.json
 # - hermes-engine.podspec
 project(Hermes
-        VERSION 0.8.0
+        VERSION 0.8.1
         LANGUAGES C CXX)
 # Optional suffix like "-rc3"
 set(VERSION_SUFFIX "")
@@ -595,20 +599,7 @@ include_directories(BEFORE
   )
 
 if(HERMES_IS_ANDROID)
-  if(EXISTS ${HERMES_SOURCE_DIR}/first-party/fbjni/cxx)
-    set(FBJNI_PATH ${HERMES_SOURCE_DIR}/first-party/fbjni)
-  elseif(EXISTS ${FBSOURCE_DIR}/fbandroid/libraries/fbjni/cxx)
-    set(FBJNI_PATH ${FBSOURCE_DIR}/fbandroid/libraries/fbjni)
-  elseif(EXISTS ${HERMES_SOURCE_DIR}/../../fbandroid/libraries/fbjni/cxx)
-    set(FBJNI_PATH ${HERMES_SOURCE_DIR}/../../fbandroid/libraries/fbjni)
-  else()
-    message(FATAL_ERROR "Unable to find fbjni.")
-  endif()
-  include_directories("${FBJNI_PATH}/cxx/")
-  add_subdirectory(first-party/fbjni)
-
-  # JNI requires that JNI_OnLoad is (re-)exported for initialization.
-  set(OPTIONAL_JNI_ONLOAD "-Wl,--undefined=JNI_OnLoad")
+  find_package(fbjni REQUIRED CONFIG)
 endif()
 
 set(CMAKE_CXX_STANDARD 14)

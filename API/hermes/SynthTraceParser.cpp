@@ -141,9 +141,6 @@ NumericType getNumberAs(const JSONValue *val, NumericType dflt) {
   if (auto *intl = rtConfig->get("Intl")) {
     conf.withIntl(llvh::cast<JSONBoolean>(intl)->getValue());
   }
-  if (auto *intl = rtConfig->get("ES6Intl")) {
-    conf.withES6Intl(llvh::cast<JSONBoolean>(intl)->getValue());
-  }
   if (auto *enableSampledStats = rtConfig->get("enableSampledStats")) {
     conf.withEnableSampledStats(
         llvh::cast<JSONBoolean>(enableSampledStats)->getValue());

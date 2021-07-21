@@ -421,8 +421,8 @@ $StartTime = (Get-Date)
 
 $VCVARS_PATH = Find-VS-Path
 $PYTHON_PATH = Find-Path "python.exe"
-$CMAKE_PATH = Find-Path "cmake.exe"
-$CMAKE_PATH = Find-Path "git.exe"
+# $CMAKE_PATH = Find-Path "cmake.exe"
+# $GIT_PATH = Find-Path "git.exe"
 
 if (!(Test-Path -Path $WorkSpacePath)) {
     New-Item -ItemType "directory" -Path $WorkSpacePath | Out-Null

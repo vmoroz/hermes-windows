@@ -163,12 +163,6 @@ static opt<bool> Intl(
     init(RuntimeConfig::getDefaultIntl()),
     cat(RuntimeCategory));
 
-static opt<bool> ES6Intl(
-    "Xes6-intl",
-    desc("Enable support for ES6 Intl APIs"),
-    init(RuntimeConfig::getDefaultES6Intl()),
-    cat(RuntimeCategory));
-
 static llvh::cl::opt<bool> StopAfterInit(
     "stop-after-module-init",
     llvh::cl::desc("Exit once module loading is finished. Useful "

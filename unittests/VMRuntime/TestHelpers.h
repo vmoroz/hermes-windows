@@ -386,9 +386,8 @@ class DummyRuntime final : public HandleRootOwner,
   }
 
  private:
-  static std::unique_ptr<GC> makeHeap(
-      DummyRuntime *runtime,
-      MetadataTableForTests metaTable,
+  DummyRuntime(
+      MetadataTable metaTable,
       const GCConfig &gcConfig,
       std::shared_ptr<CrashManager> crashMgr,
       std::shared_ptr<StorageProvider> provider,

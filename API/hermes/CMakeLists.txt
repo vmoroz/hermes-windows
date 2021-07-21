@@ -11,12 +11,6 @@ set(api_sources
 file(GLOB api_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 
-if(HERMES_IS_ANDROID)
-  list(APPEND api_sources
-    JNI_OnLoad.cpp
-    )
-endif()
-
 add_hermes_library(hermesapi
         ${api_sources}
         LINK_LIBS jsi hermesVMRuntime)
@@ -130,6 +124,10 @@ if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)
   if(HERMES_APPLE_TARGET_PLATFORM MATCHES "iphone")
     add_custom_command(TARGET libhermes POST_BUILD
       COMMAND /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Info.plist
+    )
+  elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "catalyst")
+    add_custom_command(TARGET libhermes POST_BUILD
+      COMMAND /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Resources/Info.plist
     )
   elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "macos")
     add_custom_command(TARGET libhermes POST_BUILD
