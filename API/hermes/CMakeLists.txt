@@ -76,6 +76,12 @@ elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   set(compile_flags "")
   set(link_flags "/O2 ${OPTIONAL_GC_SECTIONS} ${OPTIONAL_JNI_ONLOAD}")
 
+  # Enable exeption
+  set(compile_flags "${compile_flags} /EHsc")
+
+  # Enable RTTI
+  set(compile_flags "${compile_flags} /GR")
+
   # Generate PDBs
   set(compile_flags "${compile_flags} /Zi")
   if("{CMAKE_BUILD_TYPE}" MATCHES "Debug")

@@ -77,6 +77,11 @@ function(hermes_update_compile_flags name)
 
   set(flags "")
 
+  #if (MSVC)
+    # enable function-level linking
+    set(flags "${flags} /Gy")
+  #endif ()
+
   if (HERMES_ENABLE_EH)
     if (GCC_COMPATIBLE)
       set(flags "${flags} -fexceptions")

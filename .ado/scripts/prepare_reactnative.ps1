@@ -4,7 +4,7 @@ param(
     [string]$RN_CLONE_URL = "https://github.com/facebook/react-native.git",
 
     [Parameter(Mandatory=$False)]
-    [string]$COMMIT_HASH="5127c71d6",
+    [string]$COMMIT_HASH="386dbd943",
 
     [Parameter(Mandatory=$False)]
     [switch]$Force

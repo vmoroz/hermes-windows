@@ -31,6 +31,10 @@ list(APPEND inspector_sources
    ../jsi/jsi/JSIDynamic.cpp
 )
 
+list(APPEND inspector_sources
+   InspectorProxy.cpp
+)
+
 list(APPEND folly_sources
   ${FOLLY_SOURCE}/folly/concurrency/CacheLocality.cpp
   ${FOLLY_SOURCE}/folly/Conv.cpp
@@ -104,7 +108,12 @@ target_include_directories(hermesinspector PUBLIC ..)
 
 # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
 set(compile_flags " /await ")
-set(link_flags "/O2 ${OPTIONAL_GC_SECTIONS} ${OPTIONAL_JNI_ONLOAD}")
+
+# Assuming inspector don't use exceptions
+set(compile_flags "${compile_flags} /EHs-c-")
+
+# inspector use rtti
+set(compile_flags "${compile_flags} /GR")
 
 # Generate PDBs
 set(compile_flags "${compile_flags} /Zi")

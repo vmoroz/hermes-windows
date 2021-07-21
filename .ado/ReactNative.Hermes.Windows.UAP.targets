@@ -5,14 +5,11 @@
     <HermesPlatform Condition="'$(HermesPlatform)' == 'Win32'">x86</HermesPlatform>
   </PropertyGroup>
   <ItemGroup Condition="'$(Configuration)' == 'Debug' And '$(HermesNoDLLCopy)' == ''">
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\native\debug\$(HermesPlatform)\hermes.dll" />
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\native\debug\$(HermesPlatform)\hermesinspector.dll" />
+    <ReferenceCopyLocalPaths Include="$(PackageRoot)lib\native\release\$(HermesPlatform)\checkediter\hermes.dll" />
+    <ReferenceCopyLocalPaths Include="$(PackageRoot)lib\native\release\$(HermesPlatform)\checkediter\hermesinspector.dll" />
   </ItemGroup>
-  <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' == 'false' And '$(HermesNoDLLCopy)' == ''">
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\native\release\$(HermesPlatform)\hermes.dll" />
-  </ItemGroup>
-  <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' == 'true' And '$(HermesNoDLLCopy)' == ''">
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\native\release\$(HermesPlatform)\withdebugger\hermes.dll" />
-    <ReferenceCopyLocalPaths Include="$(MSBuildThisFileDirectory)..\..\lib\native\release\$(HermesPlatform)\withdebugger\hermesinspector.dll" />
+  <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(HermesNoDLLCopy)' == ''">
+    <ReferenceCopyLocalPaths Include="$(PackageRoot)lib\native\release\$(HermesPlatform)\hermes.dll" />
+    <ReferenceCopyLocalPaths Include="$(PackageRoot)lib\native\release\$(HermesPlatform)\hermesinspector.dll" />
   </ItemGroup>
 </Project>
