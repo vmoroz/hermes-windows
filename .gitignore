@@ -16,6 +16,9 @@ buck-out
 # Mac
 .DS_Store
 
+# Win
+workspace
+
 # CocoaPods testing
 build
 build_*
