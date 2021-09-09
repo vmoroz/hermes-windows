@@ -65,10 +65,40 @@ hermes_link_icu(libhermes)
 # Export the required header directory
 target_include_directories(libhermes PUBLIC ..)
 
+if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
+  # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
+  set(compile_flags "")
+  set(link_flags "")
+
+  # Enable exeption
+  set(compile_flags "${compile_flags} /EHsc")
+
+  # Enable RTTI
+  set(compile_flags "${compile_flags} /GR")
+
+  # Generate PDBs
+  set(compile_flags "${compile_flags} /Zi")
+  if("{CMAKE_BUILD_TYPE}" MATCHES "Debug")
+    set(link_flags "${link_flags} /DEBUG")
+  else()
+    set(link_flags "${link_flags} /DEBUG /OPT:REF /OPT:ICF")
+  endif()
+
+endif()
+
 set_target_properties(libhermes PROPERTIES
+  COMPILE_FLAGS "${compile_flags}"
+  LINK_FLAGS "${link_flags}"
+  # Declare our dependency on std::make_unique
+  CXX_STANDARD 14
+  CXX_STANDARD_REQUIRED 14
+  # Avoid becoming liblibhermes (and there's already a target called 'hermes')
   # Avoid becoming liblibhermes (and there's already a target called 'hermes')
   OUTPUT_NAME hermes
 )
+
+set_property(TARGET libhermes APPEND_STRING PROPERTY
+  COMPILE_DEFINITIONS "CREATE_SHARED_LIBRARY")
 
 if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)
   set_target_properties(libhermes PROPERTIES

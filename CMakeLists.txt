@@ -293,18 +293,20 @@ if (HERMES_STATIC_LINK)
   set(CMAKE_FIND_LIBRARY_SUFFIXES "${CMAKE_STATIC_LIBRARY_SUFFIX}")
 endif()
 
-# Check if the linker supports --gc-sections
-# We can't simply CHECK_CXX_COMPILER_FLAG("-Wl,--gc-sections" ..) because CMake
-# will compile and link separately and only passes the flag during compilation.
-set(OLD_CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-set(CMAKE_EXE_LINKER_FLAGS "--gc-sections")
-CHECK_CXX_COMPILER_FLAG("" HAVE_GC_SECTIONS)
-set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS}")
+if (NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
+  # Check if the linker supports --gc-sections
+  # We can't simply CHECK_CXX_COMPILER_FLAG("-Wl,--gc-sections" ..) because CMake
+  # will compile and link separately and only passes the flag during compilation.
+  set(OLD_CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "--gc-sections")
+  CHECK_CXX_COMPILER_FLAG("" HAVE_GC_SECTIONS)
+  set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS}")
 
-if(HAVE_GC_SECTIONS)
-  set(OPTIONAL_GC_SECTIONS "-Wl,--gc-sections")
-else()
-  set(OPTIONAL_GC_SECTIONS "")
+  if(HAVE_GC_SECTIONS)
+    set(OPTIONAL_GC_SECTIONS "-Wl,--gc-sections")
+  else()
+    set(OPTIONAL_GC_SECTIONS "")
+  endif()
 endif()
 
 # Make the HERMES_RELEASE_VERSION accessible for version printing in C++.
@@ -565,6 +567,14 @@ endif()
 
 if (HERMES_ENABLE_DEBUGGER)
   add_definitions(-DHERMES_ENABLE_DEBUGGER)
+endif()
+
+if (HERMES_MSVC_CHECKED_ITERATORS)
+  add_definitions(-D_ITERATOR_DEBUG_LEVEL=1)
+endif()
+
+if (HERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB)
+  add_definitions(-DUSE_PLATFORM_UNICODE_WINGLOB)
 endif()
 
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
