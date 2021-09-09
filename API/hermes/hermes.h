@@ -18,9 +18,14 @@
 #include <jsi/jsi.h>
 #include <unordered_map>
 
+// Patch to avoid Compiler Warning (level 2) C4275
 #ifndef HERMES_EXPORT
 #ifdef _MSC_VER
+#ifdef CREATE_SHARED_LIBRARY
 #define HERMES_EXPORT __declspec(dllexport)
+#else
+#define HERMES_EXPORT
+#endif // CREATE_SHARED_LIBRARY
 #else // _MSC_VER
 #define HERMES_EXPORT __attribute__((visibility("default")))
 #endif // _MSC_VER
@@ -56,9 +61,21 @@ class Debugger;
 
 class HermesRuntimeImpl;
 
+// This class wraps an std::string created within the hermes dll, to be safely consumed outside the hermes dll.
+// Used to consume release flavored hermes dll in the debug flavored RNW.
+struct IHermesString {
+  virtual const char* c_str() = 0;
+  virtual ~IHermesString(){};
+};
+
 /// Represents a Hermes JS runtime.
 class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
  public:
+
+  virtual std::unique_ptr<IHermesString> __utf8(const facebook::jsi::PropNameID&) = 0;
+  virtual std::unique_ptr<IHermesString> __utf8(const facebook::jsi::String &) = 0;
+  virtual std::unique_ptr<IHermesString> __description() = 0;
+
   static bool isHermesBytecode(const uint8_t *data, size_t len);
   // Returns the supported bytecode version.
   static uint32_t getBytecodeVersion();
@@ -83,13 +100,13 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       size_t len);
 
   /// Enable sampling profiler.
-  static void enableSamplingProfiler();
+  static void __cdecl enableSamplingProfiler();
 
   /// Disable the sampling profiler
-  static void disableSamplingProfiler();
+  static void __cdecl disableSamplingProfiler();
 
   /// Dump sampled stack trace to the given file name.
-  static void dumpSampledTraceToFile(const std::string &fileName);
+  static void __cdecl dumpSampledTraceToFile(const std::string &fileName);
 
   /// Dump sampled stack trace to the given stream.
   static void dumpSampledTraceToStream(llvh::raw_ostream &stream);
@@ -219,7 +236,7 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       const std::shared_ptr<const jsi::Buffer> &sourceMapBuf,
       const std::string &sourceURL);
 
- private:
+private:
   // Only HermesRuntimeImpl can subclass this.
   HermesRuntime() = default;
   friend class HermesRuntimeImpl;
@@ -232,7 +249,7 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
   // class in the .cpp file.
 };
 
-HERMES_EXPORT std::unique_ptr<HermesRuntime> makeHermesRuntime(
+HERMES_EXPORT std::unique_ptr<HermesRuntime> __cdecl makeHermesRuntime(
     const ::hermes::vm::RuntimeConfig &runtimeConfig =
         ::hermes::vm::RuntimeConfig());
 HERMES_EXPORT std::unique_ptr<jsi::ThreadSafeRuntime>

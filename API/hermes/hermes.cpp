@@ -249,11 +249,35 @@ class StackRuntime {
 
 } // namespace
 
+struct HermesStringImpl : public IHermesString {
+  virtual const char *c_str() override {
+    return str_.c_str();
+  }
+
+  HermesStringImpl(std::string &&str) : str_(std::move(str)){};
+  std::string str_;
+  ~HermesStringImpl() {}
+};
+
 class HermesRuntimeImpl final : public HermesRuntime,
                                 private InstallHermesFatalErrorHandler,
                                 private jsi::Instrumentation {
  public:
   static constexpr uint32_t kSentinelNativeValue = 0x6ef71fe1;
+
+  std::unique_ptr<IHermesString> __utf8(
+      const facebook::jsi::PropNameID &propNameId) override {
+    return std::make_unique<HermesStringImpl>(utf8(propNameId));;
+  }
+
+  std::unique_ptr<IHermesString> __utf8(
+      const facebook::jsi::String &s) override {
+    return std::make_unique<HermesStringImpl>(utf8(s));
+  }
+
+  std::unique_ptr<IHermesString> __description() override {
+    return std::make_unique<HermesStringImpl>(description());
+  }
 
   HermesRuntimeImpl(const vm::RuntimeConfig &runtimeConfig)
       :
