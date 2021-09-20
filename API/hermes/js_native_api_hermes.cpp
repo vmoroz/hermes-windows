@@ -1,10 +1,117 @@
 #include <climits>  // INT_MAX
 #include <cmath>
+#include <atomic>
 #include <algorithm>
 #define NAPI_EXPERIMENTAL
-#include "js_native_api_hermes.h"
-#include "js_native_api.h"
+#include "hermes_napi.h"
+#include "hermes.h"
 
+#define CHECK_ENV(env)          \
+  do {                          \
+    if ((env) == nullptr) {     \
+      return napi_invalid_arg;  \
+    }                           \
+  } while (0)
+
+struct napi_env__ {
+  explicit napi_env__() {
+    //   : isolate(context->GetIsolate()),
+    //     context_persistent(isolate, context) {
+    // CHECK_EQ(isolate, context->GetIsolate());
+  }
+
+  virtual ~napi_env__() {
+    // First we must finalize those references that have `napi_finalizer`
+    // callbacks. The reason is that addons might store other references which
+    // they delete during their `napi_finalizer` callbacks. If we deleted such
+    // references here first, they would be doubly deleted when the
+    // `napi_finalizer` deleted them subsequently.
+    // v8impl::RefTracker::FinalizeAll(&finalizing_reflist);
+    // v8impl::RefTracker::FinalizeAll(&reflist);
+  }
+
+  // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
+  // v8impl::Persistent<v8::Context> context_persistent;
+
+  // inline v8::Local<v8::Context> context() const {
+  //   return v8impl::PersistentToLocal::Strong(context_persistent);
+  // }
+
+  void Ref() { m_refs++; }
+  
+  void Unref() { if ( --m_refs == 0) delete this; }
+
+  // virtual bool can_call_into_js() const { return true; }
+  // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
+  //     v8::Local<v8::ArrayBuffer> ab) const {
+  //   return v8::Just(true);
+  // }
+
+  // static inline void
+  // HandleThrow(napi_env env, v8::Local<v8::Value> value) {
+  //   env->isolate->ThrowException(value);
+  // }
+
+  // template <typename T, typename U = decltype(HandleThrow)>
+  // inline void CallIntoModule(T&& call, U&& handle_exception = HandleThrow) {
+  //   int open_handle_scopes_before = open_handle_scopes;
+  //   int open_callback_scopes_before = open_callback_scopes;
+  //   napi_clear_last_error(this);
+  //   call(this);
+  //   CHECK_EQ(open_handle_scopes, open_handle_scopes_before);
+  //   CHECK_EQ(open_callback_scopes, open_callback_scopes_before);
+  //   if (!last_exception.IsEmpty()) {
+  //     handle_exception(this, last_exception.Get(this->isolate));
+  //     last_exception.Reset();
+  //   }
+  // }
+
+  // virtual void CallFinalizer(napi_finalize cb, void* data, void* hint) {
+  //   v8::HandleScope handle_scope(isolate);
+  //   CallIntoModule([&](napi_env env) {
+  //     cb(env, data, hint);
+  //   });
+  // }
+
+  // v8impl::Persistent<v8::Value> last_exception;
+
+  // // We store references in two different lists, depending on whether they have
+  // // `napi_finalizer` callbacks, because we must first finalize the ones that
+  // // have such a callback. See `~napi_env__()` above for details.
+  // v8impl::RefTracker::RefList reflist;
+  // v8impl::RefTracker::RefList finalizing_reflist;
+  // napi_extended_error_info last_error;
+  // int open_handle_scopes = 0;
+  // int open_callback_scopes = 0;
+  // void* instance_data = nullptr;
+
+  private:
+  std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
+   std::atomic<int> m_refs{1};
+};
+
+napi_status napi_create_hermes_env(napi_env *env)
+{
+  if (!env) {
+    return napi_status::napi_invalid_arg;
+  }
+  *env = new napi_env__();
+  return napi_status::napi_ok;
+}
+
+napi_status napi_ext_env_ref(napi_env env) {
+  CHECK_ENV(env);
+  env->Ref();
+  return napi_status::napi_ok;
+}
+
+napi_status napi_ext_env_unref(napi_env env) {
+  CHECK_ENV(env);
+  env->Unref();
+  return napi_status::napi_ok;
+}
+
+#if 0
 #define CHECK_MAYBE_NOTHING(env, maybe, status) \
   RETURN_STATUS_IF_FALSE((env), !((maybe).IsNothing()), (status))
 
@@ -3179,3 +3286,4 @@ napi_status napi_is_detached_arraybuffer(napi_env env,
 
   return napi_clear_last_error(env);
 }
+#endif
