@@ -28,3 +28,6 @@ test/ApplePlatformsIntegrationTestApp/Podfile.lock
 test/ApplePlatformsIntegrationTestApp/Pods
 test/ApplePlatformsIntegrationTestApp/**/xcuserdata
 test/ApplePlatformsIntegrationTestApp/ApplePlatformsIntegrationTestApp.xcworkspace
+.vs
+/.vscode
+/CMakeSettings.json

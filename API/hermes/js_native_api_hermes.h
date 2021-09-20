@@ -3,7 +3,7 @@
 
 #include <cstring>
 #include "js_native_api_types.h"
-
+#if 0
 static napi_status napi_clear_last_error(napi_env env);
 
 namespace hermesimpl {
@@ -342,3 +342,4 @@ class TryCatch : public v8::TryCatch {
   } while (0)
 
 #endif  // SRC_JS_NATIVE_API_V8_H_
+#endif

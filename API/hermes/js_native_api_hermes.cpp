@@ -1,16 +1,16 @@
-#include <climits>  // INT_MAX
-#include <cmath>
-#include <atomic>
 #include <algorithm>
+#include <atomic>
+#include <climits> // INT_MAX
+#include <cmath>
 #define NAPI_EXPERIMENTAL
-#include "hermes_napi.h"
 #include "hermes.h"
+#include "hermes_napi.h"
 
-#define CHECK_ENV(env)          \
-  do {                          \
-    if ((env) == nullptr) {     \
-      return napi_invalid_arg;  \
-    }                           \
+#define CHECK_ENV(env)         \
+  do {                         \
+    if ((env) == nullptr) {    \
+      return napi_invalid_arg; \
+    }                          \
   } while (0)
 
 struct napi_env__ {
@@ -37,9 +37,14 @@ struct napi_env__ {
   //   return v8impl::PersistentToLocal::Strong(context_persistent);
   // }
 
-  void Ref() { m_refs++; }
-  
-  void Unref() { if ( --m_refs == 0) delete this; }
+  void Ref() {
+    m_refs++;
+  }
+
+  void Unref() {
+    if (--m_refs == 0)
+      delete this;
+  }
 
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
@@ -75,7 +80,8 @@ struct napi_env__ {
 
   // v8impl::Persistent<v8::Value> last_exception;
 
-  // // We store references in two different lists, depending on whether they have
+  // // We store references in two different lists, depending on whether they
+  // have
   // // `napi_finalizer` callbacks, because we must first finalize the ones that
   // // have such a callback. See `~napi_env__()` above for details.
   // v8impl::RefTracker::RefList reflist;
@@ -85,13 +91,12 @@ struct napi_env__ {
   // int open_callback_scopes = 0;
   // void* instance_data = nullptr;
 
-  private:
+ private:
   std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
-   std::atomic<int> m_refs{1};
+  std::atomic<int> m_refs{1};
 };
 
-napi_status napi_create_hermes_env(napi_env *env)
-{
+napi_status napi_create_hermes_env(napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
@@ -125,40 +130,43 @@ napi_status napi_ext_env_unref(napi_env env) {
 // is null terminated. For V8 the equivalent is -1. The assert
 // validates that our cast of NAPI_AUTO_LENGTH results in -1 as
 // needed by V8.
-#define CHECK_NEW_FROM_UTF8_LEN(env, result, str, len)                   \
-  do {                                                                   \
-    static_assert(static_cast<int>(NAPI_AUTO_LENGTH) == -1,              \
-                  "Casting NAPI_AUTO_LENGTH to int must result in -1");  \
-    RETURN_STATUS_IF_FALSE((env),                                        \
-        (len == NAPI_AUTO_LENGTH) || len <= INT_MAX,                     \
-        napi_invalid_arg);                                               \
-    RETURN_STATUS_IF_FALSE((env),                                        \
-        (str) != nullptr,                                                \
-        napi_invalid_arg);                                               \
-    auto str_maybe = v8::String::NewFromUtf8(                            \
-        (env)->isolate, (str), v8::NewStringType::kInternalized,         \
-        static_cast<int>(len));                                          \
-    CHECK_MAYBE_EMPTY((env), str_maybe, napi_generic_failure);           \
-    (result) = str_maybe.ToLocalChecked();                               \
+#define CHECK_NEW_FROM_UTF8_LEN(env, result, str, len)                         \
+  do {                                                                         \
+    static_assert(                                                             \
+        static_cast<int>(NAPI_AUTO_LENGTH) == -1,                              \
+        "Casting NAPI_AUTO_LENGTH to int must result in -1");                  \
+    RETURN_STATUS_IF_FALSE(                                                    \
+        (env), (len == NAPI_AUTO_LENGTH) || len <= INT_MAX, napi_invalid_arg); \
+    RETURN_STATUS_IF_FALSE((env), (str) != nullptr, napi_invalid_arg);         \
+    auto str_maybe = v8::String::NewFromUtf8(                                  \
+        (env)->isolate,                                                        \
+        (str),                                                                 \
+        v8::NewStringType::kInternalized,                                      \
+        static_cast<int>(len));                                                \
+    CHECK_MAYBE_EMPTY((env), str_maybe, napi_generic_failure);                 \
+    (result) = str_maybe.ToLocalChecked();                                     \
   } while (0)
 
 #define CHECK_NEW_FROM_UTF8(env, result, str) \
   CHECK_NEW_FROM_UTF8_LEN((env), (result), (str), NAPI_AUTO_LENGTH)
 
-#define CREATE_TYPED_ARRAY(                                                    \
-    env, type, size_of_element, buffer, byte_offset, length, out)              \
-  do {                                                                         \
-    if ((size_of_element) > 1) {                                               \
-      THROW_RANGE_ERROR_IF_FALSE(                                              \
-          (env), (byte_offset) % (size_of_element) == 0,                       \
-          "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT",                             \
-          "start offset of "#type" should be a multiple of "#size_of_element); \
-    }                                                                          \
-    THROW_RANGE_ERROR_IF_FALSE((env), (length) * (size_of_element) +           \
-        (byte_offset) <= buffer->ByteLength(),                                 \
-        "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH",                                  \
-        "Invalid typed array length");                                         \
-    (out) = v8::type::New((buffer), (byte_offset), (length));                  \
+#define CREATE_TYPED_ARRAY(                                                   \
+    env, type, size_of_element, buffer, byte_offset, length, out)             \
+  do {                                                                        \
+    if ((size_of_element) > 1) {                                              \
+      THROW_RANGE_ERROR_IF_FALSE(                                             \
+          (env),                                                              \
+          (byte_offset) % (size_of_element) == 0,                             \
+          "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT",                            \
+          "start offset of " #type                                            \
+          " should be a multiple of " #size_of_element);                      \
+    }                                                                         \
+    THROW_RANGE_ERROR_IF_FALSE(                                               \
+        (env),                                                                \
+        (length) * (size_of_element) + (byte_offset) <= buffer->ByteLength(), \
+        "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH",                                 \
+        "Invalid typed array length");                                        \
+    (out) = v8::type::New((buffer), (byte_offset), (length));                 \
   } while (0)
 
 namespace v8impl {
@@ -2345,21 +2353,20 @@ napi_status napi_coerce_to_bool(napi_env env,
   return GET_RETURN_STATUS(env);
 }
 
-#define GEN_COERCE_FUNCTION(UpperCaseName, MixedCaseName, LowerCaseName)      \
-  napi_status napi_coerce_to_##LowerCaseName(napi_env env,                    \
-                                             napi_value value,                \
-                                             napi_value* result) {            \
-    NAPI_PREAMBLE(env);                                                       \
-    CHECK_ARG(env, value);                                                    \
-    CHECK_ARG(env, result);                                                   \
-                                                                              \
-    v8::Local<v8::Context> context = env->context();                          \
-    v8::Local<v8::MixedCaseName> str;                                         \
-                                                                              \
-    CHECK_TO_##UpperCaseName(env, context, str, value);                       \
-                                                                              \
-    *result = v8impl::JsValueFromV8LocalValue(str);                           \
-    return GET_RETURN_STATUS(env);                                            \
+#define GEN_COERCE_FUNCTION(UpperCaseName, MixedCaseName, LowerCaseName) \
+  napi_status napi_coerce_to_##LowerCaseName(                            \
+      napi_env env, napi_value value, napi_value *result) {              \
+    NAPI_PREAMBLE(env);                                                  \
+    CHECK_ARG(env, value);                                               \
+    CHECK_ARG(env, result);                                              \
+                                                                         \
+    v8::Local<v8::Context> context = env->context();                     \
+    v8::Local<v8::MixedCaseName> str;                                    \
+                                                                         \
+    CHECK_TO_##UpperCaseName(env, context, str, value);                  \
+                                                                         \
+    *result = v8impl::JsValueFromV8LocalValue(str);                      \
+    return GET_RETURN_STATUS(env);                                       \
   }
 
 GEN_COERCE_FUNCTION(NUMBER, Number, number)
