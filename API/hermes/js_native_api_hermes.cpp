@@ -15,6 +15,8 @@
 
 struct napi_env__ {
   explicit napi_env__() {
+    //TODO: pass parameters
+    m_hermesRuntime = facebook::hermes::makeHermesRuntime();
     //   : isolate(context->GetIsolate()),
     //     context_persistent(isolate, context) {
     // CHECK_EQ(isolate, context->GetIsolate());
