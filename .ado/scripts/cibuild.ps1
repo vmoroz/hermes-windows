@@ -201,8 +201,16 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
         $genArgs += '-DHERMES_MSVC_CHECKED_ITERATORS=ON'
     }
 
-    # Use our custom WinGlob/NLS based implementation of unicode stubs, to avoid depending on the runtime ICU library.
     $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=ON'
+
+    if ($AppPlatform -eq "uwp") {
+        # Link against default ICU libraries in Windows 10.
+        $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=OFF'
+    } else {
+        # Use our custom WinGlob/NLS based implementation of unicode stubs, to avoid depending on the runtime ICU library.
+        $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=ON'
+    }
+
 
     if ($AppPlatform -eq "uwp") {
         $genArgs += '-DCMAKE_CXX_STANDARD=17'
