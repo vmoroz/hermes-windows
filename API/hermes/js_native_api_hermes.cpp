@@ -2,9 +2,11 @@
 #include <atomic>
 #include <climits> // INT_MAX
 #include <cmath>
+#include <vector>
 #define NAPI_EXPERIMENTAL
 #include "hermes.h"
 #include "hermes_napi.h"
+#include "hermes/VM/Runtime.h""
 
 #define CHECK_ENV(env)         \
   do {                         \
@@ -96,6 +98,7 @@ struct napi_env__ {
  private:
   std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
   std::atomic<int> m_refs{1};
+  std::vector<hermes::vm::PinnedHermesValue> m_stackValues;
 };
 
 napi_status napi_create_hermes_env(napi_env *env) {
