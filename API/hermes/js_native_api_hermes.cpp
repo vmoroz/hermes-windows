@@ -5,8 +5,15 @@
 #include <vector>
 #define NAPI_EXPERIMENTAL
 #include "hermes.h"
+#include "hermes/VM/Runtime.h"
 #include "hermes_napi.h"
-#include "hermes/VM/Runtime.h""
+
+#define RETURN_STATUS_IF_FALSE(env, condition, status) \
+  do {                                                 \
+    if (!(condition)) {                                \
+      return env->napi_set_last_error((status));       \
+    }                                                  \
+  } while (0)
 
 #define CHECK_ENV(env)         \
   do {                         \
@@ -15,9 +22,98 @@
     }                          \
   } while (0)
 
+#define CHECK_ARG(env, arg) \
+  RETURN_STATUS_IF_FALSE((env), ((arg) != nullptr), napi_invalid_arg)
+
+struct Marker {
+  size_t ChunkIndex{0};
+  size_t ItemIndex{0};
+};
+
+template <typename T>
+struct NonMovableObjStack {
+  NonMovableObjStack() {
+    std::vector<T> firstChunk;
+    firstChunk.reserve(ChunkSize);
+    m_storage.push_back(std::move(firstChunk));
+  }
+
+  size_t size() const {
+    return m_size;
+  }
+
+  template <typename... TArgs>
+  void emplace_back(TArgs &&...args) {
+    auto &storageChunk = m_storage.back();
+    if (storageChunk.size() == storageChunk.capacity()) {
+      std::vector<T> newChunk;
+      newChunk.reserve(std::min(storageChunk.capacity() * 2, MaxChunkSize));
+      m_storage.push_back(std::move(newChunk));
+      storageChunk = m_storage.back();
+    }
+    storageChunk.emplace_back(std::forward<TArgs>(args)...);
+    ++m_size;
+  }
+
+  T &back() {
+    return m_storage.back().back();
+  }
+
+  bool pop_back() {
+    auto &storageChunk = m_storage.back();
+    if (storageChunk.empty()) {
+      return false;
+    }
+
+    storageChunk.pop_back();
+    if (storageChunk.empty() && m_storage.size() > 1) {
+      m_storage.pop_back();
+    }
+  }
+
+  bool pop_marker(const Marker &marker) {
+    if (marker.ChunkIndex >= m_storage.size()) {
+      return false;
+    }
+
+    auto &markerChunk = m_storage[marker.ChunkIndex];
+    if (marker.ItemIndex >= markerChunk.size()) {
+      return false;
+    }
+
+    if (marker.ChunkIndex < m_storage.size() - 1) {
+      m_storage.erase(
+          m_storage.begin() + marker.ChunkIndex + 1, m_storage.end());
+    }
+
+    markerChunk.erase(
+        markerChunk.begin() + marker.ItemIndex, markerChunk.end());
+  }
+
+  Marker create_marker() {
+    auto lastChunkIndex = m_storage.size() - 1;
+    return {lastChunkIndex, m_storage[lastChunkIndex].size()};
+  }
+
+  template <typename F>
+  void for_each(const F &f) noexcept {
+    for (const auto &storageChunk : m_storage) {
+      for (const auto &item : storageChunk) {
+        f(item);
+      }
+    }
+  }
+
+ private:
+  static const size_t ChunkSize = 16;
+  static const size_t MaxChunkSize = 4096;
+  std::vector<std::vector<T>> m_storage;
+  size_t m_size{0};
+};
+
 struct napi_env__ {
   explicit napi_env__() {
-    //TODO: pass parameters
+    // TODO: pass parameters
     m_hermesRuntime = facebook::hermes::makeHermesRuntime();
     //   : isolate(context->GetIsolate()),
     //     context_persistent(isolate, context) {
@@ -90,15 +186,35 @@ struct napi_env__ {
   // // have such a callback. See `~napi_env__()` above for details.
   // v8impl::RefTracker::RefList reflist;
   // v8impl::RefTracker::RefList finalizing_reflist;
-  // napi_extended_error_info last_error;
+  napi_extended_error_info last_error;
   // int open_handle_scopes = 0;
   // int open_callback_scopes = 0;
   // void* instance_data = nullptr;
 
+  napi_status napi_set_last_error(
+      napi_status error_code,
+      uint32_t engine_error_code = 0,
+      void *engine_reserved = nullptr) {
+    last_error.error_code = error_code;
+    last_error.engine_error_code = engine_error_code;
+    last_error.engine_reserved = engine_reserved;
+    return error_code;
+  }
+
+  napi_status napi_clear_last_error() {
+    last_error.error_code = napi_ok;
+    last_error.engine_error_code = 0;
+    last_error.engine_reserved = nullptr;
+    return napi_ok;
+  }
+
  private:
   std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
   std::atomic<int> m_refs{1};
-  std::vector<hermes::vm::PinnedHermesValue> m_stackValues;
+
+ public:
+  NonMovableObjStack<hermes::vm::PinnedHermesValue> m_stackValues;
+  NonMovableObjStack<Marker> m_stackMarkers;
 };
 
 napi_status napi_create_hermes_env(napi_env *env) {
@@ -2611,17 +2727,17 @@ napi_status napi_get_reference_value(napi_env env,
 
   return napi_clear_last_error(env);
 }
-
-napi_status napi_open_handle_scope(napi_env env, napi_handle_scope* result) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
-  // JS exceptions.
+#endif
+napi_status napi_open_handle_scope(napi_env env, napi_handle_scope *result) {
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
+  // throw JS exceptions.
   CHECK_ENV(env);
   CHECK_ARG(env, result);
 
-  *result = v8impl::JsHandleScopeFromV8HandleScope(
-      new v8impl::HandleScopeWrapper(env->isolate));
-  env->open_handle_scopes++;
-  return napi_clear_last_error(env);
+  Marker stackMarker = env->m_stackValues.create_marker();
+  env->m_stackMarkers.emplace_back(std::move(stackMarker));
+  *result = reinterpret_cast<napi_handle_scope>(&env->m_stackMarkers.back());
+  return env->napi_clear_last_error();
 }
 
 napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
@@ -2629,15 +2745,24 @@ napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
   // JS exceptions.
   CHECK_ENV(env);
   CHECK_ARG(env, scope);
-  if (env->open_handle_scopes == 0) {
+  if (env->m_stackMarkers.size() == 0) {
     return napi_handle_scope_mismatch;
   }
 
-  env->open_handle_scopes--;
-  delete v8impl::V8HandleScopeFromJsHandleScope(scope);
-  return napi_clear_last_error(env);
+  Marker& lastMarker = env->m_stackMarkers.back();
+  if (reinterpret_cast<Marker*>(scope) != &lastMarker) {
+    return napi_handle_scope_mismatch;
+  }
+
+  if (!env->m_stackValues.pop_marker(lastMarker)){
+    return napi_handle_scope_mismatch;
+  }
+
+  env->m_stackMarkers.pop_back();
+  return env->napi_clear_last_error();
 }
 
+#if 0
 napi_status napi_open_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope* result) {
