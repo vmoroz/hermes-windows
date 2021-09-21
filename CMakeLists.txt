@@ -449,6 +449,12 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4201")
   # C4530 C++ exception handler used, but unwind semantics are not enabled
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4530")
+  # C4251 class X needs to have dll-interface to be used by clients of class Y
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4251")
+  # C4275: non dll-interface class X used as base for dll-interface class Y
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4275")
+  # C4646: function declared with 'noreturn' has non-void return type
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4646")
   # Parallelize build
   if (HERMES_MSVC_MP)
     add_definitions( /MP )
