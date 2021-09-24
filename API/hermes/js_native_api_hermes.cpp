@@ -28,18 +28,29 @@
 struct Marker {
   size_t ChunkIndex{0};
   size_t ItemIndex{0};
+
+  bool IsValid() const {
+    return ChunkIndex < std::numeric_limits<size_t>::max();
+  }
+
+  static const Marker InvalidMarker;
 };
+
+/*static*/ const Marker Marker::InvalidMarker{
+    std::numeric_limits<size_t>::max(),
+    0};
 
 template <typename T>
 struct NonMovableObjStack {
   NonMovableObjStack() {
+    // There is always at least one chunk in the storage
     std::vector<T> firstChunk;
     firstChunk.reserve(ChunkSize);
     m_storage.push_back(std::move(firstChunk));
   }
 
-  size_t size() const {
-    return m_size;
+  bool empty() const {
+    return m_storage[0].empty();
   }
 
   template <typename... TArgs>
@@ -52,7 +63,6 @@ struct NonMovableObjStack {
       storageChunk = m_storage.back();
     }
     storageChunk.emplace_back(std::forward<TArgs>(args)...);
-    ++m_size;
   }
 
   T &back() {
@@ -69,30 +79,74 @@ struct NonMovableObjStack {
     if (storageChunk.empty() && m_storage.size() > 1) {
       m_storage.pop_back();
     }
+
+    return true;
   }
 
   bool pop_marker(const Marker &marker) {
-    if (marker.ChunkIndex >= m_storage.size()) {
-      return false;
+    if (marker.ChunkIndex > m_storage.size()) {
+      return false; // Invalid ChunkIndex
+    } else if (marker.ChunkIndex == m_storage.size()) {
+      // ChunkIndex is valid only if ItemIndex is 0.
+      // In that case we have nothing to remove.
+      return marker.ItemIndex == 0;
     }
 
     auto &markerChunk = m_storage[marker.ChunkIndex];
     if (marker.ItemIndex >= markerChunk.size()) {
-      return false;
+      return false; // Invalid ItemIndex
     }
 
     if (marker.ChunkIndex < m_storage.size() - 1) {
+      // Delete the whole chunks
       m_storage.erase(
           m_storage.begin() + marker.ChunkIndex + 1, m_storage.end());
     }
 
-    markerChunk.erase(
-        markerChunk.begin() + marker.ItemIndex, markerChunk.end());
+    if (marker.ChunkIndex > 0 && marker.ItemIndex == 0) {
+      // Delete the last chunk
+      m_storage.erase(m_storage.begin() + marker.ChunkIndex, m_storage.end());
+    } else {
+      // Delete items in the marker chunk
+      markerChunk.erase(
+          markerChunk.begin() + marker.ItemIndex, markerChunk.end());
+    }
+
+    return true;
   }
 
+  // New marker points to a location where to insert a new element.
+  // Thus, it always points to an invalid location after the last element.
   Marker create_marker() {
-    auto lastChunkIndex = m_storage.size() - 1;
-    return {lastChunkIndex, m_storage[lastChunkIndex].size()};
+    auto &lastChunk = m_storage.back();
+    if (lastChunk.size() < lastChunk.capacity()) {
+      return {m_storage.size() - 1, lastChunk.size()};
+    } else {
+      return {m_storage.size(), 0};
+    }
+  }
+
+  Marker get_previous_marker(const Marker &marker) {
+    if (marker.ItemIndex > 0) {
+      return {marker.ChunkIndex, marker.ItemIndex - 1};
+    } else if (marker.ChunkIndex > 0) {
+      auto prevChunkIndex = marker.ChunkIndex - 1;
+      if (m_storage[prevChunkIndex].size() > 0) {
+        return {prevChunkIndex, m_storage[prevChunkIndex].size() - 1};
+      }
+    }
+    return Marker::InvalidMarker;
+  }
+
+  T *at(const Marker &marker) {
+    if (marker.ChunkIndex >= m_storage.size()) {
+      return nullptr;
+    }
+    auto &chunk = m_storage[marker.ChunkIndex];
+    if (marker.ItemIndex >= chunk.size()) {
+      return nullptr;
+    }
+    return &chunk[marker.ItemIndex];
   }
 
   template <typename F>
@@ -107,8 +161,8 @@ struct NonMovableObjStack {
  private:
   static const size_t ChunkSize = 16;
   static const size_t MaxChunkSize = 4096;
-  std::vector<std::vector<T>> m_storage;
-  size_t m_size{0};
+  std::vector<std::vector<T>>
+      m_storage; // There is always at least one chunk in the storage
 };
 
 struct napi_env__ {
@@ -215,6 +269,9 @@ struct napi_env__ {
  public:
   NonMovableObjStack<hermes::vm::PinnedHermesValue> m_stackValues;
   NonMovableObjStack<Marker> m_stackMarkers;
+  static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
+  static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
+      kEscapeableSentinelNativeValue + 1;
 };
 
 napi_status napi_create_hermes_env(napi_env *env) {
@@ -2745,16 +2802,16 @@ napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
   // JS exceptions.
   CHECK_ENV(env);
   CHECK_ARG(env, scope);
-  if (env->m_stackMarkers.size() == 0) {
+  if (env->m_stackMarkers.empty()) {
     return napi_handle_scope_mismatch;
   }
 
-  Marker& lastMarker = env->m_stackMarkers.back();
-  if (reinterpret_cast<Marker*>(scope) != &lastMarker) {
+  Marker &lastMarker = env->m_stackMarkers.back();
+  if (reinterpret_cast<Marker *>(scope) != &lastMarker) {
     return napi_handle_scope_mismatch;
   }
 
-  if (!env->m_stackValues.pop_marker(lastMarker)){
+  if (!env->m_stackValues.pop_marker(lastMarker)) {
     return napi_handle_scope_mismatch;
   }
 
@@ -2762,58 +2819,98 @@ napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
   return env->napi_clear_last_error();
 }
 
-#if 0
 napi_status napi_open_escapable_handle_scope(
     napi_env env,
-    napi_escapable_handle_scope* result) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
-  // JS exceptions.
+    napi_escapable_handle_scope *result) {
   CHECK_ENV(env);
   CHECK_ARG(env, result);
 
-  *result = v8impl::JsEscapableHandleScopeFromV8EscapableHandleScope(
-      new v8impl::EscapableHandleScopeWrapper(env->isolate));
-  env->open_handle_scopes++;
-  return napi_clear_last_error(env);
+  if (env->m_stackMarkers.empty()) {
+    return napi_handle_scope_mismatch;
+  }
+
+  env->m_stackValues.emplace_back(); // value to escape to parent scope
+  env->m_stackValues.emplace_back(hermes::vm::HermesValue::encodeNativeUInt32(
+      napi_env__::kEscapeableSentinelNativeValue));
+
+  return napi_open_handle_scope(
+      env, reinterpret_cast<napi_handle_scope *>(result));
 }
 
 napi_status napi_close_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope scope) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
-  // JS exceptions.
-  CHECK_ENV(env);
-  CHECK_ARG(env, scope);
-  if (env->open_handle_scopes == 0) {
-    return napi_handle_scope_mismatch;
+  auto status =
+      napi_close_handle_scope(env, reinterpret_cast<napi_handle_scope>(scope));
+
+  if (status == napi_status::napi_ok) {
+    auto &sentinelValue = env->m_stackValues.back();
+    if (sentinelValue.isNativeValue()) {
+      auto nativeValue = sentinelValue.getNativeUInt32();
+      if (nativeValue == napi_env__::kEscapeableSentinelNativeValue ||
+          nativeValue == napi_env__::kUsedEscapeableSentinelNativeValue) {
+        env->m_stackValues.pop_back();
+      } else {
+        status = napi_handle_scope_mismatch;
+      }
+    }
   }
 
-  delete v8impl::V8EscapableHandleScopeFromJsEscapableHandleScope(scope);
-  env->open_handle_scopes--;
-  return napi_clear_last_error(env);
+  return status;
 }
 
-napi_status napi_escape_handle(napi_env env,
-                               napi_escapable_handle_scope scope,
-                               napi_value escapee,
-                               napi_value* result) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
-  // JS exceptions.
+napi_status napi_escape_handle(
+    napi_env env,
+    napi_escapable_handle_scope scope,
+    napi_value escapee,
+    napi_value *result) {
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
+  // throw JS exceptions.
   CHECK_ENV(env);
   CHECK_ARG(env, scope);
   CHECK_ARG(env, escapee);
   CHECK_ARG(env, result);
 
-  v8impl::EscapableHandleScopeWrapper* s =
-      v8impl::V8EscapableHandleScopeFromJsEscapableHandleScope(scope);
-  if (!s->escape_called()) {
-    *result = v8impl::JsValueFromV8LocalValue(
-        s->Escape(v8impl::V8LocalValueFromJsValue(escapee)));
-    return napi_clear_last_error(env);
+  Marker *marker = reinterpret_cast<Marker *>(scope);
+  bool isValidMarker{false};
+  env->m_stackMarkers.for_each(
+      [&](const Marker &m) { isValidMarker |= &m == marker; });
+  if (!isValidMarker) {
+    return napi_invalid_arg;
   }
-  return napi_set_last_error(env, napi_escape_called_twice);
+
+  Marker sentinelMarker = env->m_stackValues.get_previous_marker(*marker);
+  if (!sentinelMarker.IsValid()) {
+    return napi_invalid_arg;
+  }
+  Marker escapedValueMarker =
+      env->m_stackValues.get_previous_marker(sentinelMarker);
+  if (!escapedValueMarker.IsValid()) {
+    return napi_invalid_arg;
+  }
+
+  hermes::vm::PinnedHermesValue *sentinelTag =
+      env->m_stackValues.at(sentinelMarker);
+  if (!sentinelTag || !sentinelTag->isNativeValue()) {
+    return napi_invalid_arg;
+  }
+  if (sentinelTag->getNativeUInt32() !=
+      napi_env__::kUsedEscapeableSentinelNativeValue) {
+    return env->napi_set_last_error(napi_escape_called_twice);
+  }
+  if (sentinelTag->getNativeUInt32() !=
+      napi_env__::kEscapeableSentinelNativeValue) {
+    return napi_invalid_arg;
+  }
+
+  hermes::vm::PinnedHermesValue *escapedValue =
+      env->m_stackValues.at(escapedValueMarker);
+  *escapedValue = *reinterpret_cast<hermes::vm::PinnedHermesValue *>(escapee);
+
+  return env->napi_clear_last_error();
 }
 
+#if 0
 napi_status napi_new_instance(napi_env env,
                               napi_value constructor,
                               size_t argc,
