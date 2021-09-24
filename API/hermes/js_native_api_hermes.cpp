@@ -444,6 +444,298 @@ struct ExtReferenceWithData : protected ExtReference {
 //   napi_ref weak_ref_{nullptr};
 // };
 
+// Adapter for napi_finalize callbacks.
+class Finalizer {
+ public:
+  // Some Finalizers are run during shutdown when the napi_env is destroyed,
+  // and some need to keep an explicit reference to the napi_env because they
+  // are run independently.
+  enum EnvReferenceMode { kNoEnvReference, kKeepEnvReference };
+
+ protected:
+  Finalizer(
+      NodeApiEnvironment *env,
+      napi_finalize finalize_callback,
+      void *finalize_data,
+      void *finalize_hint,
+      EnvReferenceMode refmode = kNoEnvReference)
+      : _env(env),
+        _finalize_callback(finalize_callback),
+        _finalize_data(finalize_data),
+        _finalize_hint(finalize_hint),
+        _has_env_reference(refmode == kKeepEnvReference) {
+    if (_has_env_reference)
+      _env->Ref();
+  }
+
+  ~Finalizer() {
+    if (_has_env_reference)
+      _env->Unref();
+  }
+
+ public:
+  static Finalizer *New(
+      NodeApiEnvironment *env,
+      napi_finalize finalize_callback = nullptr,
+      void *finalize_data = nullptr,
+      void *finalize_hint = nullptr,
+      EnvReferenceMode refmode = kNoEnvReference) {
+    return new Finalizer(
+        env, finalize_callback, finalize_data, finalize_hint, refmode);
+  }
+
+  static void Delete(Finalizer *finalizer) {
+    delete finalizer;
+  }
+
+ protected:
+  NodeApiEnvironment *_env;
+  napi_finalize _finalize_callback;
+  void *_finalize_data;
+  void *_finalize_hint;
+  bool _finalize_ran = false;
+  bool _has_env_reference = false;
+};
+
+// Wrapper around v8impl::Persistent that implements reference counting.
+class RefBase : protected Finalizer, RefTracker {
+ protected:
+  RefBase(
+      NodeApiEnvironment *env,
+      uint32_t initial_refcount,
+      bool delete_self,
+      napi_finalize finalize_callback,
+      void *finalize_data,
+      void *finalize_hint)
+      : Finalizer(env, finalize_callback, finalize_data, finalize_hint),
+        _refcount(initial_refcount),
+        _delete_self(delete_self) {
+    Link(
+        finalize_callback == nullptr ? &env->reflist
+                                     : &env->finalizing_reflist);
+  }
+
+ public:
+  static RefBase *New(
+      NodeApiEnvironment *env,
+      uint32_t initial_refcount,
+      bool delete_self,
+      napi_finalize finalize_callback,
+      void *finalize_data,
+      void *finalize_hint) {
+    return new RefBase(
+        env,
+        initial_refcount,
+        delete_self,
+        finalize_callback,
+        finalize_data,
+        finalize_hint);
+  }
+
+  virtual ~RefBase() {
+    Unlink();
+  }
+
+  inline void *Data() {
+    return _finalize_data;
+  }
+
+  // Delete is called in 2 ways. Either from the finalizer or
+  // from one of Unwrap or napi_delete_reference.
+  //
+  // When it is called from Unwrap or napi_delete_reference we only
+  // want to do the delete if the finalizer has already run or
+  // cannot have been queued to run (ie the reference count is > 0),
+  // otherwise we may crash when the finalizer does run.
+  // If the finalizer may have been queued and has not already run
+  // delay the delete until the finalizer runs by not doing the delete
+  // and setting _delete_self to true so that the finalizer will
+  // delete it when it runs.
+  //
+  // The second way this is called is from
+  // the finalizer and _delete_self is set. In this case we
+  // know we need to do the deletion so just do it.
+  static inline void Delete(RefBase *reference) {
+    if ((reference->RefCount() != 0) || (reference->_delete_self) ||
+        (reference->_finalize_ran)) {
+      delete reference;
+    } else {
+      // defer until finalizer runs as
+      // it may alread be queued
+      reference->_delete_self = true;
+    }
+  }
+
+  inline uint32_t Ref() {
+    return ++_refcount;
+  }
+
+  inline uint32_t Unref() {
+    if (_refcount == 0) {
+      return 0;
+    }
+    return --_refcount;
+  }
+
+  inline uint32_t RefCount() {
+    return _refcount;
+  }
+
+ protected:
+  inline void Finalize(bool is_env_teardown = false) override {
+    // In addition to being called during environment teardown, this method is
+    // also the entry point for the garbage collector. During environment
+    // teardown we have to remove the garbage collector's reference to this
+    // method so that, if, as part of the user's callback, JS gets executed,
+    // resulting in a garbage collection pass, this method is not re-entered as
+    // part of that pass, because that'll cause a double free (as seen in
+    // https://github.com/nodejs/node/issues/37236).
+    //
+    // Since this class does not have access to the V8 persistent reference,
+    // this method is overridden in the `Reference` class below. Therein the
+    // weak callback is removed, ensuring that the garbage collector does not
+    // re-enter this method, and the method chains up to continue the process of
+    // environment-teardown-induced finalization.
+
+    // During environment teardown we have to convert a strong reference to
+    // a weak reference to force the deferring behavior if the user's finalizer
+    // happens to delete this reference so that the code in this function that
+    // follows the call to the user's finalizer may safely access variables from
+    // this instance.
+    if (is_env_teardown && RefCount() > 0)
+      _refcount = 0;
+
+    if (_finalize_callback != nullptr) {
+      // This ensures that we never call the finalizer twice.
+      napi_finalize fini = _finalize_callback;
+      _finalize_callback = nullptr;
+      // TODO: [vmoroz] Implement
+      //_env->CallFinalizer(fini, _finalize_data, _finalize_hint);
+    }
+
+    // this is safe because if a request to delete the reference
+    // is made in the finalize_callback it will defer deletion
+    // to this block and set _delete_self to true
+    if (_delete_self || is_env_teardown) {
+      Delete(this);
+    } else {
+      _finalize_ran = true;
+    }
+  }
+
+ private:
+  uint32_t _refcount;
+  bool _delete_self;
+};
+
+class Reference : public RefBase {
+ protected:
+  template <typename... Args>
+  Reference(
+      NodeApiEnvironment *env,
+      hermes::vm::PinnedHermesValue value,
+      Args &&...args)
+      : RefBase(env, std::forward<Args>(args)...), _persistent(value) {
+    if (RefCount() == 0) {
+      // TODO: [vmoroz] Implement
+      // _persistent.SetWeak(
+      //     this, FinalizeCallback, v8::WeakCallbackType::kParameter);
+    }
+  }
+
+ public:
+  static inline Reference *New(
+      NodeApiEnvironment *env,
+      hermes::vm::PinnedHermesValue value,
+      uint32_t initial_refcount,
+      bool delete_self,
+      napi_finalize finalize_callback = nullptr,
+      void *finalize_data = nullptr,
+      void *finalize_hint = nullptr) {
+    return new Reference(
+        env,
+        value,
+        initial_refcount,
+        delete_self,
+        finalize_callback,
+        finalize_data,
+        finalize_hint);
+  }
+
+  inline uint32_t Ref() {
+    uint32_t refcount = RefBase::Ref();
+    // TODO: [vmoroz] Implement
+    // if (refcount == 1) {
+    //   _persistent.ClearWeak();
+    // }
+    return refcount;
+  }
+
+  inline uint32_t Unref() {
+    uint32_t old_refcount = RefCount();
+    uint32_t refcount = RefBase::Unref();
+    if (old_refcount == 1 && refcount == 0) {
+      // TODO: [vmoroz] Implement
+      // _persistent.SetWeak(
+      //     this, FinalizeCallback, v8::WeakCallbackType::kParameter);
+    }
+    return refcount;
+  }
+
+  hermes::vm::PinnedHermesValue *Get() {
+    // TODO: [vmoroz] Implement
+    // if (_persistent.IsEmpty()) {
+    //   return v8::Local<v8::Value>();
+    // } else {
+    //   return v8::Local<v8::Value>::New(_env->isolate, _persistent);
+    // }
+    return nullptr;
+  }
+
+ protected:
+  inline void Finalize(bool is_env_teardown = false) override {
+    // During env teardown, `~napi_env()` alone is responsible for finalizing.
+    // Thus, we don't want any stray gc passes to trigger a second call to
+    // `Finalize()`, so let's reset the persistent here if nothing is
+    // keeping it alive.
+    // TODO: [vmoroz] Implement
+    // if (is_env_teardown && _persistent.IsWeak()) {
+    //   _persistent.ClearWeak();
+    // }
+
+    // Chain up to perform the rest of the finalization.
+    RefBase::Finalize(is_env_teardown);
+  }
+
+ private:
+  // The N-API finalizer callback may make calls into the engine. V8's heap is
+  // not in a consistent state during the weak callback, and therefore it does
+  // not support calls back into it. However, it provides a mechanism for adding
+  // a finalizer which may make calls back into the engine by allowing us to
+  // attach such a second-pass finalizer from the first pass finalizer. Thus,
+  // we do that here to ensure that the N-API finalizer callback is free to call
+  // into the engine.
+  // TODO: [vmoroz] Implement
+  // static void FinalizeCallback(const v8::WeakCallbackInfo<Reference> &data) {
+  //   Reference *reference = data.GetParameter();
+
+  //   // The reference must be reset during the first pass.
+  //   // TODO: [vmoroz] Implement
+  //   // reference->_persistent.Reset();
+
+  //   // TODO: [vmoroz] Implement
+  //   // data.SetSecondPassCallback(SecondPassCallback);
+  // }
+
+  // TODO: [vmoroz] Implement
+  // static void SecondPassCallback(const v8::WeakCallbackInfo<Reference>& data)
+  // {
+  //   data.GetParameter()->Finalize();
+  // }
+
+  hermes::vm::PinnedHermesValue _persistent;
+};
+
 //=============================================================================
 // NodeApiEnvironment implementation
 //=============================================================================
@@ -460,7 +752,8 @@ static constexpr unsigned kMaxNumRegisters =
 } // namespace
 
 NodeApiEnvironment::NodeApiEnvironment(
-    const hermes::vm::RuntimeConfig &runtimeConfig = hermes::vm::RuntimeConfig{}) noexcept
+    const hermes::vm::RuntimeConfig &runtimeConfig =
+        hermes::vm::RuntimeConfig{}) noexcept
     :
 // TODO: pass parameters
 #ifdef HERMESJSI_ON_STACK
@@ -503,18 +796,19 @@ NodeApiEnvironment::NodeApiEnvironment(
   // Register the memory for the runtime if it isn't stored on the stack.
   crashMgr_->registerMemory(&runtime_, sizeof(hermes::vm::Runtime));
 #endif
-  // runtime_.addCustomRootsFunction(
-  //     [this](vm::GC *, vm::RootAcceptor &acceptor) {
-  //       for (auto it = hermesValues_->begin();
-  //            it != hermesValues_->end();) {
-  //         if (it->get() == 0) {
-  //           it = hermesValues_->erase(it);
-  //         } else {
-  //           acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
-  //           ++it;
-  //         }
-  //       }
-  //     });
+  runtime_.addCustomRootsFunction([this](hermes::vm::GC *, hermes::vm::RootAcceptor &acceptor) {
+    m_stackValues.for_each([&](const hermes::vm::PinnedHermesValue &phv) {
+      acceptor.accept(const_cast<hermes::vm::PinnedHermesValue &>(phv));
+    });
+    // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
+    //   if (it->get() == 0) {
+    //     it = hermesValues_->erase(it);
+    //   } else {
+    //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
+    //     ++it;
+    //   }
+    // }
+  });
   // runtime_.addCustomWeakRootsFunction(
   //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
   //       for (auto it = weakHermesValues_->begin();
