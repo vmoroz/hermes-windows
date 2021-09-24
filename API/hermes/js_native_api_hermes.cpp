@@ -11,7 +11,7 @@
 #define RETURN_STATUS_IF_FALSE(env, condition, status) \
   do {                                                 \
     if (!(condition)) {                                \
-      return env->napi_set_last_error((status));       \
+      return env->SetLastError((status));              \
     }                                                  \
   } while (0)
 
@@ -21,6 +21,10 @@
       return napi_invalid_arg; \
     }                          \
   } while (0)
+
+#define CHECKED_ENV(env)                \
+  ((env) == nullptr) ? napi_invalid_arg \
+                     : reinterpret_cast<NodeApiEnvironment *>(env)
 
 #define CHECK_ARG(env, arg) \
   RETURN_STATUS_IF_FALSE((env), ((arg) != nullptr), napi_invalid_arg)
@@ -165,8 +169,8 @@ struct NonMovableObjStack {
       m_storage; // There is always at least one chunk in the storage
 };
 
-struct napi_env__ {
-  explicit napi_env__() {
+struct NodeApiEnvironment {
+  explicit NodeApiEnvironment() {
     // TODO: pass parameters
     m_hermesRuntime = facebook::hermes::makeHermesRuntime();
     //   : isolate(context->GetIsolate()),
@@ -174,7 +178,7 @@ struct napi_env__ {
     // CHECK_EQ(isolate, context->GetIsolate());
   }
 
-  virtual ~napi_env__() {
+  virtual ~NodeApiEnvironment() {
     // First we must finalize those references that have `napi_finalizer`
     // callbacks. The reason is that addons might store other references which
     // they delete during their `napi_finalizer` callbacks. If we deleted such
@@ -191,14 +195,8 @@ struct napi_env__ {
   //   return v8impl::PersistentToLocal::Strong(context_persistent);
   // }
 
-  void Ref() {
-    m_refs++;
-  }
-
-  void Unref() {
-    if (--m_refs == 0)
-      delete this;
-  }
+  napi_status Ref() noexcept;
+  napi_status Unref() noexcept;
 
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
@@ -245,22 +243,22 @@ struct napi_env__ {
   // int open_callback_scopes = 0;
   // void* instance_data = nullptr;
 
-  napi_status napi_set_last_error(
+  napi_status SetLastError(
       napi_status error_code,
       uint32_t engine_error_code = 0,
-      void *engine_reserved = nullptr) {
-    last_error.error_code = error_code;
-    last_error.engine_error_code = engine_error_code;
-    last_error.engine_reserved = engine_reserved;
-    return error_code;
-  }
+      void *engine_reserved = nullptr) noexcept;
+  napi_status ClearLastError() noexcept;
 
-  napi_status napi_clear_last_error() {
-    last_error.error_code = napi_ok;
-    last_error.engine_error_code = 0;
-    last_error.engine_reserved = nullptr;
-    return napi_ok;
-  }
+  napi_status OpenHandleScope(napi_handle_scope *result) noexcept;
+  napi_status CloseHandleScope(napi_handle_scope scope) noexcept;
+  napi_status OpenEscapableHandleScope(
+      napi_escapable_handle_scope *result) noexcept;
+  napi_status CloseEscapableHandleScope(
+      napi_escapable_handle_scope scope) noexcept;
+  napi_status EscapeHandle(
+      napi_escapable_handle_scope scope,
+      napi_value escapee,
+      napi_value *result) noexcept;
 
  private:
   std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
@@ -274,24 +272,163 @@ struct napi_env__ {
       kEscapeableSentinelNativeValue + 1;
 };
 
+napi_status NodeApiEnvironment::Ref() noexcept {
+  m_refs++;
+  return napi_status::napi_ok;
+}
+
+napi_status NodeApiEnvironment::Unref() noexcept {
+  if (--m_refs == 0) {
+    delete this;
+  }
+  return napi_status::napi_ok;
+}
+
+napi_status NodeApiEnvironment::SetLastError(
+    napi_status error_code,
+    uint32_t engine_error_code,
+    void *engine_reserved) noexcept {
+  last_error.error_code = error_code;
+  last_error.engine_error_code = engine_error_code;
+  last_error.engine_reserved = engine_reserved;
+  return error_code;
+}
+
+napi_status NodeApiEnvironment::ClearLastError() noexcept {
+  last_error.error_code = napi_ok;
+  last_error.engine_error_code = 0;
+  last_error.engine_reserved = nullptr;
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::OpenHandleScope(
+    napi_handle_scope *result) noexcept {
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
+  // throw JS exceptions.
+  CHECK_ARG(this, result);
+
+  Marker stackMarker = m_stackValues.create_marker();
+  m_stackMarkers.emplace_back(std::move(stackMarker));
+  *result = reinterpret_cast<napi_handle_scope>(&m_stackMarkers.back());
+  return ClearLastError();
+}
+
+napi_status NodeApiEnvironment::CloseHandleScope(
+    napi_handle_scope scope) noexcept {
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
+  // throw JS exceptions.
+  CHECK_ARG(this, scope);
+  if (m_stackMarkers.empty()) {
+    return napi_handle_scope_mismatch;
+  }
+
+  Marker &lastMarker = m_stackMarkers.back();
+  if (reinterpret_cast<Marker *>(scope) != &lastMarker) {
+    return napi_handle_scope_mismatch;
+  }
+
+  if (!m_stackValues.pop_marker(lastMarker)) {
+    return napi_invalid_arg;
+  }
+
+  m_stackMarkers.pop_back();
+  return ClearLastError();
+}
+
+napi_status NodeApiEnvironment::OpenEscapableHandleScope(
+    napi_escapable_handle_scope *result) noexcept {
+  CHECK_ARG(this, result);
+
+  if (m_stackMarkers.empty()) {
+    return napi_invalid_arg;
+  }
+
+  m_stackValues.emplace_back(); // value to escape to parent scope
+  m_stackValues.emplace_back(hermes::vm::HermesValue::encodeNativeUInt32(
+      kEscapeableSentinelNativeValue));
+
+  return OpenHandleScope(reinterpret_cast<napi_handle_scope *>(result));
+}
+
+napi_status NodeApiEnvironment::CloseEscapableHandleScope(
+    napi_escapable_handle_scope scope) noexcept {
+  auto status = CloseHandleScope(reinterpret_cast<napi_handle_scope>(scope));
+
+  if (status == napi_status::napi_ok) {
+    auto &sentinelValue = m_stackValues.back();
+    if (sentinelValue.isNativeValue()) {
+      auto nativeValue = sentinelValue.getNativeUInt32();
+      if (nativeValue == kEscapeableSentinelNativeValue ||
+          nativeValue == kUsedEscapeableSentinelNativeValue) {
+        m_stackValues.pop_back();
+      } else {
+        status = napi_handle_scope_mismatch;
+      }
+    }
+  }
+
+  return status;
+}
+
+napi_status NodeApiEnvironment::EscapeHandle(
+    napi_escapable_handle_scope scope,
+    napi_value escapee,
+    napi_value *result) noexcept {
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
+  // throw JS exceptions.
+  CHECK_ARG(this, scope);
+  CHECK_ARG(this, escapee);
+  CHECK_ARG(this, result);
+
+  Marker *marker = reinterpret_cast<Marker *>(scope);
+  bool isValidMarker{false};
+  m_stackMarkers.for_each(
+      [&](const Marker &m) { isValidMarker |= &m == marker; });
+  if (!isValidMarker) {
+    return napi_invalid_arg;
+  }
+
+  Marker sentinelMarker = m_stackValues.get_previous_marker(*marker);
+  if (!sentinelMarker.IsValid()) {
+    return napi_invalid_arg;
+  }
+  Marker escapedValueMarker = m_stackValues.get_previous_marker(sentinelMarker);
+  if (!escapedValueMarker.IsValid()) {
+    return napi_invalid_arg;
+  }
+
+  hermes::vm::PinnedHermesValue *sentinelTag = m_stackValues.at(sentinelMarker);
+  if (!sentinelTag || !sentinelTag->isNativeValue()) {
+    return napi_invalid_arg;
+  }
+  if (sentinelTag->getNativeUInt32() != kUsedEscapeableSentinelNativeValue) {
+    return SetLastError(napi_escape_called_twice);
+  }
+  if (sentinelTag->getNativeUInt32() != kEscapeableSentinelNativeValue) {
+    return napi_invalid_arg;
+  }
+
+  hermes::vm::PinnedHermesValue *escapedValue =
+      m_stackValues.at(escapedValueMarker);
+  *escapedValue = *reinterpret_cast<hermes::vm::PinnedHermesValue *>(escapee);
+
+  return ClearLastError();
+}
+
 napi_status napi_create_hermes_env(napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = new napi_env__();
+  *env = reinterpret_cast<napi_env>(new NodeApiEnvironment());
   return napi_status::napi_ok;
 }
 
 napi_status napi_ext_env_ref(napi_env env) {
-  CHECK_ENV(env);
-  env->Ref();
-  return napi_status::napi_ok;
+  return CHECKED_ENV(env)->Ref();
 }
 
 napi_status napi_ext_env_unref(napi_env env) {
-  CHECK_ENV(env);
-  env->Unref();
-  return napi_status::napi_ok;
+  return CHECKED_ENV(env)->Unref();
 }
 
 #if 0
@@ -2786,77 +2923,23 @@ napi_status napi_get_reference_value(napi_env env,
 }
 #endif
 napi_status napi_open_handle_scope(napi_env env, napi_handle_scope *result) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
-  // throw JS exceptions.
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-
-  Marker stackMarker = env->m_stackValues.create_marker();
-  env->m_stackMarkers.emplace_back(std::move(stackMarker));
-  *result = reinterpret_cast<napi_handle_scope>(&env->m_stackMarkers.back());
-  return env->napi_clear_last_error();
+  return CHECKED_ENV(env)->OpenHandleScope(result);
 }
 
 napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
-  // JS exceptions.
-  CHECK_ENV(env);
-  CHECK_ARG(env, scope);
-  if (env->m_stackMarkers.empty()) {
-    return napi_handle_scope_mismatch;
-  }
-
-  Marker &lastMarker = env->m_stackMarkers.back();
-  if (reinterpret_cast<Marker *>(scope) != &lastMarker) {
-    return napi_handle_scope_mismatch;
-  }
-
-  if (!env->m_stackValues.pop_marker(lastMarker)) {
-    return napi_handle_scope_mismatch;
-  }
-
-  env->m_stackMarkers.pop_back();
-  return env->napi_clear_last_error();
+  return CHECKED_ENV(env)->CloseHandleScope(scope);
 }
 
 napi_status napi_open_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope *result) {
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-
-  if (env->m_stackMarkers.empty()) {
-    return napi_handle_scope_mismatch;
-  }
-
-  env->m_stackValues.emplace_back(); // value to escape to parent scope
-  env->m_stackValues.emplace_back(hermes::vm::HermesValue::encodeNativeUInt32(
-      napi_env__::kEscapeableSentinelNativeValue));
-
-  return napi_open_handle_scope(
-      env, reinterpret_cast<napi_handle_scope *>(result));
+  return CHECKED_ENV(env)->OpenEscapableHandleScope(result);
 }
 
 napi_status napi_close_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope scope) {
-  auto status =
-      napi_close_handle_scope(env, reinterpret_cast<napi_handle_scope>(scope));
-
-  if (status == napi_status::napi_ok) {
-    auto &sentinelValue = env->m_stackValues.back();
-    if (sentinelValue.isNativeValue()) {
-      auto nativeValue = sentinelValue.getNativeUInt32();
-      if (nativeValue == napi_env__::kEscapeableSentinelNativeValue ||
-          nativeValue == napi_env__::kUsedEscapeableSentinelNativeValue) {
-        env->m_stackValues.pop_back();
-      } else {
-        status = napi_handle_scope_mismatch;
-      }
-    }
-  }
-
-  return status;
+  return CHECKED_ENV(env)->CloseEscapableHandleScope(scope);
 }
 
 napi_status napi_escape_handle(
@@ -2864,50 +2947,7 @@ napi_status napi_escape_handle(
     napi_escapable_handle_scope scope,
     napi_value escapee,
     napi_value *result) {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw JS exceptions.
-  CHECK_ENV(env);
-  CHECK_ARG(env, scope);
-  CHECK_ARG(env, escapee);
-  CHECK_ARG(env, result);
-
-  Marker *marker = reinterpret_cast<Marker *>(scope);
-  bool isValidMarker{false};
-  env->m_stackMarkers.for_each(
-      [&](const Marker &m) { isValidMarker |= &m == marker; });
-  if (!isValidMarker) {
-    return napi_invalid_arg;
-  }
-
-  Marker sentinelMarker = env->m_stackValues.get_previous_marker(*marker);
-  if (!sentinelMarker.IsValid()) {
-    return napi_invalid_arg;
-  }
-  Marker escapedValueMarker =
-      env->m_stackValues.get_previous_marker(sentinelMarker);
-  if (!escapedValueMarker.IsValid()) {
-    return napi_invalid_arg;
-  }
-
-  hermes::vm::PinnedHermesValue *sentinelTag =
-      env->m_stackValues.at(sentinelMarker);
-  if (!sentinelTag || !sentinelTag->isNativeValue()) {
-    return napi_invalid_arg;
-  }
-  if (sentinelTag->getNativeUInt32() !=
-      napi_env__::kUsedEscapeableSentinelNativeValue) {
-    return env->napi_set_last_error(napi_escape_called_twice);
-  }
-  if (sentinelTag->getNativeUInt32() !=
-      napi_env__::kEscapeableSentinelNativeValue) {
-    return napi_invalid_arg;
-  }
-
-  hermes::vm::PinnedHermesValue *escapedValue =
-      env->m_stackValues.at(escapedValueMarker);
-  *escapedValue = *reinterpret_cast<hermes::vm::PinnedHermesValue *>(escapee);
-
-  return env->napi_clear_last_error();
+  return CHECKED_ENV(env)->EscapeHandle(scope, escapee, result);
 }
 
 #if 0
