@@ -4,8 +4,15 @@
 #include <cmath>
 #include <vector>
 #define NAPI_EXPERIMENTAL
+
+#include "llvh/Support/Compiler.h"
+
 #include "hermes.h"
+#include "hermes/BCGen/HBC/BytecodeDataProvider.h"
+#include "hermes/BCGen/HBC/BytecodeFileFormat.h"
+#include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/VM/Runtime.h"
+
 #include "hermes_napi.h"
 
 #define RETURN_STATUS_IF_FALSE(env, condition, status) \
@@ -169,24 +176,50 @@ struct NonMovableObjStack {
       m_storage; // There is always at least one chunk in the storage
 };
 
-struct NodeApiEnvironment {
-  explicit NodeApiEnvironment() {
-    // TODO: pass parameters
-    m_hermesRuntime = facebook::hermes::makeHermesRuntime();
-    //   : isolate(context->GetIsolate()),
-    //     context_persistent(isolate, context) {
-    // CHECK_EQ(isolate, context->GetIsolate());
+struct NodeApiEnvironment;
+
+struct RefTracker {
+  RefTracker() {}
+  virtual ~RefTracker() {}
+  virtual void Finalize(bool isEnvTeardown) {}
+
+  using RefList = RefTracker;
+
+  void Link(RefList *list) {
+    prev_ = list;
+    next_ = list->next_;
+    if (next_ != nullptr) {
+      next_->prev_ = this;
+    }
+    list->next_ = this;
   }
 
-  virtual ~NodeApiEnvironment() {
-    // First we must finalize those references that have `napi_finalizer`
-    // callbacks. The reason is that addons might store other references which
-    // they delete during their `napi_finalizer` callbacks. If we deleted such
-    // references here first, they would be doubly deleted when the
-    // `napi_finalizer` deleted them subsequently.
-    // v8impl::RefTracker::FinalizeAll(&finalizing_reflist);
-    // v8impl::RefTracker::FinalizeAll(&reflist);
+  void Unlink() {
+    if (prev_ != nullptr) {
+      prev_->next_ = next_;
+    }
+    if (next_ != nullptr) {
+      next_->prev_ = prev_;
+    }
+    prev_ = nullptr;
+    next_ = nullptr;
   }
+
+  static void FinalizeAll(RefList *list) {
+    while (list->next_ != nullptr) {
+      list->next_->Finalize(true);
+    }
+  }
+
+ private:
+  RefList *next_ = nullptr;
+  RefList *prev_ = nullptr;
+};
+
+struct NodeApiEnvironment {
+  explicit NodeApiEnvironment(
+      const hermes::vm::RuntimeConfig &runtimeConfig) noexcept;
+  virtual ~NodeApiEnvironment();
 
   // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
   // v8impl::Persistent<v8::Context> context_persistent;
@@ -210,7 +243,8 @@ struct NodeApiEnvironment {
   // }
 
   // template <typename T, typename U = decltype(HandleThrow)>
-  // inline void CallIntoModule(T&& call, U&& handle_exception = HandleThrow) {
+  // inline void CallIntoModule(T&& call, U&& handle_exception = HandleThrow)
+  // {
   //   int open_handle_scopes_before = open_handle_scopes;
   //   int open_callback_scopes_before = open_callback_scopes;
   //   napi_clear_last_error(this);
@@ -232,16 +266,14 @@ struct NodeApiEnvironment {
 
   // v8impl::Persistent<v8::Value> last_exception;
 
-  // // We store references in two different lists, depending on whether they
-  // have
-  // // `napi_finalizer` callbacks, because we must first finalize the ones that
-  // // have such a callback. See `~napi_env__()` above for details.
-  // v8impl::RefTracker::RefList reflist;
-  // v8impl::RefTracker::RefList finalizing_reflist;
+  // We store references in two different lists, depending on whether they
+  // have `napi_finalizer` callbacks, because we must first finalize the ones
+  // that have such a callback. See `~NodeApiEnvironment()` above for details.
+  RefTracker::RefList reflist;
+  RefTracker::RefList finalizing_reflist;
   napi_extended_error_info last_error;
-  // int open_handle_scopes = 0;
   // int open_callback_scopes = 0;
-  // void* instance_data = nullptr;
+  void *instance_data{nullptr};
 
   napi_status SetLastError(
       napi_status error_code,
@@ -261,7 +293,24 @@ struct NodeApiEnvironment {
       napi_value *result) noexcept;
 
  private:
-  std::unique_ptr<facebook::hermes::HermesRuntime> m_hermesRuntime;
+#ifdef HERMESJSI_ON_STACK
+  StackRuntime stackRuntime_;
+#else
+  std::shared_ptr<::hermes::vm::Runtime> rt_;
+#endif
+  ::hermes::vm::Runtime &runtime_;
+#ifdef HERMES_ENABLE_DEBUGGER
+  friend class debugger::Debugger;
+  std::unique_ptr<debugger::Debugger> debugger_;
+#endif
+  ::hermes::vm::experiments::VMExperimentFlags vmExperimentFlags_{0};
+  std::shared_ptr<hermes::vm::CrashManager> crashMgr_;
+
+  /// Compilation flags used by prepareJavaScript().
+  hermes::hbc::CompileFlags compileFlags_{};
+  /// The default setting of "emit async break check" in this runtime.
+  bool defaultEmitAsyncBreakCheck_{false};
+
   std::atomic<int> m_refs{1};
 
  public:
@@ -271,6 +320,259 @@ struct NodeApiEnvironment {
   static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
       kEscapeableSentinelNativeValue + 1;
 };
+
+// Reference counter implementation.
+struct ExtRefCounter : protected RefTracker {
+  ~ExtRefCounter() override {
+    Unlink();
+  }
+
+  void Ref() {
+    ++ref_count_;
+  }
+
+  void Unref() {
+    if (--ref_count_ == 0) {
+      Finalize(false);
+    }
+  }
+
+  virtual hermes::vm::PinnedHermesValue *Get(NodeApiEnvironment *env) = 0;
+
+ protected:
+  ExtRefCounter(NodeApiEnvironment *env) {
+    Link(&env->reflist);
+  }
+
+  void Finalize(bool is_env_teardown) override {
+    delete this;
+  }
+
+ private:
+  uint32_t ref_count_{1};
+};
+
+// Wrapper around v8impl::Persistent that implements reference counting.
+struct ExtReference : protected ExtRefCounter {
+  static ExtReference *New(
+      NodeApiEnvironment *env,
+      hermes::vm::PinnedHermesValue &value) {
+    return new ExtReference(env, value);
+  }
+
+  hermes::vm::PinnedHermesValue *Get(NodeApiEnvironment * /*env*/) override {
+    return &persistent_;
+  }
+
+ protected:
+  ExtReference(NodeApiEnvironment *env, hermes::vm::PinnedHermesValue value)
+      : ExtRefCounter(env), persistent_(value) {}
+
+ private:
+  hermes::vm::PinnedHermesValue persistent_;
+};
+
+// Associates data with ExtReference.
+struct ExtReferenceWithData : protected ExtReference {
+  static ExtReferenceWithData *New(
+      NodeApiEnvironment *env,
+      hermes::vm::PinnedHermesValue value,
+      void *native_object,
+      napi_finalize finalize_cb,
+      void *finalize_hint) {
+    return new ExtReferenceWithData(
+        env, value, native_object, finalize_cb, finalize_hint);
+  }
+
+ protected:
+  ExtReferenceWithData(
+      NodeApiEnvironment *env,
+      hermes::vm::PinnedHermesValue value,
+      void *native_object,
+      napi_finalize finalize_cb,
+      void *finalize_hint)
+      : ExtReference(env, value),
+        env_{env},
+        native_object_{native_object},
+        finalize_cb_{finalize_cb},
+        finalize_hint_{finalize_hint} {}
+
+  void Finalize(bool is_env_teardown) override {
+    if (finalize_cb_) {
+      finalize_cb_(
+          reinterpret_cast<napi_env>(env_), native_object_, finalize_hint_);
+      finalize_cb_ = nullptr;
+    }
+    ExtReference::Finalize(is_env_teardown);
+  }
+
+ private:
+  NodeApiEnvironment *env_{nullptr};
+  void *native_object_{nullptr};
+  napi_finalize finalize_cb_{nullptr};
+  void *finalize_hint_{nullptr};
+};
+
+// Wrapper around v8impl::Persistent that implements reference counting.
+// TODO:
+// struct ExtWeakReference : protected ExtRefCounter {
+//   static ExtWeakReference *New(napi_env env,
+//   hermes::vm::WeakRef<hermes::vm::HermesValue> value) {
+//     return new ExtWeakReference(env, value);
+//   }
+
+//   ~ExtWeakReference() override {
+//     napi_delete_reference(env_, weak_ref_);
+//   }
+
+//   v8::Local<v8::Value> Get(napi_env env) override {
+//     napi_value result{};
+//     napi_get_reference_value(env, weak_ref_, &result);
+//     return result ? v8impl::V8LocalValueFromJsValue(result) :
+//     v8::Local<v8::Value>();
+//   }
+
+//  protected:
+//   ExtWeakReference(napi_env env, v8::Local<v8::Value> value) :
+//   ExtRefCounter(env), env_{env} {
+//     napi_create_reference(env, v8impl::JsValueFromV8LocalValue(value), 0,
+//     &weak_ref_);
+//   }
+
+//  private:
+//   napi_env env_{nullptr};
+//   napi_ref weak_ref_{nullptr};
+// };
+
+//=============================================================================
+// NodeApiEnvironment implementation
+//=============================================================================
+
+namespace {
+// Max size of the runtime's register stack.
+// The runtime register stack needs to be small enough to be allocated on the
+// native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
+// Calculated by: (thread stack size - size of runtime -
+// 8 memory pages for other stuff in the thread)
+static constexpr unsigned kMaxNumRegisters =
+    (512 * 1024 - sizeof(::hermes::vm::Runtime) - 4096 * 8) /
+    sizeof(::hermes::vm::PinnedHermesValue);
+} // namespace
+
+NodeApiEnvironment::NodeApiEnvironment(
+    const hermes::vm::RuntimeConfig &runtimeConfig = hermes::vm::RuntimeConfig{}) noexcept
+    :
+// TODO: pass parameters
+#ifdef HERMESJSI_ON_STACK
+      stackRuntime_(runtimeConfig),
+      runtime_(stackRuntime_.getRuntime()),
+#else
+      rt_(hermes::vm::Runtime::create(runtimeConfig.rebuild()
+                                          .withRegisterStack(nullptr)
+                                          .withMaxNumRegisters(kMaxNumRegisters)
+                                          .build())),
+      runtime_(*rt_),
+#endif
+      vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()),
+      crashMgr_(runtimeConfig.getCrashMgr()) {
+  compileFlags_.optimize = false;
+#ifdef HERMES_ENABLE_DEBUGGER
+  compileFlags_.debug = true;
+#endif
+
+  switch (runtimeConfig.getCompilationMode()) {
+    case hermes::vm::SmartCompilation:
+      compileFlags_.lazy = true;
+      // (Leaves thresholds at default values)
+      break;
+    case hermes::vm::ForceEagerCompilation:
+      compileFlags_.lazy = false;
+      break;
+    case hermes::vm::ForceLazyCompilation:
+      compileFlags_.lazy = true;
+      compileFlags_.preemptiveFileCompilationThreshold = 0;
+      compileFlags_.preemptiveFunctionCompilationThreshold = 0;
+      break;
+  }
+
+  compileFlags_.enableGenerator = runtimeConfig.getEnableGenerator();
+  compileFlags_.emitAsyncBreakCheck = defaultEmitAsyncBreakCheck_ =
+      runtimeConfig.getAsyncBreakCheckInEval();
+
+#ifndef HERMESJSI_ON_STACK
+  // Register the memory for the runtime if it isn't stored on the stack.
+  crashMgr_->registerMemory(&runtime_, sizeof(hermes::vm::Runtime));
+#endif
+  // runtime_.addCustomRootsFunction(
+  //     [this](vm::GC *, vm::RootAcceptor &acceptor) {
+  //       for (auto it = hermesValues_->begin();
+  //            it != hermesValues_->end();) {
+  //         if (it->get() == 0) {
+  //           it = hermesValues_->erase(it);
+  //         } else {
+  //           acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
+  //           ++it;
+  //         }
+  //       }
+  //     });
+  // runtime_.addCustomWeakRootsFunction(
+  //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
+  //       for (auto it = weakHermesValues_->begin();
+  //            it != weakHermesValues_->end();) {
+  //         if (it->get() == 0) {
+  //           it = weakHermesValues_->erase(it);
+  //         } else {
+  //           acceptor.accept(it->wr);
+  //           ++it;
+  //         }
+  //       }
+  //     });
+  // runtime_.addCustomSnapshotFunction(
+  //     [this](vm::HeapSnapshot &snap) {
+  //       snap.beginNode();
+  //       snap.endNode(
+  //           vm::HeapSnapshot::NodeType::Native,
+  //           "ManagedValues",
+  //           vm::GCBase::IDTracker::reserved(
+  //               vm::GCBase::IDTracker::ReservedObjectID::
+  //                   JSIHermesValueList),
+  //           hermesValues_->size() * sizeof(HermesPointerValue),
+  //           0);
+  //       snap.beginNode();
+  //       snap.endNode(
+  //           vm::HeapSnapshot::NodeType::Native,
+  //           "ManagedValues",
+  //           vm::GCBase::IDTracker::reserved(
+  //               vm::GCBase::IDTracker::ReservedObjectID::
+  //                   JSIWeakHermesValueList),
+  //           weakHermesValues_->size() * sizeof(WeakRefPointerValue),
+  //           0);
+  //     },
+  //     [](vm::HeapSnapshot &snap) {
+  //       snap.addNamedEdge(
+  //           vm::HeapSnapshot::EdgeType::Internal,
+  //           "hermesValues",
+  //           vm::GCBase::IDTracker::reserved(
+  //               vm::GCBase::IDTracker::ReservedObjectID::
+  //                   JSIHermesValueList));
+  //       snap.addNamedEdge(
+  //           vm::HeapSnapshot::EdgeType::Internal,
+  //           "weakHermesValues",
+  //           vm::GCBase::IDTracker::reserved(
+  //               vm::GCBase::IDTracker::ReservedObjectID::
+  //                   JSIWeakHermesValueList));
+  //     });
+}
+
+NodeApiEnvironment::~NodeApiEnvironment() {
+  // First we must finalize those references that have `napi_finalizer`
+  // callbacks. The reason is that addons might store other references which
+  // they delete during their `napi_finalizer` callbacks. If we deleted such
+  // references here first, they would be doubly deleted when the
+  // `napi_finalizer` deleted them subsequently.
+  RefTracker::FinalizeAll(&finalizing_reflist);
+  RefTracker::FinalizeAll(&reflist);
+}
 
 napi_status NodeApiEnvironment::Ref() noexcept {
   m_refs++;
