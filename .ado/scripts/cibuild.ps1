@@ -13,10 +13,13 @@ param(
     [String]$ToolsConfiguration = @("release"), # Platform used for building tools when cross compiling
     
     [ValidateSet("debug", "release")]
-    [String[]]$Configuration = @("release"),
+    [String[]]$Configuration = @("debug"),
     
     [ValidateSet("win32", "uwp")]
     [String]$AppPlatform = "uwp",
+
+    # e.g. "10.0.17763.0"
+    [String]$SDKVersion = "",
    
     [switch]$RunTests,
     [switch]$Incremental,
@@ -80,7 +83,11 @@ function Get-VCVarsParam($plat = "x64", $arch = "win32") {
         $args_ = "$args_ uwp"
     }
 
-    return $args_
+    if($SDKVersion) {
+        $args_ = "$args_ $SDKVersion"
+    }
+
+return $args_
 }
 
 function Get-CMakeConfiguration($config) {
@@ -215,7 +222,7 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
     if ($AppPlatform -eq "uwp") {
         $genArgs += '-DCMAKE_CXX_STANDARD=17'
         $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
-        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.15063"'
+        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.17763.0"'
         $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 

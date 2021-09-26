@@ -25,6 +25,8 @@ else()
       LINK_LIBS
       ${CORE_FOUNDATION}
   )
+
+  target_link_libraries(hermesPlatformUnicode PRIVATE ${ICU_LIBRARIES})
 endif()
 
 hermes_link_icu(hermesPlatformUnicode)
