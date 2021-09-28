@@ -13,6 +13,10 @@
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/VM/Runtime.h"
 
+#include "hermes/VM/StringPrimitive.h"
+
+#include "llvh/Support/ConvertUTF.h"
+
 #include "hermes_napi.h"
 
 #define RETURN_STATUS_IF_FALSE(env, condition, status) \
@@ -294,8 +298,67 @@ struct NodeApiEnvironment {
 
   napi_status GetGlobal(napi_value *result) noexcept;
 
+  napi_status CreateStringAscii(
+      const char *str,
+      size_t length,
+      napi_value *result) noexcept;
+  napi_status
+  CreateStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status CreateStringUtf16(
+      const char16_t *str,
+      size_t length,
+      napi_value *result) noexcept;
+
   // Utility
+  hermes::vm::HermesValue StringHVFromAscii(const char *str, size_t length);
+  hermes::vm::HermesValue StringHVFromUtf8(const uint8_t *utf8, size_t length);
   napi_value AddStackValue(hermes::vm::HermesValue value) noexcept;
+
+  template <typename F>
+  napi_status HandleExceptions(const F &f) {
+    try {
+#ifdef HERMESVM_EXCEPTION_ON_OOM
+      try {
+        f();
+      } catch (const ::hermes::vm::JSOutOfMemoryError &ex) {
+        // We surface this as a JSINativeException -- the out of memory
+        // exception is not part of the spec.
+        throw ::facebook::jsi::JSINativeException(ex.what());
+      }
+#else // HERMESVM_EXCEPTION_ON_OOM
+      f();
+#endif
+      return ClearLastError();
+    } catch (...) {
+      return napi_generic_failure;
+    }
+  }
+
+  void CheckStatus(hermes::vm::ExecutionStatus status) {
+    if (LLVM_LIKELY(status != hermes::vm::ExecutionStatus::EXCEPTION)) {
+      return;
+    }
+
+    // TODO: [vmoroz] implement
+    // jsi::Value exception = valueFromHermesValue(runtime_.getThrownValue());
+    // runtime_.clearThrownValue();
+    // // Here, we increment the depth to detect recursion in error handling.
+    // vm::ScopedNativeDepthTracker depthTracker{&runtime_};
+    // if (LLVM_LIKELY(!depthTracker.overflowed())) {
+    //   auto ex = jsi::JSError(*this, std::move(exception));
+    //   LOG_EXCEPTION_CAUSE("JSI rethrowing JS exception: %s", ex.what());
+    //   throw ex;
+    // }
+
+    // (void)runtime_.raiseStackOverflow(
+    //     vm::Runtime::StackOverflowKind::NativeStack);
+    // exception = valueFromHermesValue(runtime_.getThrownValue());
+    // runtime_.clearThrownValue();
+    // // Here, we give us a little more room so we can call into JS to
+    // // populate the JSError members.
+    // vm::ScopedNativeDepthReducer reducer(&runtime_);
+    // throw jsi::JSError(*this, std::move(exception));
+  }
 
  private:
 #ifdef HERMESJSI_ON_STACK
@@ -1020,11 +1083,105 @@ napi_status NodeApiEnvironment::EscapeHandle(
 napi_status NodeApiEnvironment::GetGlobal(napi_value *result) noexcept {
   // TODO: validate stack scope
   CHECK_ARG(this, result);
-
   *result = AddStackValue(runtime_.getGlobal().getHermesValue());
-  ;
-
   return ClearLastError();
+}
+
+hermes::vm::HermesValue NodeApiEnvironment::StringHVFromAscii(
+    const char *str,
+    size_t length) {
+  auto strRes = hermes::vm::StringPrimitive::createEfficient(
+      &runtime_, llvh::makeArrayRef(str, length));
+  CheckStatus(strRes.getStatus());
+  return *strRes;
+}
+
+static void
+convertUtf8ToUtf16(const uint8_t *utf8, size_t length, std::u16string &out) {
+  // length is the number of input bytes
+  out.resize(length);
+  const llvh::UTF8 *sourceStart = (const llvh::UTF8 *)utf8;
+  const llvh::UTF8 *sourceEnd = sourceStart + length;
+  llvh::UTF16 *targetStart = (llvh::UTF16 *)&out[0];
+  llvh::UTF16 *targetEnd = targetStart + out.size();
+  llvh::ConversionResult cRes;
+  cRes = ConvertUTF8toUTF16(
+      &sourceStart,
+      sourceEnd,
+      &targetStart,
+      targetEnd,
+      llvh::lenientConversion);
+  (void)cRes;
+  assert(
+      cRes != llvh::ConversionResult::targetExhausted &&
+      "not enough space allocated for UTF16 conversion");
+  out.resize((char16_t *)targetStart - &out[0]);
+}
+
+hermes::vm::HermesValue NodeApiEnvironment::StringHVFromUtf8(
+    const uint8_t *utf8,
+    size_t length) {
+  if (::hermes::isAllASCII(utf8, utf8 + length)) {
+    return StringHVFromAscii((const char *)utf8, length);
+  }
+  std::u16string out;
+  convertUtf8ToUtf16(utf8, length, out);
+  auto strRes =
+      hermes::vm::StringPrimitive::createEfficient(&runtime_, std::move(out));
+  CheckStatus(strRes.getStatus());
+  return *strRes;
+}
+
+napi_status NodeApiEnvironment::CreateStringAscii(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  CHECK_ARG(this, result);
+  RETURN_STATUS_IF_FALSE(
+      this,
+      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
+      napi_invalid_arg);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(StringHVFromAscii(str, length));
+  });
+}
+
+napi_status NodeApiEnvironment::CreateStringUtf8(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  // TODO: validate stack scope
+  CHECK_ARG(this, result);
+  RETURN_STATUS_IF_FALSE(
+      this,
+      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
+      napi_invalid_arg);
+
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(
+        StringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length));
+  });
+}
+
+napi_status NodeApiEnvironment::CreateStringUtf16(
+    const char16_t *str,
+    size_t length,
+    napi_value *result) noexcept {
+  CHECK_ARG(this, result);
+  RETURN_STATUS_IF_FALSE(
+      this,
+      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
+      napi_invalid_arg);
+
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    auto strRes = hermes::vm::StringPrimitive::createEfficient(
+        &runtime_, llvh::makeArrayRef(str, length));
+    CheckStatus(strRes.getStatus());
+    *result = AddStackValue(*strRes);
+  });
 }
 
 napi_value NodeApiEnvironment::AddStackValue(
@@ -2455,72 +2612,33 @@ napi_status napi_create_array_with_length(napi_env env,
 
   return napi_clear_last_error(env);
 }
+#endif
 
-napi_status napi_create_string_latin1(napi_env env,
-                                      const char* str,
-                                      size_t length,
-                                      napi_value* result) {
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-  RETURN_STATUS_IF_FALSE(env,
-      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
-      napi_invalid_arg);
-
-  auto isolate = env->isolate;
-  auto str_maybe =
-      v8::String::NewFromOneByte(isolate,
-                                 reinterpret_cast<const uint8_t*>(str),
-                                 v8::NewStringType::kNormal,
-                                 length);
-  CHECK_MAYBE_EMPTY(env, str_maybe, napi_generic_failure);
-
-  *result = v8impl::JsValueFromV8LocalValue(str_maybe.ToLocalChecked());
-  return napi_clear_last_error(env);
+napi_status napi_create_string_latin1(
+    napi_env env,
+    const char *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->CreateStringAscii(str, length, result);
 }
 
-napi_status napi_create_string_utf8(napi_env env,
-                                    const char* str,
-                                    size_t length,
-                                    napi_value* result) {
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-  RETURN_STATUS_IF_FALSE(env,
-      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
-      napi_invalid_arg);
-
-  auto isolate = env->isolate;
-  auto str_maybe =
-      v8::String::NewFromUtf8(isolate,
-                              str,
-                              v8::NewStringType::kNormal,
-                              static_cast<int>(length));
-  CHECK_MAYBE_EMPTY(env, str_maybe, napi_generic_failure);
-  *result = v8impl::JsValueFromV8LocalValue(str_maybe.ToLocalChecked());
-  return napi_clear_last_error(env);
+napi_status napi_create_string_utf8(
+    napi_env env,
+    const char *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->CreateStringUtf8(str, length, result);
 }
 
-napi_status napi_create_string_utf16(napi_env env,
-                                     const char16_t* str,
-                                     size_t length,
-                                     napi_value* result) {
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-  RETURN_STATUS_IF_FALSE(env,
-      (length == NAPI_AUTO_LENGTH) || length <= INT_MAX,
-      napi_invalid_arg);
-
-  auto isolate = env->isolate;
-  auto str_maybe =
-      v8::String::NewFromTwoByte(isolate,
-                                 reinterpret_cast<const uint16_t*>(str),
-                                 v8::NewStringType::kNormal,
-                                 length);
-  CHECK_MAYBE_EMPTY(env, str_maybe, napi_generic_failure);
-
-  *result = v8impl::JsValueFromV8LocalValue(str_maybe.ToLocalChecked());
-  return napi_clear_last_error(env);
+napi_status napi_create_string_utf16(
+    napi_env env,
+    const char16_t *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->CreateStringUtf16(str, length, result);
 }
 
+#if 0
 napi_status napi_create_double(napi_env env,
                                double value,
                                napi_value* result) {
