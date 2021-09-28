@@ -292,6 +292,11 @@ struct NodeApiEnvironment {
       napi_value escapee,
       napi_value *result) noexcept;
 
+  napi_status GetGlobal(napi_value *result) noexcept;
+
+  // Utility
+  napi_value AddStackValue(hermes::vm::HermesValue value) noexcept;
+
  private:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
@@ -796,19 +801,20 @@ NodeApiEnvironment::NodeApiEnvironment(
   // Register the memory for the runtime if it isn't stored on the stack.
   crashMgr_->registerMemory(&runtime_, sizeof(hermes::vm::Runtime));
 #endif
-  runtime_.addCustomRootsFunction([this](hermes::vm::GC *, hermes::vm::RootAcceptor &acceptor) {
-    m_stackValues.for_each([&](const hermes::vm::PinnedHermesValue &phv) {
-      acceptor.accept(const_cast<hermes::vm::PinnedHermesValue &>(phv));
-    });
-    // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
-    //   if (it->get() == 0) {
-    //     it = hermesValues_->erase(it);
-    //   } else {
-    //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
-    //     ++it;
-    //   }
-    // }
-  });
+  runtime_.addCustomRootsFunction(
+      [this](hermes::vm::GC *, hermes::vm::RootAcceptor &acceptor) {
+        m_stackValues.for_each([&](const hermes::vm::PinnedHermesValue &phv) {
+          acceptor.accept(const_cast<hermes::vm::PinnedHermesValue &>(phv));
+        });
+        // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
+        //   if (it->get() == 0) {
+        //     it = hermesValues_->erase(it);
+        //   } else {
+        //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
+        //     ++it;
+        //   }
+        // }
+      });
   // runtime_.addCustomWeakRootsFunction(
   //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
   //       for (auto it = weakHermesValues_->begin();
@@ -1009,6 +1015,22 @@ napi_status NodeApiEnvironment::EscapeHandle(
   *escapedValue = *reinterpret_cast<hermes::vm::PinnedHermesValue *>(escapee);
 
   return ClearLastError();
+}
+
+napi_status NodeApiEnvironment::GetGlobal(napi_value *result) noexcept {
+  // TODO: validate stack scope
+  CHECK_ARG(this, result);
+
+  *result = AddStackValue(runtime_.getGlobal().getHermesValue());
+  ;
+
+  return ClearLastError();
+}
+
+napi_value NodeApiEnvironment::AddStackValue(
+    hermes::vm::HermesValue value) noexcept {
+  m_stackValues.emplace_back(value);
+  return reinterpret_cast<napi_value>(&m_stackValues.back());
 }
 
 napi_status napi_create_hermes_env(napi_env *env) {
@@ -2858,16 +2880,13 @@ napi_status napi_call_function(napi_env env,
     return napi_clear_last_error(env);
   }
 }
+#endif
 
-napi_status napi_get_global(napi_env env, napi_value* result) {
-  CHECK_ENV(env);
-  CHECK_ARG(env, result);
-
-  *result = v8impl::JsValueFromV8LocalValue(env->context()->Global());
-
-  return napi_clear_last_error(env);
+napi_status napi_get_global(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->GetGlobal(result);
 }
 
+#if 0
 napi_status napi_throw(napi_env env, napi_value error) {
   NAPI_PREAMBLE(env);
   CHECK_ARG(env, error);
