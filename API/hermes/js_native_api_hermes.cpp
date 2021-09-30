@@ -2485,23 +2485,15 @@ napi_status NodeApiEnvironment::TypeOf(
 }
 
 napi_status NodeApiEnvironment::GetUndefined(napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(v8::Undefined(env->isolate));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  *result = AddStackValue(runtime_.getUndefinedValue().getHermesValue());
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetNull(napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(v8::Null(env->isolate));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  *result = AddStackValue(runtime_.getNullValue().getHermesValue());
+  return ClearLastError();
 }
 
 // Gets all callback info in a single call. (Ugly, but faster.)
