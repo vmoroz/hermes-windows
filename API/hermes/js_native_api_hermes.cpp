@@ -2207,53 +2207,49 @@ napi_status NodeApiEnvironment::CreateStringUtf16(
 napi_status NodeApiEnvironment::CreateNumber(
     double value,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result =
-  //     v8impl::JsValueFromV8LocalValue(v8::Number::New(env->isolate, value));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeUntrustedDoubleValue(value)).getHermesValue());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::CreateNumber(
     int32_t value,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result =
-  //     v8impl::JsValueFromV8LocalValue(v8::Integer::New(env->isolate, value));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::CreateNumber(
     uint32_t value,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(
-  //     v8::Integer::NewFromUnsigned(env->isolate, value));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::CreateNumber(
     int64_t value,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(
-  //     v8::Number::New(env->isolate, static_cast<double>(value)));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    *result = AddStackValue(runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::CreateBigInt(
@@ -2308,19 +2304,9 @@ napi_status NodeApiEnvironment::CreateBigInt(
 napi_status NodeApiEnvironment::GetBoolean(
     bool value,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Isolate *isolate = env->isolate;
-
-  // if (value) {
-  //   *result = v8impl::JsValueFromV8LocalValue(v8::True(isolate));
-  // } else {
-  //   *result = v8impl::JsValueFromV8LocalValue(v8::False(isolate));
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  *result = AddStackValue(runtime_.getBoolValue(value).getHermesValue());
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::CreateSymbol(
