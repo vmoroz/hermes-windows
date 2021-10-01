@@ -17,6 +17,9 @@
 
 #include "llvh/Support/ConvertUTF.h"
 
+#include "hermes/VM/JSArray.h"
+#include "hermes/VM/JSArrayBuffer.h"
+
 #include "hermes_napi.h"
 
 #define RETURN_STATUS_IF_FALSE(env, condition, status) \
@@ -39,6 +42,17 @@
 
 #define CHECK_ARG(env, arg) \
   RETURN_STATUS_IF_FALSE((env), ((arg) != nullptr), napi_invalid_arg)
+
+// #define CHECK_TO_TYPE(env, type, context, result, src, status)                \
+//   do {                                                                        \
+//     CHECK_ARG((env), (src));                                                  \
+//     auto maybe = v8impl::V8LocalValueFromJsValue((src))->To##type((context)); \
+//     CHECK_MAYBE_EMPTY((env), maybe, (status));                                \
+//     (result) = maybe.ToLocalChecked();                                        \
+//   } while (0)
+
+// #define CHECK_TO_OBJECT(env, context, result, src) \
+//   CHECK_TO_TYPE((env), Object, (context), (result), (src), napi_object_expected)
 
 struct Marker {
   size_t ChunkIndex{0};
@@ -278,6 +292,12 @@ struct NodeApiEnvironment {
   napi_extended_error_info last_error;
   // int open_callback_scopes = 0;
   void *instance_data{nullptr};
+
+  static hermes::vm::PinnedHermesValue &phv(napi_value value) noexcept;
+  static hermes::vm::Handle<::hermes::vm::JSObject> handle(
+      napi_value value) noexcept;
+  static hermes::vm::Handle<hermes::vm::HermesValue> stringHandle(
+      napi_value value) noexcept;
 
   napi_status SetLastError(
       napi_status error_code,
@@ -1717,14 +1737,22 @@ napi_status NodeApiEnvironment::GetProperty(
     napi_value key,
     napi_value *result) noexcept {
   // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, key);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, key);
+  CHECK_ARG(this, result);
 
   // v8::Local<v8::Context> context = env->context();
   // v8::Local<v8::Value> k = v8impl::V8LocalValueFromJsValue(key);
   // v8::Local<v8::Object> obj;
 
   // CHECK_TO_OBJECT(env, context, obj, object);
+
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    auto h = handle(object);
+    auto res = h->getComputed_RJS(h, &runtime_, stringHandle(key));
+    CheckStatus(res.getStatus());
+    *result = AddStackValue(res->get());
+  });
 
   // auto get_maybe = obj->Get(context, k);
 
@@ -1733,7 +1761,6 @@ napi_status NodeApiEnvironment::GetProperty(
   // v8::Local<v8::Value> val = get_maybe.ToLocalChecked();
   // *result = v8impl::JsValueFromV8LocalValue(val);
   // return GET_RETURN_STATUS(env);
-  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::DeleteProperty(
@@ -2130,26 +2157,26 @@ napi_status NodeApiEnvironment::CreateObject(napi_value *result) noexcept {
 }
 
 napi_status NodeApiEnvironment::CreateArray(napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(v8::Array::New(env->isolate));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    auto res =
+        hermes::vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
+    CheckStatus(res.getStatus());
+    *result = AddStackValue(res->getHermesValue());
+  });
 }
 
 napi_status NodeApiEnvironment::CreateArray(
     size_t length,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result =
-  //     v8impl::JsValueFromV8LocalValue(v8::Array::New(env->isolate, length));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(this, result);
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    auto res = hermes::vm::JSArray::create(&runtime_, length, length);
+    CheckStatus(res.getStatus());
+    *result = AddStackValue(res->getHermesValue());
+  });
 }
 
 napi_status NodeApiEnvironment::CreateStringLatin1(
@@ -2210,8 +2237,11 @@ napi_status NodeApiEnvironment::CreateNumber(
   CHECK_ARG(this, result);
   return HandleExceptions([&] {
     hermes::vm::GCScope gcScope(&runtime_);
-    *result = AddStackValue(runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeUntrustedDoubleValue(value)).getHermesValue());
+    *result = AddStackValue(
+        runtime_
+            .makeHandle(
+                hermes::vm::HermesValue::encodeUntrustedDoubleValue(value))
+            .getHermesValue());
     return ClearLastError();
   });
 }
@@ -2222,8 +2252,9 @@ napi_status NodeApiEnvironment::CreateNumber(
   CHECK_ARG(this, result);
   return HandleExceptions([&] {
     hermes::vm::GCScope gcScope(&runtime_);
-    *result = AddStackValue(runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    *result = AddStackValue(
+        runtime_.makeHandle(hermes::vm::HermesValue::encodeNumberValue(value))
+            .getHermesValue());
     return ClearLastError();
   });
 }
@@ -2234,8 +2265,9 @@ napi_status NodeApiEnvironment::CreateNumber(
   CHECK_ARG(this, result);
   return HandleExceptions([&] {
     hermes::vm::GCScope gcScope(&runtime_);
-    *result = AddStackValue(runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    *result = AddStackValue(
+        runtime_.makeHandle(hermes::vm::HermesValue::encodeNumberValue(value))
+            .getHermesValue());
     return ClearLastError();
   });
 }
@@ -2246,8 +2278,9 @@ napi_status NodeApiEnvironment::CreateNumber(
   CHECK_ARG(this, result);
   return HandleExceptions([&] {
     hermes::vm::GCScope gcScope(&runtime_);
-    *result = AddStackValue(runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeNumberValue(value)).getHermesValue());
+    *result = AddStackValue(
+        runtime_.makeHandle(hermes::vm::HermesValue::encodeNumberValue(value))
+            .getHermesValue());
     return ClearLastError();
   });
 }
@@ -3434,15 +3467,40 @@ napi_status NodeApiEnvironment::NewInstance(
   return napi_ok;
 }
 
+hermes::vm::PinnedHermesValue &NodeApiEnvironment::phv(
+    napi_value value) noexcept {
+  return *reinterpret_cast<hermes::vm::PinnedHermesValue *>(value);
+}
+
+hermes::vm::Handle<hermes::vm::JSObject> NodeApiEnvironment::handle(
+    napi_value value) noexcept {
+  return hermes::vm::Handle<::hermes::vm::JSObject>::vmcast(&phv(value));
+}
+
+hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::stringHandle(
+    napi_value value) noexcept {
+  return ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&phv(value));
+}
+
 napi_status NodeApiEnvironment::InstanceOf(
     napi_value object,
     napi_value constructor,
     bool *result) noexcept {
   // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, object);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, object);
+  CHECK_ARG(this, result);
 
-  // *result = false;
+  *result = false;
+
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    auto res = hermes::vm::instanceOfOperator_RJS(
+        &runtime_,
+        runtime_.makeHandle(phv(object)),
+        runtime_.makeHandle(phv(constructor)));
+    CheckStatus(res.getStatus());
+    *result = *res;
+  });
 
   // v8::Local<v8::Object> ctor;
   // v8::Local<v8::Context> context = env->context();
@@ -3463,7 +3521,7 @@ napi_status NodeApiEnvironment::InstanceOf(
   // CHECK_MAYBE_NOTHING(env, maybe_result, status);
   // *result = maybe_result.FromJust();
   // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  // return napi_ok;
 }
 
 // Methods to support catching exceptions
@@ -3501,21 +3559,26 @@ napi_status NodeApiEnvironment::GetAndClearLastException(
 napi_status NodeApiEnvironment::IsArrayBuffer(
     napi_value value,
     bool *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // *result = val->IsArrayBuffer();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = hermes::vm::vmisa<hermes::vm::JSArrayBuffer>(phv(value));
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::CreateArrayBuffer(
     size_t byte_length,
     void **data,
     napi_value *result) noexcept {
+  // CHECK_ARG(this, result);
+  // return HandleExceptions([&] {
+  //   hermes::vm::GCScope gcScope(&runtime_);
+  //   hermes::vm::JSArrayBuffer::create(&runtime_, ) auto res =
+  //       hermes::vm::JSArray::create(&runtime_, length, length);
+  //   CheckStatus(res.getStatus());
+  //   *result = AddStackValue(res->getHermesValue());
+  // });
+
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
 
