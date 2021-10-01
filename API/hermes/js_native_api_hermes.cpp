@@ -2470,20 +2470,19 @@ napi_status NodeApiEnvironment::TypeOf(
 
   if (hv.isNumber()) {
     *result = napi_number;
-    //} else if (v->IsBigInt()) {
+    // BigInt is not supported by Hermes yet.
+    //} else if (hv.IsBigInt()) {
     //   *result = napi_bigint;
   } else if (hv.isString()) {
     *result = napi_string;
-    // } else if (v->IsFunction()) {
-    //   // This test has to come before IsObject because IsFunction
-    //   // implies IsObject
-    //   *result = napi_function;
-    // } else if (v->IsExternal()) {
-    //   // This test has to come before IsObject because IsExternal
-    //   // implies IsObject
-    //   *result = napi_external;
   } else if (hv.isObject()) {
-    *result = napi_object;
+    if (hermes::vm::vmisa<hermes::vm::Callable>(hv)) {
+      *result = napi_function;
+    } else if (hermes::vm::vmisa<hermes::vm::HostObject>(hv)) {
+      *result = napi_external;
+    } else {
+      *result = napi_object;
+    }
   } else if (hv.isBool()) {
     *result = napi_boolean;
   } else if (hv.isUndefined() || hv.isEmpty()) {
