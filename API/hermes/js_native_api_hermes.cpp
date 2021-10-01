@@ -1206,6 +1206,35 @@ class Reference : public RefBase {
 // NodeApiEnvironment implementation
 //=============================================================================
 
+// Base class extended by classes that wrap V8 function and property callback
+// info.
+class CallbackWrapper {
+ public:
+  inline CallbackWrapper(napi_value this_arg, size_t args_length, void *data)
+      : _this(this_arg), _args_length(args_length), _data(data) {}
+
+  virtual napi_value GetNewTarget() = 0;
+  virtual void Args(napi_value *buffer, size_t bufferlength) = 0;
+  virtual void SetReturnValue(napi_value value) = 0;
+
+  napi_value This() {
+    return _this;
+  }
+
+  size_t ArgsLength() {
+    return _args_length;
+  }
+
+  void *Data() {
+    return _data;
+  }
+
+ protected:
+  const napi_value _this;
+  const size_t _args_length;
+  void *_data;
+};
+
 namespace {
 // Max size of the runtime's register stack.
 // The runtime register stack needs to be small enough to be allocated on the
@@ -2521,43 +2550,37 @@ napi_status NodeApiEnvironment::GetCallbackInfo(
     napi_value *argv, // [out] Array of values
     napi_value *this_arg, // [out] Receives the JS 'this' arg for the call
     void **data) noexcept { // [out] Receives the data pointer for the callback.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, cbinfo);
+  CHECK_ARG(this, cbinfo);
 
-  // v8impl::CallbackWrapper *info =
-  //     reinterpret_cast<v8impl::CallbackWrapper *>(cbinfo);
+  CallbackWrapper *info = reinterpret_cast<CallbackWrapper *>(cbinfo);
 
-  // if (argv != nullptr) {
-  //   CHECK_ARG(env, argc);
-  //   info->Args(argv, *argc);
-  // }
-  // if (argc != nullptr) {
-  //   *argc = info->ArgsLength();
-  // }
-  // if (this_arg != nullptr) {
-  //   *this_arg = info->This();
-  // }
-  // if (data != nullptr) {
-  //   *data = info->Data();
-  // }
+  if (argv != nullptr) {
+    CHECK_ARG(this, argc);
+    info->Args(argv, *argc);
+  }
+  if (argc != nullptr) {
+    *argc = info->ArgsLength();
+  }
+  if (this_arg != nullptr) {
+    *this_arg = info->This();
+  }
+  if (data != nullptr) {
+    *data = info->Data();
+  }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetNewTarget(
     napi_callback_info cbinfo,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, cbinfo);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, cbinfo);
+  CHECK_ARG(this, result);
 
-  // v8impl::CallbackWrapper *info =
-  //     reinterpret_cast<v8impl::CallbackWrapper *>(cbinfo);
+  CallbackWrapper *info = reinterpret_cast<CallbackWrapper *>(cbinfo);
 
-  // *result = info->GetNewTarget();
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = info->GetNewTarget();
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::CallFunction(
@@ -2580,8 +2603,9 @@ napi_status NodeApiEnvironment::CallFunction(
         !runtime_.checkAvailableStack((uint32_t)argc)) {
       LOG_EXCEPTION_CAUSE(
           "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
-      //throw jsi::JSINativeException(
-      //    "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
+      // throw jsi::JSINativeException(
+      //    "NodeApiEnvironment::CallFunction: Unable to call function: stack
+      //    overflow");
     }
 
     auto &stats = runtime_.getRuntimeStats();
@@ -2855,20 +2879,17 @@ napi_status NodeApiEnvironment::GetBigIntValue(
 napi_status NodeApiEnvironment::GetBoolValue(
     napi_value value,
     bool *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
+  // JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsBoolean(), napi_boolean_expected);
+  auto& val = phv(value);
+  RETURN_STATUS_IF_FALSE(this, val.isBool(), napi_boolean_expected);
 
-  // *result = val.As<v8::Boolean>()->Value();
+  *result = val.getBool();
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 // Copies a JavaScript string into a LATIN-1 string buffer. The result is the
