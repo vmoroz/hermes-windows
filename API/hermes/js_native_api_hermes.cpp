@@ -2461,46 +2461,43 @@ napi_status NodeApiEnvironment::CreateRangeError(
 napi_status NodeApiEnvironment::TypeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
+  // throw JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> v = v8impl::V8LocalValueFromJsValue(value);
+  hermes::vm::PinnedHermesValue &hv = phv(value);
 
-  // if (v->IsNumber()) {
-  //   *result = napi_number;
-  // } else if (v->IsBigInt()) {
-  //   *result = napi_bigint;
-  // } else if (v->IsString()) {
-  //   *result = napi_string;
-  // } else if (v->IsFunction()) {
-  //   // This test has to come before IsObject because IsFunction
-  //   // implies IsObject
-  //   *result = napi_function;
-  // } else if (v->IsExternal()) {
-  //   // This test has to come before IsObject because IsExternal
-  //   // implies IsObject
-  //   *result = napi_external;
-  // } else if (v->IsObject()) {
-  //   *result = napi_object;
-  // } else if (v->IsBoolean()) {
-  //   *result = napi_boolean;
-  // } else if (v->IsUndefined()) {
-  //   *result = napi_undefined;
-  // } else if (v->IsSymbol()) {
-  //   *result = napi_symbol;
-  // } else if (v->IsNull()) {
-  //   *result = napi_null;
-  // } else {
-  //   // Should not get here unless V8 has added some new kind of value.
-  //   return napi_set_last_error(env, napi_invalid_arg);
-  // }
+  if (hv.isNumber()) {
+    *result = napi_number;
+    //} else if (v->IsBigInt()) {
+    //   *result = napi_bigint;
+  } else if (hv.isString()) {
+    *result = napi_string;
+    // } else if (v->IsFunction()) {
+    //   // This test has to come before IsObject because IsFunction
+    //   // implies IsObject
+    //   *result = napi_function;
+    // } else if (v->IsExternal()) {
+    //   // This test has to come before IsObject because IsExternal
+    //   // implies IsObject
+    //   *result = napi_external;
+  } else if (hv.isObject()) {
+    *result = napi_object;
+  } else if (hv.isBool()) {
+    *result = napi_boolean;
+  } else if (hv.isUndefined() || hv.isEmpty()) {
+    *result = napi_undefined;
+  } else if (hv.isSymbol()) {
+    *result = napi_symbol;
+  } else if (hv.isNull()) {
+    *result = napi_null;
+  } else {
+    // Should not get here unless Hermes has added some new kind of value.
+    return SetLastError(napi_invalid_arg);
+  }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetUndefined(napi_value *result) noexcept {
