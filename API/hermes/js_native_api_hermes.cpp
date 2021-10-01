@@ -13,6 +13,8 @@
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/VM/Runtime.h"
 
+#include "hermes/VM/Callable.h"
+#include "hermes/VM/HostModel.h"
 #include "hermes/VM/StringPrimitive.h"
 
 #include "llvh/Support/ConvertUTF.h"
@@ -1736,13 +1738,8 @@ napi_status NodeApiEnvironment::GetProperty(
     napi_value object,
     napi_value key,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
   CHECK_ARG(this, key);
   CHECK_ARG(this, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Value> k = v8impl::V8LocalValueFromJsValue(key);
-  // v8::Local<v8::Object> obj;
 
   // CHECK_TO_OBJECT(env, context, obj, object);
 
@@ -1753,14 +1750,6 @@ napi_status NodeApiEnvironment::GetProperty(
     CheckStatus(res.getStatus());
     *result = AddStackValue(res->get());
   });
-
-  // auto get_maybe = obj->Get(context, k);
-
-  // CHECK_MAYBE_EMPTY(env, get_maybe, napi_generic_failure);
-
-  // v8::Local<v8::Value> val = get_maybe.ToLocalChecked();
-  // *result = v8impl::JsValueFromV8LocalValue(val);
-  // return GET_RETURN_STATUS(env);
 }
 
 napi_status NodeApiEnvironment::DeleteProperty(
@@ -2466,7 +2455,7 @@ napi_status NodeApiEnvironment::TypeOf(
   CHECK_ARG(this, value);
   CHECK_ARG(this, result);
 
-  hermes::vm::PinnedHermesValue &hv = phv(value);
+  const hermes::vm::PinnedHermesValue &hv = phv(value);
 
   if (hv.isNumber()) {
     *result = napi_number;
@@ -2737,27 +2726,16 @@ napi_status NodeApiEnvironment::GetNumberValue(
 napi_status NodeApiEnvironment::GetNumberValue(
     napi_value value,
     uint32_t *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
+  // JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
+  hermes::vm::PinnedHermesValue &hv = phv(value);
+  RETURN_STATUS_IF_FALSE(this, hv.isNumber(), napi_number_expected);
+  *result = hv.getNumberAs<uint32_t>();
 
-  // if (val->IsUint32()) {
-  //   *result = val.As<v8::Uint32>()->Value();
-  // } else {
-  //   RETURN_STATUS_IF_FALSE(env, val->IsNumber(), napi_number_expected);
-
-  //   // Empty context: https://github.com/nodejs/node/issues/14379
-  //   v8::Local<v8::Context> context;
-  //   *result = val->Uint32Value(context).FromJust();
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetNumberValue(
