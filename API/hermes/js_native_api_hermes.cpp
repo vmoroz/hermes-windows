@@ -24,6 +24,19 @@
 
 #include "hermes_napi.h"
 
+using ::hermes::hermesLog;
+
+// Android OSS has a bug where exception data can get mangled when going via
+// fbjni. This macro can be used to expose the root cause in adb log. It serves
+// no purpose other than as a backup.
+#ifdef __ANDROID__
+#define LOG_EXCEPTION_CAUSE(...) hermesLog("HermesVM", __VA_ARGS__)
+#else
+#define LOG_EXCEPTION_CAUSE(...) \
+  do {                           \
+  } while (0)
+#endif
+
 #define RETURN_STATUS_IF_FALSE(env, condition, status) \
   do {                                                 \
     if (!(condition)) {                                \
@@ -2554,12 +2567,45 @@ napi_status NodeApiEnvironment::CallFunction(
     const napi_value *argv,
     napi_value *result) noexcept {
   // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, recv);
-  // if (argc > 0) {
-  //   CHECK_ARG(env, argv);
-  // }
+  CHECK_ARG(this, recv);
+  if (argc > 0) {
+    CHECK_ARG(this, argv);
+  }
 
-  // v8::Local<v8::Context> context = env->context();
+  return HandleExceptions([&] {
+    hermes::vm::GCScope gcScope(&runtime_);
+    hermes::vm::Handle<hermes::vm::Callable> handle =
+        hermes::vm::Handle<hermes::vm::Callable>::vmcast(&phv(func));
+    if (argc > std::numeric_limits<uint32_t>::max() ||
+        !runtime_.checkAvailableStack((uint32_t)argc)) {
+      LOG_EXCEPTION_CAUSE(
+          "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
+      //throw jsi::JSINativeException(
+      //    "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
+    }
+
+    auto &stats = runtime_.getRuntimeStats();
+    const hermes::vm::instrumentation::RAIITimer timer{
+        "Incoming Function", stats, stats.incomingFunction};
+    hermes::vm::ScopedNativeCallFrame newFrame{
+        &runtime_,
+        static_cast<uint32_t>(argc),
+        handle.getHermesValue(),
+        hermes::vm::HermesValue::encodeUndefinedValue(),
+        phv(recv)};
+    if (LLVM_UNLIKELY(newFrame.overflowed())) {
+      CheckStatus(runtime_.raiseStackOverflow(
+          ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack));
+    }
+
+    for (uint32_t i = 0; i < argc; ++i) {
+      newFrame->getArgRef(i) = phv(argv[i]);
+    }
+    auto callRes = hermes::vm::Callable::call(handle, &runtime_);
+    CheckStatus(callRes.getStatus());
+
+    *result = AddStackValue(callRes->get());
+  });
 
   // v8::Local<v8::Value> v8recv = v8impl::V8LocalValueFromJsValue(recv);
 
@@ -2582,7 +2628,6 @@ napi_status NodeApiEnvironment::CallFunction(
   //   }
   //   return napi_clear_last_error(env);
   // }
-  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::GetGlobal(napi_value *result) noexcept {
@@ -2681,46 +2726,31 @@ napi_status NodeApiEnvironment::IsError(
 napi_status NodeApiEnvironment::GetNumberValue(
     napi_value value,
     double *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
+  // JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsNumber(), napi_number_expected);
+  hermes::vm::PinnedHermesValue &hv = phv(value);
+  RETURN_STATUS_IF_FALSE(this, hv.isNumber(), napi_number_expected);
+  *result = hv.getNumberAs<double>();
 
-  // *result = val.As<v8::Number>()->Value();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetNumberValue(
     napi_value value,
     int32_t *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
+  // JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
+  hermes::vm::PinnedHermesValue &hv = phv(value);
+  RETURN_STATUS_IF_FALSE(this, hv.isNumber(), napi_number_expected);
+  *result = hv.getNumberAs<int32_t>();
 
-  // if (val->IsInt32()) {
-  //   *result = val.As<v8::Int32>()->Value();
-  // } else {
-  //   RETURN_STATUS_IF_FALSE(env, val->IsNumber(), napi_number_expected);
-
-  //   // Empty context: https://github.com/nodejs/node/issues/14379
-  //   v8::Local<v8::Context> context;
-  //   *result = val->Int32Value(context).FromJust();
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetNumberValue(
@@ -2741,38 +2771,16 @@ napi_status NodeApiEnvironment::GetNumberValue(
 napi_status NodeApiEnvironment::GetNumberValue(
     napi_value value,
     int64_t *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot throw
+  // JS exceptions.
+  CHECK_ARG(this, value);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
+  hermes::vm::PinnedHermesValue &hv = phv(value);
+  RETURN_STATUS_IF_FALSE(this, hv.isNumber(), napi_number_expected);
+  *result = hv.getNumberAs<int64_t>();
 
-  // // This is still a fast path very likely to be taken.
-  // if (val->IsInt32()) {
-  //   *result = val.As<v8::Int32>()->Value();
-  //   return napi_clear_last_error(env);
-  // }
-
-  // RETURN_STATUS_IF_FALSE(env, val->IsNumber(), napi_number_expected);
-
-  // // v8::Value::IntegerValue() converts NaN, +Inf, and -Inf to INT64_MIN,
-  // // inconsistent with v8::Value::Int32Value() which converts those values to
-  // 0.
-  // // Special-case all non-finite values to match that behavior.
-  // double doubleValue = val.As<v8::Number>()->Value();
-  // if (std::isfinite(doubleValue)) {
-  //   // Empty context: https://github.com/nodejs/node/issues/14379
-  //   v8::Local<v8::Context> context;
-  //   *result = val->IntegerValue(context).FromJust();
-  // } else {
-  //   *result = 0;
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetBigIntValue(
