@@ -21,6 +21,7 @@
 
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
+#include "hermes/VM/JSError.h"
 
 #include "hermes_napi.h"
 
@@ -2427,66 +2428,81 @@ napi_status NodeApiEnvironment::CreateError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, msg);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, msg);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> message_value = v8impl::V8LocalValueFromJsValue(msg);
-  // RETURN_STATUS_IF_FALSE(env, message_value->IsString(),
-  // napi_string_expected);
+  hermes::vm::GCScope gcScope{&runtime_};
 
-  // v8::Local<v8::Value> error_obj =
-  //     v8::Exception::Error(message_value.As<v8::String>());
+  RETURN_STATUS_IF_FALSE(this, phv(msg).isString(), napi_string_expected);
+
+  auto err = hermes::vm::JSError::create(
+      &runtime_,
+      hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
+          &runtime_.ErrorPrototype));
+
+  hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
+  hermes::vm::JSError::setMessage(
+      hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+      &runtime_,
+      stringHandle(msg));
   // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
-  // *result = v8impl::JsValueFromV8LocalValue(error_obj);
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = AddStackValue(err_phv);
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::CreateTypeError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, msg);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, msg);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> message_value = v8impl::V8LocalValueFromJsValue(msg);
-  // RETURN_STATUS_IF_FALSE(env, message_value->IsString(),
-  // napi_string_expected);
+  hermes::vm::GCScope gcScope{&runtime_};
 
-  // v8::Local<v8::Value> error_obj =
-  //     v8::Exception::TypeError(message_value.As<v8::String>());
+  RETURN_STATUS_IF_FALSE(this, phv(msg).isString(), napi_string_expected);
+
+  auto err = hermes::vm::JSError::create(
+      &runtime_,
+      hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
+          &runtime_.TypeErrorPrototype));
+
+  hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
+  hermes::vm::JSError::setMessage(
+      hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+      &runtime_,
+      stringHandle(msg));
   // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
-  // *result = v8impl::JsValueFromV8LocalValue(error_obj);
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = AddStackValue(err_phv);
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::CreateRangeError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, msg);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, msg);
+  CHECK_ARG(this, result);
 
-  // v8::Local<v8::Value> message_value = v8impl::V8LocalValueFromJsValue(msg);
-  // RETURN_STATUS_IF_FALSE(env, message_value->IsString(),
-  // napi_string_expected);
+  hermes::vm::GCScope gcScope{&runtime_};
 
-  // v8::Local<v8::Value> error_obj =
-  //     v8::Exception::RangeError(message_value.As<v8::String>());
+  RETURN_STATUS_IF_FALSE(this, phv(msg).isString(), napi_string_expected);
+
+  auto err = hermes::vm::JSError::create(
+      &runtime_,
+      hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
+          &runtime_.RangeErrorPrototype));
+
+  hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
+  hermes::vm::JSError::setMessage(
+      hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+      &runtime_,
+      stringHandle(msg));
   // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
-  // *result = v8impl::JsValueFromV8LocalValue(error_obj);
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = AddStackValue(err_phv);
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::TypeOf(
@@ -2884,7 +2900,7 @@ napi_status NodeApiEnvironment::GetBoolValue(
   CHECK_ARG(this, value);
   CHECK_ARG(this, result);
 
-  auto& val = phv(value);
+  auto &val = phv(value);
   RETURN_STATUS_IF_FALSE(this, val.isBool(), napi_boolean_expected);
 
   *result = val.getBool();
