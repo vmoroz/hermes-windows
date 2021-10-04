@@ -780,12 +780,17 @@ struct NodeApiEnvironment {
 
   std::atomic<int> m_refs{1};
 
+  // TODO: use it as a GC root
+  hermes::vm::PinnedHermesValue lastException_{EmptyHermesValue};
+
  public:
   NonMovableObjStack<hermes::vm::PinnedHermesValue> m_stackValues;
   NonMovableObjStack<Marker> m_stackMarkers;
   static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
   static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
       kEscapeableSentinelNativeValue + 1;
+  static constexpr hermes::vm::HermesValue EmptyHermesValue{
+      hermes::vm::HermesValue::encodeEmptyValue()};
 };
 
 // Reference counter implementation.
@@ -3545,34 +3550,28 @@ napi_status NodeApiEnvironment::InstanceOf(
 
 // Methods to support catching exceptions
 napi_status NodeApiEnvironment::IsExceptionPending(bool *result) noexcept {
-  // // NAPI_PREAMBLE is not used here: this function must execute when there is
-  // a
-  // // pending exception.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
+  // NAPI_PREAMBLE is not used here: this function must execute when there is a
+  // pending exception.
+  CHECK_ARG(this, result);
 
-  // *result = !env->last_exception.IsEmpty();
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = !lastException_.isEmpty();
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::GetAndClearLastException(
     napi_value *result) noexcept {
   // NAPI_PREAMBLE is not used here: this function must execute when there is a
   // pending exception.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
+  CHECK_ARG(this, result);
 
-  // if (env->last_exception.IsEmpty()) {
-  //   return napi_get_undefined(env, result);
-  // } else {
-  //   *result = v8impl::JsValueFromV8LocalValue(
-  //       v8::Local<v8::Value>::New(env->isolate, env->last_exception));
-  //   env->last_exception.Reset();
-  // }
+  if (lastException_.isEmpty()) {
+    return GetUndefined(result);
+  } else {
+    *result = AddStackValue(lastException_);
+    lastException_ = EmptyHermesValue;
+  }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::IsArrayBuffer(
