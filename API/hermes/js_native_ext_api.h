@@ -26,13 +26,6 @@ typedef enum {
 typedef struct napi_ext_env_scope__ *napi_ext_env_scope;
 typedef struct napi_ext_ref__ *napi_ext_ref;
 
-// A callback to return buffer synchronously
-typedef void (*napi_ext_buffer_callback)(
-    napi_env env,
-    uint8_t const *buffer,
-    size_t buffer_length,
-    void *buffer_hint);
-
 // A callback to run task
 typedef void (*napi_ext_task_callback)(napi_env env, void *task_data);
 
@@ -122,30 +115,6 @@ NAPI_EXTERN napi_status __cdecl napi_ext_close_env_scope(
     napi_env env,
     napi_ext_env_scope scope);
 
-// Runs script with the provided source_url origin.
-NAPI_EXTERN napi_status __cdecl napi_ext_run_script(
-    napi_env env,
-    napi_value source,
-    const char *source_url,
-    napi_value *result);
-
-// Runs serialized script with the provided source_url origin.
-NAPI_EXTERN napi_status __cdecl napi_ext_run_serialized_script(
-    napi_env env,
-    const uint8_t *buffer,
-    size_t buffer_length,
-    napi_value source,
-    const char *source_url,
-    napi_value *result);
-
-// Creates a serialized script.
-NAPI_EXTERN napi_status __cdecl napi_ext_serialize_script(
-    napi_env env,
-    napi_value source,
-    const char *source_url,
-    napi_ext_buffer_callback buffer_cb,
-    void *buffer_hint);
-
 // Provides a hint to run garbage collection.
 // It is typically used for unit tests.
 NAPI_EXTERN napi_status __cdecl napi_ext_collect_garbage(napi_env env);
@@ -157,9 +126,9 @@ NAPI_EXTERN napi_status __cdecl napi_ext_has_unhandled_promise_rejection(
 
 // Gets and clears the last unhandled promise rejection.
 NAPI_EXTERN
-    napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(
-        napi_env env,
-        napi_value *result);
+napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(
+    napi_env env,
+    napi_value *result);
 
 // Use to enable fast string equality check by comparing napi_refs as addresses.
 // The caller is responsible for calling napi_reference_unref on the result
@@ -224,5 +193,103 @@ NAPI_EXTERN napi_status __cdecl napi_ext_get_reference_value(
     napi_env env,
     napi_ext_ref ref,
     napi_value *result);
+
+//=============================================================================
+// Script running, preparing, and serialization.
+//
+// Script is usually converted to byte code, or in other words - prepared - for
+// execution. The APIs below allow not only running the script, but also control
+// its preparation phase where we can explicitly prepare the script for running,
+// run the prepared script, and serialize or deserialize the prepared script.
+//=============================================================================
+
+typedef struct napi_ext_buffer__ *napi_ext_buffer;
+typedef struct napi_ext_prepared_script__ *napi_ext_prepared_script;
+
+// A callback to return buffer synchronously
+typedef void (*napi_ext_buffer_callback)(
+    napi_env env,
+    uint8_t const *buffer,
+    size_t buffer_length,
+    void *buffer_hint);
+
+// A callback to get buffer range
+typedef napi_status (*napi_ext_get_buffer_range)(
+    napi_env env,
+    napi_ext_buffer buffer,
+    uint8_t **buffer_start,
+    size_t *buffer_length);
+
+// A callback to delete buffer
+typedef napi_status (
+    *napi_ext_delete_buffer)(napi_env env, napi_ext_buffer buffer);
+
+// [DEPRECATED] - use napi_host_run_script_with_source_map
+// Run script with the provided source_url origin.
+NAPI_EXTERN napi_status __cdecl napi_ext_run_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_value *result);
+
+// [DEPRECATED] - use napi_host_run_script_with_source_map
+// Deserialize prepared script and run it.
+NAPI_EXTERN napi_status __cdecl napi_ext_run_serialized_script(
+    napi_env env,
+    const uint8_t *buffer,
+    size_t buffer_length,
+    napi_value source,
+    const char *source_url,
+    napi_value *result);
+
+// [DEPRECATED] - use napi_host_run_script_with_source_map
+// Prepare the script and serialize it into a buffer.
+NAPI_EXTERN napi_status __cdecl napi_ext_serialize_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_ext_buffer_callback buffer_cb,
+    void *buffer_hint);
+
+// Run the script with the source map that can be used for the script debugging.
+NAPI_EXTERN napi_status __cdecl napi_ext_run_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_stript_range,
+    napi_ext_release_buffer release_stript,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_release_buffer release_source_map,
+    const char *source_url,
+    napi_value *result);
+
+// Prepare the script for running.
+NAPI_EXTERN napi_status __cdecl napi_ext_prepare_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_stript_range,
+    napi_ext_release_buffer release_stript,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_release_buffer release_source_map,
+    const char *source_url,
+    napi_ext_prepared_script *prepared_script);
+
+// Run the prepared script.
+NAPI_EXTERN napi_status __cdecl napi_ext_run_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script,
+    napi_value *result);
+
+// Delete the prepared script.
+NAPI_EXTERN napi_status __cdecl napi_ext_delete_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script);
+
+// Serialize the prepared script.
+NAPI_EXTERN napi_status __cdecl napi_ext_serialize_prepared_script(
+    napi_env env,
+    napi_prepared_script prepared_script,
+    napi_ext_out_stream *out_stream);
 
 EXTERN_C_END
