@@ -13,6 +13,10 @@
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/VM/Runtime.h"
 
+#include "hermes/Support/SimpleDiagHandler.h"
+
+#include "hermes/SourceMap/SourceMapParser.h"
+
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/HostModel.h"
 #include "hermes/VM/StringPrimitive.h"
@@ -38,12 +42,12 @@ using ::hermes::hermesLog;
   } while (0)
 #endif
 
-#define STATUS_CALL(call)        \
-  do {                           \
-    napi_status status = (call); \
-    if (status != napi_ok) {     \
-      return status;             \
-    }                            \
+#define STATUS_CALL(call)             \
+  do {                                \
+    napi_status status12345 = (call); \
+    if (status12345 != napi_ok) {     \
+      return status12345;             \
+    }                                 \
   } while (false)
 
 #define RETURN_STATUS_IF_FALSE(condition, status) \
@@ -275,6 +279,8 @@ struct RefTracker {
   RefList *next_ = nullptr;
   RefList *prev_ = nullptr;
 };
+
+struct HermesBuffer;
 
 struct NodeApiEnvironment {
   explicit NodeApiEnvironment(
@@ -713,8 +719,6 @@ struct NodeApiEnvironment {
 
   napi_status GetDateValue(napi_value value, double *result) noexcept;
 
-  napi_status RunScript(napi_value script, napi_value *result) noexcept;
-
   napi_status AddFinalizer(
       napi_value js_object,
       void *native_object,
@@ -736,6 +740,49 @@ struct NodeApiEnvironment {
       napi_value arraybuffer,
       bool *result) noexcept;
 
+  // Extensions
+  napi_status runScript(
+      napi_value source,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+
+  napi_status runSerializedScript(
+      const uint8_t *buffer,
+      size_t bufferLength,
+      napi_value source,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+
+  napi_status serializeScript(
+      napi_value source,
+      const char *sourceURL,
+      napi_ext_buffer_callback bufferCallback,
+      void *bufferHint) noexcept;
+
+  napi_status runScriptWithSourceMap(
+      std::unique_ptr<HermesBuffer> script,
+      std::unique_ptr<HermesBuffer> sourceMap,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+
+  napi_status prepareScriptWithSourceMap(
+      std::unique_ptr<HermesBuffer> script,
+      std::unique_ptr<HermesBuffer> sourceMap,
+      const char *sourceURL,
+      napi_ext_prepared_script *preparedScript) noexcept;
+
+  napi_status runPreparedScript(
+      napi_ext_prepared_script preparedScript,
+      napi_value *result) noexcept;
+
+  napi_status deletePreparedScript(
+      napi_ext_prepared_script preparedScript) noexcept;
+
+  napi_status serializePreparedScript(
+      napi_ext_prepared_script preparedScript,
+      napi_ext_buffer_callback bufferCallback,
+      void *bufferHint) noexcept;
+
   // Utility
   hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromAscii(
       const char *str,
@@ -748,6 +795,8 @@ struct NodeApiEnvironment {
       size_t length) noexcept;
   napi_value addStackValue(hermes::vm::HermesValue value) noexcept;
   napi_status checkStatus(hermes::vm::ExecutionStatus status) noexcept;
+
+  static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
 
  private:
 #ifdef HERMESJSI_ON_STACK
@@ -781,6 +830,73 @@ struct NodeApiEnvironment {
       kEscapeableSentinelNativeValue + 1;
   static constexpr hermes::vm::HermesValue EmptyHermesValue{
       hermes::vm::HermesValue::encodeEmptyValue()};
+};
+
+struct HermesBuffer : hermes::Buffer {
+  HermesBuffer(
+      napi_env env,
+      napi_ext_buffer buffer,
+      napi_ext_get_buffer_range getBufferRange,
+      napi_ext_delete_buffer deleteBuffer) noexcept
+      : env_(env), buffer_(buffer), deleteBuffer_(deleteBuffer) {
+    getBufferRange(env, buffer, &data_, &size_);
+  }
+
+  ~HermesBuffer() noexcept {
+    if (buffer_ && deleteBuffer_) {
+      deleteBuffer_(env_, buffer_);
+    }
+  }
+
+ private:
+  napi_env env_;
+  napi_ext_buffer buffer_;
+  napi_ext_delete_buffer deleteBuffer_;
+};
+
+std::unique_ptr<HermesBuffer> makeHermesBuffer(
+    napi_env env,
+    napi_ext_buffer buffer,
+    napi_ext_get_buffer_range getBufferRange,
+    napi_ext_delete_buffer deleteBuffer) noexcept {
+  return buffer ? std::make_unique<HermesBuffer>(
+                      env, buffer, getBufferRange, deleteBuffer)
+                : nullptr;
+}
+
+/// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
+struct HermesPreparedJavaScript {
+  explicit HermesPreparedJavaScript(
+      std::unique_ptr<hermes::hbc::BCProvider> bcProvider,
+      hermes::vm::RuntimeModuleFlags runtimeFlags,
+      std::string sourceURL,
+      bool isBytecode)
+      : bcProvider_(std::move(bcProvider)),
+        runtimeFlags_(runtimeFlags),
+        sourceURL_(std::move(sourceURL)),
+        isBytecode_(isBytecode) {}
+
+  std::shared_ptr<hermes::hbc::BCProvider> bytecodeProvider() const {
+    return bcProvider_;
+  }
+
+  hermes::vm::RuntimeModuleFlags runtimeFlags() const {
+    return runtimeFlags_;
+  }
+
+  const std::string &sourceURL() const {
+    return sourceURL_;
+  }
+
+  bool isBytecode() const {
+    return isBytecode_;
+  }
+
+ private:
+  std::shared_ptr<hermes::hbc::BCProvider> bcProvider_;
+  hermes::vm::RuntimeModuleFlags runtimeFlags_;
+  std::string sourceURL_;
+  bool isBytecode_{false};
 };
 
 // Reference counter implementation.
@@ -2226,9 +2342,13 @@ napi_status NodeApiEnvironment::CreateStringLatin1(
     size_t length,
     napi_value *result) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
         (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char>::length(str);
+    }
     auto res = stringHVFromLatin1(str, length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
@@ -2241,9 +2361,13 @@ napi_status NodeApiEnvironment::CreateStringUtf8(
     size_t length,
     napi_value *result) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
         (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char>::length(str);
+    }
     auto res = stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
@@ -2256,9 +2380,13 @@ napi_status NodeApiEnvironment::CreateStringUtf16(
     size_t length,
     napi_value *result) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
         (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char16_t>::length(str);
+    }
     auto res = hermes::vm::StringPrimitive::createEfficient(
         &runtime_, llvh::makeArrayRef(str, length));
     CHECK_STATUS(res.getStatus());
@@ -2844,33 +2972,143 @@ napi_status NodeApiEnvironment::GetValueStringLatin1(
     char *buf,
     size_t bufsize,
     size_t *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(value);
+    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+        &runtime_, stringHandle(value)->getString());
+    auto view =
+        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsString(), napi_string_expected);
+    if (!buf) {
+      CHECK_ARG(result);
+      *result = view.length();
+    } else if (bufsize != 0) {
+      auto copied = std::min(bufsize - 1, view.length());
+      for (auto cur = view.begin(), end = view.begin() + copied; cur < end;
+           ++cur) {
+        *buf++ = static_cast<char>(*cur);
+      }
+      *buf = '\0';
+      if (result != nullptr) {
+        *result = copied;
+      }
+    } else if (result != nullptr) {
+      *result = 0;
+    }
 
-  // if (!buf) {
-  //   CHECK_ARG(env, result);
-  //   *result = val.As<v8::String>()->Length();
-  // } else if (bufsize != 0) {
-  //   int copied = val.As<v8::String>()->WriteOneByte(
-  //       env->isolate,
-  //       reinterpret_cast<uint8_t *>(buf),
-  //       0,
-  //       bufsize - 1,
-  //       v8::String::NO_NULL_TERMINATION);
+    return ClearLastError();
+  });
+}
 
-  //   buf[copied] = '\0';
-  //   if (result != nullptr) {
-  //     *result = copied;
-  //   }
-  // } else if (result != nullptr) {
-  //   *result = 0;
-  // }
+static size_t utf8Length(llvh::ArrayRef<char16_t> input) {
+  size_t length{0};
+  for (auto cur = input.begin(), end = input.end(); cur < end; ++cur) {
+    char16_t c = cur[0];
+    // ASCII fast-path.
+    if (LLVM_LIKELY(c <= 0x7F)) {
+      ++length;
+      continue;
+    }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    char32_t c32;
+    if (hermes::isLowSurrogate(c)) {
+      // Unpaired low surrogate.
+      c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+    } else if (hermes::isHighSurrogate(c)) {
+      // Leading high surrogate. See if the next character is a low surrogate.
+      if (cur + 1 == end || !hermes::isLowSurrogate(cur[1])) {
+        // Trailing or unpaired high surrogate.
+        c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+      } else {
+        // Decode surrogate pair and increment, because we consumed two chars.
+        c32 = hermes::decodeSurrogatePair(c, cur[1]);
+        ++cur;
+      }
+    } else {
+      // Not a surrogate.
+      c32 = c;
+    }
+
+    if (c32 <= 0x7FF) {
+      length += 2;
+    } else if (c32 <= 0xFFFF) {
+      length += 3;
+    } else if (c32 <= 0x1FFFFF) {
+      length += 4;
+    } else if (c32 <= 0x3FFFFFF) {
+      length += 5;
+    } else {
+      length += 6;
+    }
+  }
+
+  return length;
+}
+
+static char *convertASCIIToUTF8(
+    llvh::ArrayRef<char> input,
+    char *buf,
+    size_t maxCharacters) {
+  char *curBuf = buf;
+  char *endBuf = buf + maxCharacters;
+  for (auto cur = input.begin(), end = input.end();
+       cur < end && curBuf < endBuf;
+       ++cur, ++curBuf) {
+    *curBuf = *cur;
+  }
+
+  return curBuf;
+}
+
+static char *convertUTF16ToUTF8WithReplacements(
+    llvh::ArrayRef<char16_t> input,
+    char *buf,
+    size_t maxCharacters) {
+  char *curBuf = buf;
+  char *endBuf = buf + maxCharacters;
+  for (auto cur = input.begin(), end = input.end();
+       cur < end && curBuf < endBuf;
+       ++cur) {
+    char16_t c = cur[0];
+    // ASCII fast-path.
+    if (LLVM_LIKELY(c <= 0x7F)) {
+      *curBuf++ = static_cast<char>(c);
+      continue;
+    }
+
+    char32_t c32;
+    if (hermes::isLowSurrogate(c)) {
+      // Unpaired low surrogate.
+      c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+    } else if (hermes::isHighSurrogate(c)) {
+      // Leading high surrogate. See if the next character is a low surrogate.
+      if (cur + 1 == end || !hermes::isLowSurrogate(cur[1])) {
+        // Trailing or unpaired high surrogate.
+        c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+      } else {
+        // Decode surrogate pair and increment, because we consumed two chars.
+        c32 = hermes::decodeSurrogatePair(c, cur[1]);
+        ++cur;
+      }
+    } else {
+      // Not a surrogate.
+      c32 = c;
+    }
+
+    char buff[hermes::UTF8CodepointMaxBytes];
+    char *ptr = buff;
+    hermes::encodeUTF8(ptr, c32);
+    ptrdiff_t u8length = ptr - buff;
+    if (curBuf + u8length <= endBuf) {
+      for (auto u8ptr = buff; u8ptr < ptr; ++u8ptr) {
+        *curBuf++ = *u8ptr;
+      }
+    } else {
+      break;
+    }
+  }
+
+  return curBuf;
 }
 
 // Copies a JavaScript string into a UTF-8 string buffer. The result is the
@@ -2886,34 +3124,40 @@ napi_status NodeApiEnvironment::GetValueStringUtf8(
     char *buf,
     size_t bufsize,
     size_t *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(value);
+    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+        &runtime_, stringHandle(value)->getString());
+    auto view =
+        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsString(), napi_string_expected);
+    if (!buf) {
+      CHECK_ARG(result);
+      *result = view.isASCII() || view.length() == 0
+          ? view.length()
+          : utf8Length(
+                hermes::vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
+    } else if (bufsize != 0) {
+      char *end = view.length() > 0 ? view.isASCII()
+              ? convertASCIIToUTF8(
+                    hermes::vm::ASCIIRef(view.castToCharPtr(), view.length()),
+                    buf,
+                    bufsize - 1)
+              : convertUTF16ToUTF8WithReplacements(
+                    hermes::vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
+                    buf,
+                    bufsize - 1)
+                                    : buf;
+      *end = '\0';
+      if (result != nullptr) {
+        *result = static_cast<size_t>(end - buf);
+      }
+    } else if (result != nullptr) {
+      *result = 0;
+    }
 
-  // if (!buf) {
-  //   CHECK_ARG(env, result);
-  //   *result = val.As<v8::String>()->Utf8Length(env->isolate);
-  // } else if (bufsize != 0) {
-  //   int copied = val.As<v8::String>()->WriteUtf8(
-  //       env->isolate,
-  //       buf,
-  //       bufsize - 1,
-  //       nullptr,
-  //       v8::String::REPLACE_INVALID_UTF8 |
-  //       v8::String::NO_NULL_TERMINATION);
-
-  //   buf[copied] = '\0';
-  //   if (result != nullptr) {
-  //     *result = copied;
-  //   }
-  // } else if (result != nullptr) {
-  //   *result = 0;
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    return ClearLastError();
+  });
 }
 
 // Copies a JavaScript string into a UTF-16 string buffer. The result is the
@@ -2929,34 +3173,29 @@ napi_status NodeApiEnvironment::GetValueStringUtf16(
     char16_t *buf,
     size_t bufsize,
     size_t *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(value);
+    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+        &runtime_, stringHandle(value)->getString());
+    auto view =
+        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsString(), napi_string_expected);
+    if (!buf) {
+      CHECK_ARG(result);
+      *result = view.length();
+    } else if (bufsize != 0) {
+      auto copied = std::min(bufsize - 1, view.length());
+      std::copy(view.begin(), view.begin() + copied, buf);
+      buf[copied] = '\0';
+      if (result != nullptr) {
+        *result = copied;
+      }
+    } else if (result != nullptr) {
+      *result = 0;
+    }
 
-  // if (!buf) {
-  //   CHECK_ARG(env, result);
-  //   // V8 assumes UTF-16 length is the same as the number of characters.
-  //   *result = val.As<v8::String>()->Length();
-  // } else if (bufsize != 0) {
-  //   int copied = val.As<v8::String>()->Write(
-  //       env->isolate,
-  //       reinterpret_cast<uint16_t *>(buf),
-  //       0,
-  //       bufsize - 1,
-  //       v8::String::NO_NULL_TERMINATION);
-
-  //   buf[copied] = '\0';
-  //   if (result != nullptr) {
-  //     *result = copied;
-  //   }
-  // } else if (result != nullptr) {
-  //   *result = 0;
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::CoerceToBool(
@@ -3920,34 +4159,6 @@ napi_status NodeApiEnvironment::GetDateValue(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::RunScript(
-    napi_value script,
-    napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, script);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> v8_script = v8impl::V8LocalValueFromJsValue(script);
-
-  // if (!v8_script->IsString()) {
-  //   return napi_set_last_error(env, napi_string_expected);
-  // }
-
-  // v8::Local<v8::Context> context = env->context();
-
-  // auto maybe_script =
-  //     v8::Script::Compile(context, v8::Local<v8::String>::Cast(v8_script));
-  // CHECK_MAYBE_EMPTY(env, maybe_script, napi_generic_failure);
-
-  // auto script_result = maybe_script.ToLocalChecked()->Run(context);
-  // CHECK_MAYBE_EMPTY(env, script_result, napi_generic_failure);
-
-  // *result =
-  // v8impl::JsValueFromV8LocalValue(script_result.ToLocalChecked()); return
-  // GET_RETURN_STATUS(env);
-  return napi_ok;
-}
-
 napi_status NodeApiEnvironment::AddFinalizer(
     napi_value js_object,
     void *native_object,
@@ -4043,691 +4254,295 @@ napi_status NodeApiEnvironment::IsDetachedArrayBuffer(
   return napi_ok;
 }
 
-napi_status napi_create_hermes_env(napi_env *env) {
-  if (!env) {
-    return napi_status::napi_invalid_arg;
-  }
-  *env = reinterpret_cast<napi_env>(new NodeApiEnvironment());
-  return napi_status::napi_ok;
+napi_status NodeApiEnvironment::runScript(
+    napi_value source,
+    const char *sourceURL,
+    napi_value *result) noexcept {
+  size_t sourceSize{};
+  STATUS_CALL(GetValueStringUtf8(source, nullptr, 0, &sourceSize));
+  auto buffer = std::make_unique<std::vector<uint8_t>>();
+  buffer->assign(sourceSize + 1, '\0');
+  STATUS_CALL(GetValueStringUtf8(
+      source,
+      reinterpret_cast<char *>(buffer->data()),
+      sourceSize + 1,
+      nullptr));
+  STATUS_CALL(runScriptWithSourceMap(
+      makeHermesBuffer(
+          reinterpret_cast<napi_env>(this),
+          reinterpret_cast<napi_ext_buffer>(buffer.release()),
+          [](napi_env /*env*/,
+             napi_ext_buffer buffer,
+             const uint8_t **buffer_start,
+             size_t *buffer_length) {
+            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            *buffer_start = buf->data();
+            *buffer_length = buf->size();
+          },
+          [](napi_env /*env*/, napi_ext_buffer buffer) {
+            std::unique_ptr<std::vector<uint8_t>> buf(
+                reinterpret_cast<std::vector<uint8_t> *>(buffer));
+          }),
+      nullptr,
+      sourceURL,
+      result));
+  return ClearLastError();
 }
 
-napi_status napi_ext_env_ref(napi_env env) {
-  return CHECKED_ENV(env)->Ref();
+napi_status NodeApiEnvironment::runSerializedScript(
+    const uint8_t *buffer,
+    size_t bufferLength,
+    napi_value /*source*/,
+    const char *sourceURL,
+    napi_value *result) noexcept {
+  auto bufferCopy = std::make_unique<std::vector<uint8_t>>();
+  bufferCopy->assign(bufferLength, '\0');
+  std::copy(buffer, buffer + bufferLength, bufferCopy->data());
+  STATUS_CALL(runScriptWithSourceMap(
+      makeHermesBuffer(
+          reinterpret_cast<napi_env>(this),
+          reinterpret_cast<napi_ext_buffer>(bufferCopy.release()),
+          [](napi_env /*env*/,
+             napi_ext_buffer buffer,
+             const uint8_t **buffer_start,
+             size_t *buffer_length) {
+            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            *buffer_start = buf->data();
+            *buffer_length = buf->size();
+          },
+          [](napi_env /*env*/, napi_ext_buffer buffer) {
+            std::unique_ptr<std::vector<uint8_t>> buf(
+                reinterpret_cast<std::vector<uint8_t> *>(buffer));
+          }),
+      nullptr,
+      sourceURL,
+      result));
+  return ClearLastError();
 }
 
-napi_status napi_ext_env_unref(napi_env env) {
-  return CHECKED_ENV(env)->Unref();
+napi_status NodeApiEnvironment::serializeScript(
+    napi_value source,
+    const char *sourceURL,
+    napi_ext_buffer_callback bufferCallback,
+    void *bufferHint) noexcept {
+  size_t sourceSize{};
+  STATUS_CALL(GetValueStringUtf8(source, nullptr, 0, &sourceSize));
+  auto buffer = std::make_unique<std::vector<uint8_t>>();
+  buffer->assign(sourceSize + 1, '\0');
+  STATUS_CALL(GetValueStringUtf8(
+      source,
+      reinterpret_cast<char *>(buffer->data()),
+      sourceSize + 1,
+      nullptr));
+  napi_ext_prepared_script preparedScript{};
+  STATUS_CALL(prepareScriptWithSourceMap(
+      makeHermesBuffer(
+          reinterpret_cast<napi_env>(this),
+          reinterpret_cast<napi_ext_buffer>(buffer.release()),
+          [](napi_env /*env*/,
+             napi_ext_buffer buffer,
+             const uint8_t **buffer_start,
+             size_t *buffer_length) {
+            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            *buffer_start = buf->data();
+            *buffer_length = buf->size();
+          },
+          [](napi_env /*env*/, napi_ext_buffer buffer) {
+            std::unique_ptr<std::vector<uint8_t>> buf(
+                reinterpret_cast<std::vector<uint8_t> *>(buffer));
+          }),
+      nullptr,
+      sourceURL,
+      &preparedScript));
+  STATUS_CALL(
+      serializePreparedScript(preparedScript, bufferCallback, bufferHint));
+  return ClearLastError();
+
+  return ClearLastError();
 }
 
-#if 0
-#define CHECK_MAYBE_NOTHING(env, maybe, status) \
-  RETURN_STATUS_IF_FALSE((env), !((maybe).IsNothing()), (status))
+napi_status NodeApiEnvironment::runScriptWithSourceMap(
+    std::unique_ptr<HermesBuffer> script,
+    std::unique_ptr<HermesBuffer> sourceMap,
+    const char *sourceURL,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    napi_ext_prepared_script preparedScript{nullptr};
+    STATUS_CALL(prepareScriptWithSourceMap(
+        std::move(script), std::move(sourceMap), sourceURL, &preparedScript));
+    STATUS_CALL(runPreparedScript(preparedScript, result));
+    return ClearLastError();
+  });
+}
 
-#define CHECK_MAYBE_NOTHING_WITH_PREAMBLE(env, maybe, status) \
-  RETURN_STATUS_IF_FALSE_WITH_PREAMBLE((env), !((maybe).IsNothing()), (status))
+/*static*/ bool NodeApiEnvironment::isHermesBytecode(
+    const uint8_t *data,
+    size_t len) noexcept {
+  return hermes::hbc::BCProviderFromBuffer::isBytecodeStream(
+      llvh::ArrayRef<uint8_t>(data, len));
+}
 
-#define CHECK_TO_NUMBER(env, context, result, src) \
-  CHECK_TO_TYPE((env), Number, (context), (result), (src), napi_number_expected)
+napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
+    std::unique_ptr<HermesBuffer> buffer,
+    std::unique_ptr<HermesBuffer> sourceMapBuf,
+    const char *sourceURL,
+    napi_ext_prepared_script *preparedScript) noexcept {
+  std::pair<std::unique_ptr<hermes::hbc::BCProvider>, std::string> bcErr{};
+  hermes::vm::RuntimeModuleFlags runtimeFlags{};
+  runtimeFlags.persistent = true;
 
-// n-api defines NAPI_AUTO_LENGHTH as the indicator that a string
-// is null terminated. For V8 the equivalent is -1. The assert
-// validates that our cast of NAPI_AUTO_LENGTH results in -1 as
-// needed by V8.
-#define CHECK_NEW_FROM_UTF8_LEN(env, result, str, len)                         \
-  do {                                                                         \
-    static_assert(                                                             \
-        static_cast<int>(NAPI_AUTO_LENGTH) == -1,                              \
-        "Casting NAPI_AUTO_LENGTH to int must result in -1");                  \
-    RETURN_STATUS_IF_FALSE(                                                    \
-        (env), (len == NAPI_AUTO_LENGTH) || len <= INT_MAX, napi_invalid_arg); \
-    RETURN_STATUS_IF_FALSE((env), (str) != nullptr, napi_invalid_arg);         \
-    auto str_maybe = v8::String::NewFromUtf8(                                  \
-        (env)->isolate,                                                        \
-        (str),                                                                 \
-        v8::NewStringType::kInternalized,                                      \
-        static_cast<int>(len));                                                \
-    CHECK_MAYBE_EMPTY((env), str_maybe, napi_generic_failure);                 \
-    (result) = str_maybe.ToLocalChecked();                                     \
-  } while (0)
+  bool isBytecode = isHermesBytecode(buffer->data(), buffer->size());
+#ifdef HERMESVM_PLATFORM_LOGGING
+  hermesLog(
+      "HermesVM", "Prepare JS on %s.", isBytecode ? "bytecode" : "source");
+#endif
+  // Save the first few bytes of the buffer so that we can later append them
+  // to any error message.
+  uint8_t bufPrefix[16];
+  const size_t bufSize = buffer->size();
+  memcpy(bufPrefix, buffer->data(), std::min(sizeof(bufPrefix), bufSize));
 
-#define CHECK_NEW_FROM_UTF8(env, result, str) \
-  CHECK_NEW_FROM_UTF8_LEN((env), (result), (str), NAPI_AUTO_LENGTH)
-
-#define CREATE_TYPED_ARRAY(                                                   \
-    env, type, size_of_element, buffer, byte_offset, length, out)             \
-  do {                                                                        \
-    if ((size_of_element) > 1) {                                              \
-      THROW_RANGE_ERROR_IF_FALSE(                                             \
-          (env),                                                              \
-          (byte_offset) % (size_of_element) == 0,                             \
-          "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT",                            \
-          "start offset of " #type                                            \
-          " should be a multiple of " #size_of_element);                      \
-    }                                                                         \
-    THROW_RANGE_ERROR_IF_FALSE(                                               \
-        (env),                                                                \
-        (length) * (size_of_element) + (byte_offset) <= buffer->ByteLength(), \
-        "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH",                                 \
-        "Invalid typed array length");                                        \
-    (out) = v8::type::New((buffer), (byte_offset), (length));                 \
-  } while (0)
-
-namespace v8impl {
-
-namespace {
-
-inline static napi_status
-V8NameFromPropertyDescriptor(napi_env env,
-                             const napi_property_descriptor* p,
-                             v8::Local<v8::Name>* result) {
-  if (p->utf8name != nullptr) {
-    CHECK_NEW_FROM_UTF8(env, *result, p->utf8name);
+  // Construct the BC provider either from buffer or source.
+  if (isBytecode) {
+    if (sourceMapBuf) {
+      return SetLastError(
+          napi_generic_failure,
+          0,
+          "Source map cannot be specified with bytecode");
+    }
+    bcErr = hermes::hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
+        std::move(buffer));
   } else {
-    v8::Local<v8::Value> property_value =
-      v8impl::V8LocalValueFromJsValue(p->name);
-
-    RETURN_STATUS_IF_FALSE(env, property_value->IsName(), napi_name_expected);
-    *result = property_value.As<v8::Name>();
-  }
-
-  return napi_ok;
-}
-
-// convert from n-api property attributes to v8::PropertyAttribute
-inline static v8::PropertyAttribute V8PropertyAttributesFromDescriptor(
-    const napi_property_descriptor* descriptor) {
-  unsigned int attribute_flags = v8::PropertyAttribute::None;
-
-  // The napi_writable attribute is ignored for accessor descriptors, but
-  // V8 would throw `TypeError`s on assignment with nonexistence of a setter.
-  if ((descriptor->getter == nullptr && descriptor->setter == nullptr) &&
-    (descriptor->attributes & napi_writable) == 0) {
-    attribute_flags |= v8::PropertyAttribute::ReadOnly;
-  }
-
-  if ((descriptor->attributes & napi_enumerable) == 0) {
-    attribute_flags |= v8::PropertyAttribute::DontEnum;
-  }
-  if ((descriptor->attributes & napi_configurable) == 0) {
-    attribute_flags |= v8::PropertyAttribute::DontDelete;
-  }
-
-  return static_cast<v8::PropertyAttribute>(attribute_flags);
-}
-
-inline static napi_deferred
-JsDeferredFromNodePersistent(v8impl::Persistent<v8::Value>* local) {
-  return reinterpret_cast<napi_deferred>(local);
-}
-
-inline static v8impl::Persistent<v8::Value>*
-NodePersistentFromJsDeferred(napi_deferred local) {
-  return reinterpret_cast<v8impl::Persistent<v8::Value>*>(local);
-}
-
-class HandleScopeWrapper {
- public:
-  explicit HandleScopeWrapper(v8::Isolate* isolate) : scope(isolate) {}
-
- private:
-  v8::HandleScope scope;
-};
-
-// In node v0.10 version of v8, there is no EscapableHandleScope and the
-// node v0.10 port use HandleScope::Close(Local<T> v) to mimic the behavior
-// of a EscapableHandleScope::Escape(Local<T> v), but it is not the same
-// semantics. This is an example of where the api abstraction fail to work
-// across different versions.
-class EscapableHandleScopeWrapper {
- public:
-  explicit EscapableHandleScopeWrapper(v8::Isolate* isolate)
-      : scope(isolate), escape_called_(false) {}
-  bool escape_called() const {
-    return escape_called_;
-  }
-  template <typename T>
-  v8::Local<T> Escape(v8::Local<T> handle) {
-    escape_called_ = true;
-    return scope.Escape(handle);
-  }
-
- private:
-  v8::EscapableHandleScope scope;
-  bool escape_called_;
-};
-
-inline static napi_handle_scope
-JsHandleScopeFromV8HandleScope(HandleScopeWrapper* s) {
-  return reinterpret_cast<napi_handle_scope>(s);
-}
-
-inline static HandleScopeWrapper*
-V8HandleScopeFromJsHandleScope(napi_handle_scope s) {
-  return reinterpret_cast<HandleScopeWrapper*>(s);
-}
-
-inline static napi_escapable_handle_scope
-JsEscapableHandleScopeFromV8EscapableHandleScope(
-    EscapableHandleScopeWrapper* s) {
-  return reinterpret_cast<napi_escapable_handle_scope>(s);
-}
-
-inline static EscapableHandleScopeWrapper*
-V8EscapableHandleScopeFromJsEscapableHandleScope(
-    napi_escapable_handle_scope s) {
-  return reinterpret_cast<EscapableHandleScopeWrapper*>(s);
-}
-
-inline static napi_status ConcludeDeferred(napi_env env,
-                                           napi_deferred deferred,
-                                           napi_value result,
-                                           bool is_resolved) {
-  NAPI_PREAMBLE(env);
-  CHECK_ARG(env, result);
-
-  v8::Local<v8::Context> context = env->context();
-  v8impl::Persistent<v8::Value>* deferred_ref =
-      NodePersistentFromJsDeferred(deferred);
-  v8::Local<v8::Value> v8_deferred =
-      v8::Local<v8::Value>::New(env->isolate, *deferred_ref);
-
-  auto v8_resolver = v8::Local<v8::Promise::Resolver>::Cast(v8_deferred);
-
-  v8::Maybe<bool> success = is_resolved ?
-      v8_resolver->Resolve(context, v8impl::V8LocalValueFromJsValue(result)) :
-      v8_resolver->Reject(context, v8impl::V8LocalValueFromJsValue(result));
-
-  delete deferred_ref;
-
-  RETURN_STATUS_IF_FALSE(env, success.FromMaybe(false), napi_generic_failure);
-
-  return GET_RETURN_STATUS(env);
-}
-
-// Wrapper around v8impl::Persistent that implements reference counting.
-class RefBase : protected Finalizer, RefTracker {
- protected:
-  RefBase(napi_env env,
-          uint32_t initial_refcount,
-          bool delete_self,
-          napi_finalize finalize_callback,
-          void* finalize_data,
-          void* finalize_hint)
-       : Finalizer(env, finalize_callback, finalize_data, finalize_hint),
-        _refcount(initial_refcount),
-        _delete_self(delete_self) {
-    Link(finalize_callback == nullptr
-        ? &env->reflist
-        : &env->finalizing_reflist);
-  }
-
- public:
-  static RefBase* New(napi_env env,
-                      uint32_t initial_refcount,
-                      bool delete_self,
-                      napi_finalize finalize_callback,
-                      void* finalize_data,
-                      void* finalize_hint) {
-    return new RefBase(env,
-                       initial_refcount,
-                       delete_self,
-                       finalize_callback,
-                       finalize_data,
-                       finalize_hint);
-  }
-
-  virtual ~RefBase() { Unlink(); }
-
-  inline void* Data() {
-    return _finalize_data;
-  }
-
-  // Delete is called in 2 ways. Either from the finalizer or
-  // from one of Unwrap or napi_delete_reference.
-  //
-  // When it is called from Unwrap or napi_delete_reference we only
-  // want to do the delete if the finalizer has already run or
-  // cannot have been queued to run (ie the reference count is > 0),
-  // otherwise we may crash when the finalizer does run.
-  // If the finalizer may have been queued and has not already run
-  // delay the delete until the finalizer runs by not doing the delete
-  // and setting _delete_self to true so that the finalizer will
-  // delete it when it runs.
-  //
-  // The second way this is called is from
-  // the finalizer and _delete_self is set. In this case we
-  // know we need to do the deletion so just do it.
-  static inline void Delete(RefBase* reference) {
-    if ((reference->RefCount() != 0) ||
-        (reference->_delete_self) ||
-        (reference->_finalize_ran)) {
-      delete reference;
-    } else {
-      // defer until finalizer runs as
-      // it may alread be queued
-      reference->_delete_self = true;
-    }
-  }
-
-  inline uint32_t Ref() {
-    return ++_refcount;
-  }
-
-  inline uint32_t Unref() {
-    if (_refcount == 0) {
-        return 0;
-    }
-    return --_refcount;
-  }
-
-  inline uint32_t RefCount() {
-    return _refcount;
-  }
-
- protected:
-  inline void Finalize(bool is_env_teardown = false) override {
-    // In addition to being called during environment teardown, this method is
-    // also the entry point for the garbage collector. During environment
-    // teardown we have to remove the garbage collector's reference to this
-    // method so that, if, as part of the user's callback, JS gets executed,
-    // resulting in a garbage collection pass, this method is not re-entered as
-    // part of that pass, because that'll cause a double free (as seen in
-    // https://github.com/nodejs/node/issues/37236).
-    //
-    // Since this class does not have access to the V8 persistent reference,
-    // this method is overridden in the `Reference` class below. Therein the
-    // weak callback is removed, ensuring that the garbage collector does not
-    // re-enter this method, and the method chains up to continue the process of
-    // environment-teardown-induced finalization.
-
-    // During environment teardown we have to convert a strong reference to
-    // a weak reference to force the deferring behavior if the user's finalizer
-    // happens to delete this reference so that the code in this function that
-    // follows the call to the user's finalizer may safely access variables from
-    // this instance.
-    if (is_env_teardown && RefCount() > 0) _refcount = 0;
-
-    if (_finalize_callback != nullptr) {
-      // This ensures that we never call the finalizer twice.
-      napi_finalize fini = _finalize_callback;
-      _finalize_callback = nullptr;
-      _env->CallFinalizer(fini, _finalize_data, _finalize_hint);
-    }
-
-    // this is safe because if a request to delete the reference
-    // is made in the finalize_callback it will defer deletion
-    // to this block and set _delete_self to true
-    if (_delete_self || is_env_teardown) {
-      Delete(this);
-    } else {
-      _finalize_ran = true;
-    }
-  }
-
- private:
-  uint32_t _refcount;
-  bool _delete_self;
-};
-
-class Reference : public RefBase {
- protected:
-  template <typename... Args>
-  Reference(napi_env env,
-            v8::Local<v8::Value> value,
-            Args&&... args)
-      : RefBase(env, std::forward<Args>(args)...),
-            _persistent(env->isolate, value) {
-    if (RefCount() == 0) {
-      _persistent.SetWeak(
-          this, FinalizeCallback, v8::WeakCallbackType::kParameter);
-    }
-  }
-
- public:
-  static inline Reference* New(napi_env env,
-                             v8::Local<v8::Value> value,
-                             uint32_t initial_refcount,
-                             bool delete_self,
-                             napi_finalize finalize_callback = nullptr,
-                             void* finalize_data = nullptr,
-                             void* finalize_hint = nullptr) {
-    return new Reference(env,
-                         value,
-                         initial_refcount,
-                         delete_self,
-                         finalize_callback,
-                         finalize_data,
-                         finalize_hint);
-  }
-
-  inline uint32_t Ref() {
-    uint32_t refcount = RefBase::Ref();
-    if (refcount == 1) {
-      _persistent.ClearWeak();
-    }
-    return refcount;
-  }
-
-  inline uint32_t Unref() {
-    uint32_t old_refcount = RefCount();
-    uint32_t refcount = RefBase::Unref();
-    if (old_refcount == 1 && refcount == 0) {
-      _persistent.SetWeak(
-          this, FinalizeCallback, v8::WeakCallbackType::kParameter);
-    }
-    return refcount;
-  }
-
-  inline v8::Local<v8::Value> Get() {
-    if (_persistent.IsEmpty()) {
-      return v8::Local<v8::Value>();
-    } else {
-      return v8::Local<v8::Value>::New(_env->isolate, _persistent);
-    }
-  }
-
- protected:
-  inline void Finalize(bool is_env_teardown = false) override {
-    // During env teardown, `~napi_env()` alone is responsible for finalizing.
-    // Thus, we don't want any stray gc passes to trigger a second call to
-    // `Finalize()`, so let's reset the persistent here if nothing is
-    // keeping it alive.
-    if (is_env_teardown && _persistent.IsWeak()) {
-      _persistent.ClearWeak();
-    }
-
-    // Chain up to perform the rest of the finalization.
-    RefBase::Finalize(is_env_teardown);
-  }
-
- private:
-  // The N-API finalizer callback may make calls into the engine. V8's heap is
-  // not in a consistent state during the weak callback, and therefore it does
-  // not support calls back into it. However, it provides a mechanism for adding
-  // a finalizer which may make calls back into the engine by allowing us to
-  // attach such a second-pass finalizer from the first pass finalizer. Thus,
-  // we do that here to ensure that the N-API finalizer callback is free to call
-  // into the engine.
-  static void FinalizeCallback(const v8::WeakCallbackInfo<Reference>& data) {
-    Reference* reference = data.GetParameter();
-
-    // The reference must be reset during the first pass.
-    reference->_persistent.Reset();
-
-    data.SetSecondPassCallback(SecondPassCallback);
-  }
-
-  static void SecondPassCallback(const v8::WeakCallbackInfo<Reference>& data) {
-    data.GetParameter()->Finalize();
-  }
-
-  v8impl::Persistent<v8::Value> _persistent;
-};
-
-enum UnwrapAction {
-  KeepWrap,
-  RemoveWrap
-};
-
-inline static napi_status Unwrap(napi_env env,
-                                 napi_value js_object,
-                                 void** result,
-                                 UnwrapAction action) {
-  NAPI_PREAMBLE(env);
-  CHECK_ARG(env, js_object);
-  if (action == KeepWrap) {
-    CHECK_ARG(env, result);
-  }
-
-  v8::Local<v8::Context> context = env->context();
-
-  v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(js_object);
-  RETURN_STATUS_IF_FALSE(env, value->IsObject(), napi_invalid_arg);
-  v8::Local<v8::Object> obj = value.As<v8::Object>();
-
-  auto val = obj->GetPrivate(context, NAPI_PRIVATE_KEY(context, wrapper))
-      .ToLocalChecked();
-  RETURN_STATUS_IF_FALSE(env, val->IsExternal(), napi_invalid_arg);
-  Reference* reference =
-      static_cast<v8impl::Reference*>(val.As<v8::External>()->Value());
-
-  if (result) {
-    *result = reference->Data();
-  }
-
-  if (action == RemoveWrap) {
-    CHECK(obj->DeletePrivate(context, NAPI_PRIVATE_KEY(context, wrapper))
-        .FromJust());
-    Reference::Delete(reference);
-  }
-
-  return GET_RETURN_STATUS(env);
-}
-
-//=== Function napi_callback wrapper =================================
-
-// Use this data structure to associate callback data with each N-API function
-// exposed to JavaScript. The structure is stored in a v8::External which gets
-// passed into our callback wrapper. This reduces the performance impact of
-// calling through N-API.
-// Ref: benchmark/misc/function_call
-// Discussion (incl. perf. data): https://github.com/nodejs/node/pull/21072
-class CallbackBundle {
- public:
-  // Creates an object to be made available to the static function callback
-  // wrapper, used to retrieve the native callback function and data pointer.
-  static inline v8::Local<v8::Value>
-  New(napi_env env, napi_callback cb, void* data) {
-    CallbackBundle* bundle = new CallbackBundle();
-    bundle->cb = cb;
-    bundle->cb_data = data;
-    bundle->env = env;
-
-    v8::Local<v8::Value> cbdata = v8::External::New(env->isolate, bundle);
-    Reference::New(env, cbdata, 0, true, Delete, bundle, nullptr);
-    return cbdata;
-  }
-  napi_env       env;      // Necessary to invoke C++ NAPI callback
-  void*          cb_data;  // The user provided callback data
-  napi_callback  cb;
- private:
-  static void Delete(napi_env env, void* data, void* hint) {
-    CallbackBundle* bundle = static_cast<CallbackBundle*>(data);
-    delete bundle;
-  }
-};
-
-// Base class extended by classes that wrap V8 function and property callback
-// info.
-class CallbackWrapper {
- public:
-  inline CallbackWrapper(napi_value this_arg, size_t args_length, void* data)
-      : _this(this_arg), _args_length(args_length), _data(data) {}
-
-  virtual napi_value GetNewTarget() = 0;
-  virtual void Args(napi_value* buffer, size_t bufferlength) = 0;
-  virtual void SetReturnValue(napi_value value) = 0;
-
-  napi_value This() { return _this; }
-
-  size_t ArgsLength() { return _args_length; }
-
-  void* Data() { return _data; }
-
- protected:
-  const napi_value _this;
-  const size_t _args_length;
-  void* _data;
-};
-
-class CallbackWrapperBase : public CallbackWrapper {
- public:
-  inline CallbackWrapperBase(const v8::FunctionCallbackInfo<v8::Value>& cbinfo,
-                             const size_t args_length)
-      : CallbackWrapper(JsValueFromV8LocalValue(cbinfo.This()),
-                        args_length,
-                        nullptr),
-        _cbinfo(cbinfo) {
-    _bundle = reinterpret_cast<CallbackBundle*>(
-        v8::Local<v8::External>::Cast(cbinfo.Data())->Value());
-    _data = _bundle->cb_data;
-  }
-
- protected:
-  inline void InvokeCallback() {
-    napi_callback_info cbinfo_wrapper = reinterpret_cast<napi_callback_info>(
-        static_cast<CallbackWrapper*>(this));
-
-    // All other pointers we need are stored in `_bundle`
-    napi_env env = _bundle->env;
-    napi_callback cb = _bundle->cb;
-
-    napi_value result;
-    env->CallIntoModule([&](napi_env env) {
-      result = cb(env, cbinfo_wrapper);
-    });
-
-    if (result != nullptr) {
-      this->SetReturnValue(result);
-    }
-  }
-
-  const v8::FunctionCallbackInfo<v8::Value>& _cbinfo;
-  CallbackBundle* _bundle;
-};
-
-class FunctionCallbackWrapper
-    : public CallbackWrapperBase {
- public:
-  static void Invoke(const v8::FunctionCallbackInfo<v8::Value>& info) {
-    FunctionCallbackWrapper cbwrapper(info);
-    cbwrapper.InvokeCallback();
-  }
-
-  static inline napi_status NewFunction(napi_env env,
-                                        napi_callback cb,
-                                        void* cb_data,
-                                        v8::Local<v8::Function>* result) {
-    v8::Local<v8::Value> cbdata = v8impl::CallbackBundle::New(env, cb, cb_data);
-    RETURN_STATUS_IF_FALSE(env, !cbdata.IsEmpty(), napi_generic_failure);
-
-    v8::MaybeLocal<v8::Function> maybe_function =
-        v8::Function::New(env->context(), Invoke, cbdata);
-    CHECK_MAYBE_EMPTY(env, maybe_function, napi_generic_failure);
-
-    *result = maybe_function.ToLocalChecked();
-    return napi_clear_last_error(env);
-  }
-
-  static inline napi_status NewTemplate(napi_env env,
-                    napi_callback cb,
-                    void* cb_data,
-                    v8::Local<v8::FunctionTemplate>* result,
-                    v8::Local<v8::Signature> sig = v8::Local<v8::Signature>()) {
-    v8::Local<v8::Value> cbdata = v8impl::CallbackBundle::New(env, cb, cb_data);
-    RETURN_STATUS_IF_FALSE(env, !cbdata.IsEmpty(), napi_generic_failure);
-
-    *result = v8::FunctionTemplate::New(env->isolate, Invoke, cbdata, sig);
-    return napi_clear_last_error(env);
-  }
-
-  explicit FunctionCallbackWrapper(
-      const v8::FunctionCallbackInfo<v8::Value>& cbinfo)
-      : CallbackWrapperBase(cbinfo, cbinfo.Length()) {}
-
-  napi_value GetNewTarget() override {
-    if (_cbinfo.IsConstructCall()) {
-      return v8impl::JsValueFromV8LocalValue(_cbinfo.NewTarget());
-    } else {
-      return nullptr;
-    }
-  }
-
-  /*virtual*/
-  void Args(napi_value* buffer, size_t buffer_length) override {
-    size_t i = 0;
-    size_t min = std::min(buffer_length, _args_length);
-
-    for (; i < min; i += 1) {
-      buffer[i] = v8impl::JsValueFromV8LocalValue(_cbinfo[i]);
-    }
-
-    if (i < buffer_length) {
-      napi_value undefined =
-          v8impl::JsValueFromV8LocalValue(v8::Undefined(_cbinfo.GetIsolate()));
-      for (; i < buffer_length; i += 1) {
-        buffer[i] = undefined;
+#if defined(HERMESVM_LEAN)
+    bcErr.second = "prepareJavaScript source compilation not supported";
+#else
+    std::unique_ptr<::hermes::SourceMap> sourceMap{};
+    if (sourceMapBuf) {
+      // Convert the buffer into a form the parser needs.
+      llvh::MemoryBufferRef mbref(
+          llvh::StringRef(
+              (const char *)sourceMapBuf->data(), sourceMapBuf->size()),
+          "");
+      ::hermes::SimpleDiagHandler diag;
+      ::hermes::SourceErrorManager sm;
+      diag.installInto(sm);
+      sourceMap = ::hermes::SourceMapParser::parse(mbref, sm);
+      if (!sourceMap) {
+        auto errorStr = diag.getErrorString();
+        LOG_EXCEPTION_CAUSE("Error parsing source map: %s", errorStr.c_str());
+        return SetLastError(napi_generic_failure);
+        // TODO: throw std::runtime_error("Error parsing source map:" +
+        // errorStr);
       }
     }
+    bcErr = hermes::hbc::BCProviderFromSrc::createBCProviderFromSrc(
+        std::move(buffer), sourceURL, std::move(sourceMap), compileFlags_);
+#endif
   }
-
-  /*virtual*/
-  void SetReturnValue(napi_value value) override {
-    v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-    _cbinfo.GetReturnValue().Set(val);
+  if (!bcErr.first) {
+    std::string storage;
+    llvh::raw_string_ostream os(storage);
+    os << " Buffer size " << bufSize << " starts with: ";
+    for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
+      os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
+    LOG_EXCEPTION_CAUSE(
+        "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
+    // throw jsi::JSINativeException(
+    //    "Compiling JS failed: " + std::move(bcErr.second) + os.str());
+    return SetLastError(napi_generic_failure);
   }
-};
-
-enum WrapType {
-  retrievable,
-  anonymous
-};
-
-template <WrapType wrap_type>
-inline napi_status Wrap(napi_env env,
-                        napi_value js_object,
-                        void* native_object,
-                        napi_finalize finalize_cb,
-                        void* finalize_hint,
-                        napi_ref* result) {
-  NAPI_PREAMBLE(env);
-  CHECK_ARG(env, js_object);
-
-  v8::Local<v8::Context> context = env->context();
-
-  v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(js_object);
-  RETURN_STATUS_IF_FALSE(env, value->IsObject(), napi_invalid_arg);
-  v8::Local<v8::Object> obj = value.As<v8::Object>();
-
-  if (wrap_type == retrievable) {
-    // If we've already wrapped this object, we error out.
-    RETURN_STATUS_IF_FALSE(env,
-        !obj->HasPrivate(context, NAPI_PRIVATE_KEY(context, wrapper))
-            .FromJust(),
-        napi_invalid_arg);
-  } else if (wrap_type == anonymous) {
-    // If no finalize callback is provided, we error out.
-    CHECK_ARG(env, finalize_cb);
-  }
-
-  v8impl::Reference* reference = nullptr;
-  if (result != nullptr) {
-    // The returned reference should be deleted via napi_delete_reference()
-    // ONLY in response to the finalize callback invocation. (If it is deleted
-    // before then, then the finalize callback will never be invoked.)
-    // Therefore a finalize callback is required when returning a reference.
-    CHECK_ARG(env, finalize_cb);
-    reference = v8impl::Reference::New(
-        env, obj, 0, false, finalize_cb, native_object, finalize_hint);
-    *result = reinterpret_cast<napi_ref>(reference);
-  } else {
-    // Create a self-deleting reference.
-    reference = v8impl::Reference::New(env, obj, 0, true, finalize_cb,
-        native_object, finalize_cb == nullptr ? nullptr : finalize_hint);
-  }
-
-  if (wrap_type == retrievable) {
-    CHECK(obj->SetPrivate(context, NAPI_PRIVATE_KEY(context, wrapper),
-          v8::External::New(env->isolate, reference)).FromJust());
-  }
-
-  return GET_RETURN_STATUS(env);
+  *preparedScript =
+      reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
+          std::move(bcErr.first), runtimeFlags, sourceURL, isBytecode));
+  return ClearLastError();
 }
 
-}  // end of anonymous namespace
+napi_status NodeApiEnvironment::runPreparedScript(
+    napi_ext_prepared_script preparedScript,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(preparedScript);
+    CHECK_ARG(result);
+    auto &stats = runtime_.getRuntimeStats();
+    const hermes::vm::instrumentation::RAIITimer timer{
+        "Evaluate JS", stats, stats.evaluateJS};
+    const auto *hermesPrep =
+        reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
+    auto res = runtime_.runBytecode(
+        hermesPrep->bytecodeProvider(),
+        hermesPrep->runtimeFlags(),
+        hermesPrep->sourceURL(),
+        hermes::vm::Runtime::makeNullHandle<hermes::vm::Environment>());
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(*res);
+    return ClearLastError();
+  });
+}
 
-}  // end of namespace v8impl
-#endif
+napi_status NodeApiEnvironment::deletePreparedScript(
+    napi_ext_prepared_script preparedScript) noexcept {
+  CHECK_ARG(preparedScript);
+  delete reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
+  return ClearLastError();
+}
+
+napi_status NodeApiEnvironment::serializePreparedScript(
+    napi_ext_prepared_script preparedScript,
+    napi_ext_buffer_callback bufferCallback,
+    void *bufferHint) noexcept {
+  CHECK_ARG(preparedScript);
+  CHECK_ARG(bufferCallback);
+
+  auto *hermesPreparedScript =
+      reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
+
+  if (hermesPreparedScript->isBytecode()) {
+    auto bytecodeProvider =
+        std::static_pointer_cast<hermes::hbc::BCProviderFromBuffer>(
+            hermesPreparedScript->bytecodeProvider());
+    auto bufferRef = bytecodeProvider->getRawBuffer();
+    bufferCallback(
+        reinterpret_cast<napi_env>(this),
+        bufferRef.data(),
+        bufferRef.size(),
+        bufferHint);
+  } else {
+    auto bytecodeProvider =
+        std::static_pointer_cast<hermes::hbc::BCProviderFromSrc>(
+            hermesPreparedScript->bytecodeProvider());
+    auto *bcModule = bytecodeProvider->getBytecodeModule();
+
+    // Serialize/deserialize can't handle lazy compilation as of now. Do a
+    // check to make sure there is no lazy BytecodeFunction in module_.
+    for (uint32_t i = 0; i < bcModule->getNumFunctions(); i++) {
+      if (bytecodeProvider->isFunctionLazy(i)) {
+        hermes::hermes_fatal("Cannot serialize lazy functions");
+      }
+    }
+
+    // Serialize the bytecode. Call BytecodeSerializer to do the heavy lifting.
+    // Write to a SmallVector first, so we can know the total bytes and write it
+    // first and make life easier for Deserializer. This is going to be slower
+    // than writing to Serializer directly but it's OK to slow down
+    // serialization if it speeds up Deserializer.
+    auto bytecodeGenOpts = hermes::BytecodeGenerationOptions::defaults();
+    llvh::SmallVector<char, 0> bytecodeVector;
+    llvh::raw_svector_ostream OS(bytecodeVector);
+    hermes::hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
+    BS.serialize(*bcModule, bytecodeProvider->getSourceHash());
+    bufferCallback(
+        reinterpret_cast<napi_env>(this),
+        reinterpret_cast<uint8_t *>(bytecodeVector.data()),
+        bytecodeVector.size(),
+        bufferHint);
+  }
+
+  return ClearLastError();
+}
+
+//=============================================================================
+// NAPI implementation
+//=============================================================================
 
 napi_status napi_get_last_error_info(
     napi_env env,
@@ -5475,7 +5290,7 @@ napi_get_date_value(napi_env env, napi_value value, double *result) {
 
 napi_status
 napi_run_script(napi_env env, napi_value script, napi_value *result) {
-  return CHECKED_ENV(env)->RunScript(script, result);
+  return CHECKED_ENV(env)->runScript(script, nullptr, result);
 }
 
 napi_status napi_add_finalizer(
@@ -5518,4 +5333,119 @@ napi_status napi_is_detached_arraybuffer(
     napi_value arraybuffer,
     bool *result) {
   return CHECKED_ENV(env)->IsDetachedArrayBuffer(arraybuffer, result);
+}
+
+//=============================================================================
+// Node-API extensions to host JS engine and to implement JSI
+//=============================================================================
+
+napi_status napi_create_hermes_env(napi_env *env) {
+  if (!env) {
+    return napi_status::napi_invalid_arg;
+  }
+  *env = reinterpret_cast<napi_env>(new NodeApiEnvironment());
+  return napi_status::napi_ok;
+}
+
+napi_status napi_ext_env_ref(napi_env env) {
+  return CHECKED_ENV(env)->Ref();
+}
+
+napi_status napi_ext_env_unref(napi_env env) {
+  return CHECKED_ENV(env)->Unref();
+}
+
+// Runs script with the provided source_url origin.
+napi_status __cdecl napi_ext_run_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runScript(source, source_url, result);
+}
+
+// Runs serialized script with the provided source_url origin.
+napi_status __cdecl napi_ext_run_serialized_script(
+    napi_env env,
+    const uint8_t *buffer,
+    size_t buffer_length,
+    napi_value source,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runSerializedScript(
+      buffer, buffer_length, source, source_url, result);
+}
+
+// Creates a serialized script.
+napi_status __cdecl napi_ext_serialize_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_ext_buffer_callback buffer_cb,
+    void *buffer_hint) {
+  return CHECKED_ENV(env)->serializeScript(
+      source, source_url, buffer_cb, buffer_hint);
+}
+
+// Run the script with the source map that can be used for the script debugging.
+napi_status __cdecl napi_ext_run_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_script_range,
+    napi_ext_delete_buffer delete_script,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_delete_buffer delete_source_map,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runScriptWithSourceMap(
+      makeHermesBuffer(env, script, get_script_range, delete_script),
+      makeHermesBuffer(
+          env, source_map, get_source_map_range, delete_source_map),
+      source_url,
+      result);
+}
+
+// Prepare the script for running.
+napi_status __cdecl napi_ext_prepare_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_script_range,
+    napi_ext_delete_buffer delete_script,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_delete_buffer delete_source_map,
+    const char *source_url,
+    napi_ext_prepared_script *prepared_script) {
+  return CHECKED_ENV(env)->prepareScriptWithSourceMap(
+      makeHermesBuffer(env, script, get_script_range, delete_script),
+      makeHermesBuffer(
+          env, source_map, get_source_map_range, delete_source_map),
+      source_url,
+      prepared_script);
+}
+
+// Run the prepared script.
+napi_status __cdecl napi_ext_run_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runPreparedScript(prepared_script, result);
+}
+
+// Delete the prepared script.
+napi_status __cdecl napi_ext_delete_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script) {
+  return CHECKED_ENV(env)->deletePreparedScript(prepared_script);
+}
+
+// Serialize the prepared script.
+napi_status __cdecl napi_ext_serialize_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script,
+    napi_ext_buffer_callback buffer_cb,
+    void *buffer_hint) {
+  return CHECKED_ENV(env)->serializePreparedScript(
+      prepared_script, buffer_cb, buffer_hint);
 }
