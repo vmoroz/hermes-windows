@@ -4277,7 +4277,7 @@ napi_status NodeApiEnvironment::runScript(
              size_t *buffer_length) {
             auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
             *buffer_start = buf->data();
-            *buffer_length = buf->size();
+            *buffer_length = buf->size() - 1;
           },
           [](napi_env /*env*/, napi_ext_buffer buffer) {
             std::unique_ptr<std::vector<uint8_t>> buf(
@@ -4345,7 +4345,7 @@ napi_status NodeApiEnvironment::serializeScript(
              size_t *buffer_length) {
             auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
             *buffer_start = buf->data();
-            *buffer_length = buf->size();
+            *buffer_length = buf->size() - 1;
           },
           [](napi_env /*env*/, napi_ext_buffer buffer) {
             std::unique_ptr<std::vector<uint8_t>> buf(
@@ -4436,7 +4436,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       }
     }
     bcErr = hermes::hbc::BCProviderFromSrc::createBCProviderFromSrc(
-        std::move(buffer), sourceURL, std::move(sourceMap), compileFlags_);
+        std::move(buffer), std::string(sourceURL ? sourceURL : ""), std::move(sourceMap), compileFlags_);
 #endif
   }
   if (!bcErr.first) {
@@ -4453,7 +4453,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
-          std::move(bcErr.first), runtimeFlags, sourceURL, isBytecode));
+          std::move(bcErr.first), runtimeFlags, sourceURL ? sourceURL : "", isBytecode));
   return ClearLastError();
 }
 
