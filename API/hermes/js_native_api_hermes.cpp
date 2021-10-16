@@ -2017,6 +2017,21 @@ napi_status NodeApiEnvironment::GetNamedProperty(
     napi_value object,
     const char *utf8name,
     napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(utf8name);
+    CHECK_ARG(result);
+    size_t length = std::char_traits<char>::length(utf8name);
+    auto res1 = stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
+    CHECK_STATUS(res1.getStatus());
+    auto h = handle(object);
+    auto key = hermes::vm::PinnedHermesValue(*res1);
+    auto res2 = h->getComputed_RJS(h, &runtime_, ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key));
+    CHECK_STATUS(res2.getStatus());
+    *result = addStackValue(res2->get());
+    return napi_ok;
+  });
+
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
 
@@ -2036,7 +2051,7 @@ napi_status NodeApiEnvironment::GetNamedProperty(
   // v8::Local<v8::Value> val = get_maybe.ToLocalChecked();
   // *result = v8impl::JsValueFromV8LocalValue(val);
   // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  // return napi_ok;
 }
 
 napi_status NodeApiEnvironment::SetElement(
