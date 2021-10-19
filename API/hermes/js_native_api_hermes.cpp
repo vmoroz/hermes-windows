@@ -290,6 +290,8 @@ struct NodeApiEnvironment {
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
+  hermes::vm::Handle<> vmHandleFromValue(napi_value value) noexcept;
+
   // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
   // v8impl::Persistent<v8::Context> context_persistent;
 
@@ -1708,7 +1710,8 @@ napi_status NodeApiEnvironment::CreateFunction(
   return handleExceptions([&] {
     napi_value nameValue{};
     STATUS_CALL(CreateStringUtf8(utf8Name, length, &nameValue));
-    auto nameRes = hermes::vm::stringToSymbolID(&runtime_, hermes::vm::createPseudoHandle(phv(nameValue).getString()));
+    auto nameRes = hermes::vm::stringToSymbolID(
+        &runtime_, hermes::vm::createPseudoHandle(phv(nameValue).getString()));
     CHECK_STATUS(nameRes.getStatus());
     auto context = std::make_unique<HFContext>(*this, cb, callback_data);
     auto funcRes =
@@ -2068,10 +2071,49 @@ napi_status NodeApiEnvironment::HasOwnProperty(
   return napi_ok;
 }
 
+hermes::vm::Handle<> NodeApiEnvironment::vmHandleFromValue(
+    napi_value value) noexcept {
+  auto &hv = phv(value);
+  if (hv.isUndefined()) {
+    return hermes::vm::Runtime::getUndefinedValue();
+  } else if (hv.isNull()) {
+    return hermes::vm::Runtime::getNullValue();
+  } else if (hv.isBool()) {
+    return hermes::vm::Runtime::getBoolValue(hv.getBool());
+  } else if (hv.isNumber()) {
+    return runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
+  } else if (hv.isSymbol() || hv.isString() || hv.isObject()) {
+    return hermes::vm::Handle<hermes::vm::HermesValue>(&hv);
+  } else {
+    llvm_unreachable("unknown value kind");
+  }
+}
+
 napi_status NodeApiEnvironment::SetNamedProperty(
     napi_value object,
     const char *utf8name,
     napi_value value) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(utf8name);
+    CHECK_ARG(value);
+    size_t length = std::char_traits<char>::length(utf8name);
+    auto res1 =
+        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
+    CHECK_STATUS(res1.getStatus());
+    auto h = handle(object);
+    auto key = hermes::vm::PinnedHermesValue(*res1);
+    CHECK_STATUS(
+        h->putComputed_RJS(
+             h,
+             &runtime_,
+             ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key),
+             vmHandleFromValue(value),
+             hermes::vm::PropOpFlags().plusThrowOnError())
+            .getStatus());
+    return napi_ok;
+  });
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, value);
 
