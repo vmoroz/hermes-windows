@@ -1706,9 +1706,10 @@ napi_status NodeApiEnvironment::CreateFunction(
     void *callback_data,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    hermes::vm::PinnedHermesValue nameStr;
-    STATUS_CALL(CreateStringUtf8(utf8Name, length, reinterpret_cast<napi_value*>(&nameStr)));
-    auto nameID = nameStr.getSymbol();
+    napi_value nameValue{};
+    STATUS_CALL(CreateStringUtf8(utf8Name, length, &nameValue));
+    auto nameRes = hermes::vm::stringToSymbolID(&runtime_, hermes::vm::createPseudoHandle(phv(nameValue).getString()));
+    CHECK_STATUS(nameRes.getStatus());
     auto context = std::make_unique<HFContext>(*this, cb, callback_data);
     auto funcRes =
         hermes::vm::FinalizableNativeFunction::createWithoutPrototype(
@@ -1716,7 +1717,7 @@ napi_status NodeApiEnvironment::CreateFunction(
             context.get(),
             &HFContext::func,
             &HFContext::finalize,
-            nameID,
+            nameRes->get(),
             /*paramCount:*/ 0);
     CHECK_STATUS(funcRes.getStatus());
     context.release();
