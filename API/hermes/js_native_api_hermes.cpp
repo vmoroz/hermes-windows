@@ -280,6 +280,65 @@ struct RefTracker {
   RefList *prev_ = nullptr;
 };
 
+napi_value napiValue(const hermes::vm::PinnedHermesValue *hv) noexcept {
+  return reinterpret_cast<napi_value>(
+      const_cast<hermes::vm::PinnedHermesValue *>(hv));
+}
+
+struct HFContext;
+
+struct CallbackInfo final {
+  CallbackInfo(HFContext &context, hermes::vm::NativeArgs &hvArgs) noexcept
+      : context_(context), hvArgs_(hvArgs) {}
+
+  void Args(napi_value *args, size_t *argCount) noexcept {
+    *args = napiValue(hvArgs_.begin());
+    *argCount = hvArgs_.getArgCount();
+  }
+
+  size_t ArgCount() noexcept {
+    return hvArgs_.getArgCount();
+  }
+
+  napi_value This() noexcept {
+    return napiValue(&hvArgs_.getThisArg());
+  }
+
+  void *Data() noexcept;
+
+  napi_value GetNewTarget() noexcept {
+    return napiValue(&hvArgs_.getNewTarget());
+  }
+
+ private:
+  HFContext &context_;
+  hermes::vm::NativeArgs &hvArgs_;
+};
+
+struct NodeApiEnvironment;
+
+struct HFContext final {
+  HFContext(NodeApiEnvironment &env, napi_callback hostCallback, void *data)
+      : env_(env), hostCallback_(hostCallback), data_(data) {}
+
+  static hermes::vm::CallResult<hermes::vm::HermesValue> func(
+      void *context,
+      hermes::vm::Runtime *runtime,
+      hermes::vm::NativeArgs hvArgs);
+
+  static void finalize(void *context) {
+    delete reinterpret_cast<HFContext *>(context);
+  }
+
+  NodeApiEnvironment &env_;
+  napi_callback hostCallback_;
+  void *data_;
+};
+
+void *CallbackInfo::Data() noexcept {
+  return context_.data_;
+}
+
 struct HermesBuffer;
 
 struct NodeApiEnvironment {
@@ -504,22 +563,22 @@ struct NodeApiEnvironment {
 
   napi_status GetNull(napi_value *result) noexcept;
 
-  napi_status GetCallbackInfo(
-      napi_callback_info cbinfo,
-      size_t *argc,
-      napi_value *argv,
-      napi_value *this_arg,
+  napi_status getCallbackInfo(
+      CallbackInfo *callbackInfo,
+      size_t *argCount,
+      napi_value *args,
+      napi_value *thisArg,
       void **data) noexcept;
 
-  napi_status GetNewTarget(
-      napi_callback_info cbinfo,
+  napi_status getNewTarget(
+      CallbackInfo *callbackInfo,
       napi_value *result) noexcept;
 
-  napi_status CallFunction(
-      napi_value recv,
+  napi_status callFunction(
+      napi_value object,
       napi_value func,
-      size_t argc,
-      const napi_value *argv,
+      size_t argCount,
+      const napi_value *args,
       napi_value *result) noexcept;
 
   napi_status GetGlobal(napi_value *result) noexcept;
@@ -1316,38 +1375,29 @@ class Reference : public RefBase {
   hermes::vm::PinnedHermesValue _persistent;
 };
 
+/*static*/ hermes::vm::CallResult<hermes::vm::HermesValue> HFContext::func(
+    void *context,
+    hermes::vm::Runtime *runtime,
+    hermes::vm::NativeArgs hvArgs) {
+  HFContext *hfc = reinterpret_cast<HFContext *>(context);
+  NodeApiEnvironment &env = hfc->env_;
+  assert(runtime == &env.runtime_);
+  auto &stats = env.runtime_.getRuntimeStats();
+  const hermes::vm::instrumentation::RAIITimer timer{
+      "Host Function", stats, stats.hostFunction};
+
+  CallbackInfo callbackInfo{*hfc, hvArgs};
+  auto result = hfc->hostCallback_(
+      reinterpret_cast<napi_env>(&env),
+      reinterpret_cast<napi_callback_info>(&callbackInfo));
+  return env.phv(result);
+  // TODO: handle errors
+  // TODO: Add call in module
+}
+
 //=============================================================================
 // NodeApiEnvironment implementation
 //=============================================================================
-
-// Base class extended by classes that wrap V8 function and property callback
-// info.
-class CallbackWrapper {
- public:
-  inline CallbackWrapper(napi_value this_arg, size_t args_length, void *data)
-      : _this(this_arg), _args_length(args_length), _data(data) {}
-
-  virtual napi_value GetNewTarget() = 0;
-  virtual void Args(napi_value *buffer, size_t bufferlength) = 0;
-  virtual void SetReturnValue(napi_value value) = 0;
-
-  napi_value This() {
-    return _this;
-  }
-
-  size_t ArgsLength() {
-    return _args_length;
-  }
-
-  void *Data() {
-    return _data;
-  }
-
- protected:
-  const napi_value _this;
-  const size_t _args_length;
-  void *_data;
-};
 
 namespace {
 // Max size of the runtime's register stack.
@@ -1651,55 +1701,6 @@ napi_status NodeApiEnvironment::GetLastErrorInfo(
   // *result = &(env->last_error);
   return napi_ok;
 }
-
-struct HFContext;
-
-struct CallbackInfo final {
-  CallbackInfo(HFContext &context, hermes::vm::NativeArgs &hvArgs) noexcept
-      : context_(context), hvArgs_(hvArgs) {}
-
- private:
-  HFContext &context_;
-  hermes::vm::NativeArgs &hvArgs_;
-};
-
-struct HFContext final {
-  HFContext(
-      NodeApiEnvironment &env,
-      napi_callback hostCallback,
-      void *hostCallbackData)
-      : env_(env),
-        hostCallback_(hostCallback),
-        hostCallbackData_(hostCallbackData) {}
-
-  static hermes::vm::CallResult<hermes::vm::HermesValue> func(
-      void *context,
-      hermes::vm::Runtime *runtime,
-      hermes::vm::NativeArgs hvArgs) {
-    HFContext *hfc = reinterpret_cast<HFContext *>(context);
-    NodeApiEnvironment &env = hfc->env_;
-    assert(runtime == &env.runtime_);
-    auto &stats = env.runtime_.getRuntimeStats();
-    const hermes::vm::instrumentation::RAIITimer timer{
-        "Host Function", stats, stats.hostFunction};
-
-    CallbackInfo callbackInfo{*hfc, hvArgs};
-    auto result = hfc->hostCallback_(
-        reinterpret_cast<napi_env>(&env),
-        reinterpret_cast<napi_callback_info>(&callbackInfo));
-    return env.phv(result);
-    // TODO: handle errors
-    // TODO: Add call in module
-  }
-
-  static void finalize(void *context) {
-    delete reinterpret_cast<HFContext *>(context);
-  }
-
-  NodeApiEnvironment &env_;
-  napi_callback hostCallback_;
-  void *hostCallbackData_;
-};
 
 napi_status NodeApiEnvironment::CreateFunction(
     const char *utf8Name,
@@ -2836,64 +2837,62 @@ napi_status NodeApiEnvironment::GetNull(napi_value *result) noexcept {
   return ClearLastError();
 }
 
-// Gets all callback info in a single call. (Ugly, but faster.)
-napi_status NodeApiEnvironment::GetCallbackInfo(
-    napi_callback_info cbinfo, // [in] Opaque callback-info handle
-    size_t *argc, // [in-out] Specifies the size of the provided argv array
-                  // and receives the actual count of args.
-    napi_value *argv, // [out] Array of values
-    napi_value *this_arg, // [out] Receives the JS 'this' arg for the call
-    void **data) noexcept { // [out] Receives the data pointer for the callback.
+napi_status NodeApiEnvironment::getCallbackInfo(
+    CallbackInfo *callbackInfo,
+    size_t *argCount,
+    napi_value *args,
+    napi_value *thisArg,
+    void **data) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_ARG(cbinfo);
+  CHECK_ARG(callbackInfo);
 
-  CallbackWrapper *info = reinterpret_cast<CallbackWrapper *>(cbinfo);
+  if (args != nullptr) {
+    CHECK_ARG(argCount);
+    callbackInfo->Args(args, argCount);
+  }
 
-  if (argv != nullptr) {
-    CHECK_ARG(argc);
-    info->Args(argv, *argc);
+  if (argCount != nullptr) {
+    *argCount = callbackInfo->ArgCount();
   }
-  if (argc != nullptr) {
-    *argc = info->ArgsLength();
+
+  if (thisArg != nullptr) {
+    *thisArg = callbackInfo->This();
   }
-  if (this_arg != nullptr) {
-    *this_arg = info->This();
-  }
+
   if (data != nullptr) {
-    *data = info->Data();
+    *data = callbackInfo->Data();
   }
 
   return ClearLastError();
 }
 
-napi_status NodeApiEnvironment::GetNewTarget(
-    napi_callback_info cbinfo,
+napi_status NodeApiEnvironment::getNewTarget(
+    CallbackInfo *callbackInfo,
     napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_ARG(cbinfo);
+  CHECK_ARG(callbackInfo);
   CHECK_ARG(result);
 
-  CallbackWrapper *info = reinterpret_cast<CallbackWrapper *>(cbinfo);
+  *result = callbackInfo->GetNewTarget();
 
-  *result = info->GetNewTarget();
   return ClearLastError();
 }
 
-napi_status NodeApiEnvironment::CallFunction(
-    napi_value recv,
+napi_status NodeApiEnvironment::callFunction(
+    napi_value object,
     napi_value func,
-    size_t argc,
-    const napi_value *argv,
+    size_t argCount,
+    const napi_value *args,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(recv);
-    if (argc > 0) {
-      CHECK_ARG(argv);
+    CHECK_ARG(object);
+    if (argCount > 0) {
+      CHECK_ARG(args);
     }
     hermes::vm::Handle<hermes::vm::Callable> handle =
         hermes::vm::Handle<hermes::vm::Callable>::vmcast(&phv(func));
-    if (argc > std::numeric_limits<uint32_t>::max() ||
-        !runtime_.checkAvailableStack((uint32_t)argc)) {
+    if (argCount > std::numeric_limits<uint32_t>::max() ||
+        !runtime_.checkAvailableStack((uint32_t)argCount)) {
       LOG_EXCEPTION_CAUSE(
           "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
       // TODO: implement
@@ -2908,17 +2907,17 @@ napi_status NodeApiEnvironment::CallFunction(
         "Incoming Function", stats, stats.incomingFunction};
     hermes::vm::ScopedNativeCallFrame newFrame{
         &runtime_,
-        static_cast<uint32_t>(argc),
+        static_cast<uint32_t>(argCount),
         handle.getHermesValue(),
         hermes::vm::HermesValue::encodeUndefinedValue(),
-        phv(recv)};
+        phv(object)};
     if (LLVM_UNLIKELY(newFrame.overflowed())) {
       CHECK_STATUS(runtime_.raiseStackOverflow(
           ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack));
     }
 
-    for (uint32_t i = 0; i < argc; ++i) {
-      newFrame->getArgRef(i) = phv(argv[i]);
+    for (uint32_t i = 0; i < argCount; ++i) {
+      newFrame->getArgRef(i) = phv(args[i]);
     }
     auto callRes = hermes::vm::Callable::call(handle, &runtime_);
     CHECK_STATUS(callRes.getStatus());
@@ -5016,23 +5015,23 @@ napi_status napi_get_null(napi_env env, napi_value *result) {
   return CHECKED_ENV(env)->GetNull(result);
 }
 
-// Gets all callback info in a single call. (Ugly, but faster.)
 napi_status napi_get_cb_info(
-    napi_env env, // [in] NAPI environment handle
-    napi_callback_info cbinfo, // [in] Opaque callback-info handle
-    size_t *argc, // [in-out] Specifies the size of the provided argv array
-                  // and receives the actual count of args.
-    napi_value *argv, // [out] Array of values
-    napi_value *this_arg, // [out] Receives the JS 'this' arg for the call
-    void **data) { // [out] Receives the data pointer for the callback.
-  return CHECKED_ENV(env)->GetCallbackInfo(cbinfo, argc, argv, this_arg, data);
+    napi_env env,
+    napi_callback_info cbinfo,
+    size_t *argc,
+    napi_value *argv,
+    napi_value *this_arg,
+    void **data) {
+  return CHECKED_ENV(env)->getCallbackInfo(
+      reinterpret_cast<CallbackInfo *>(cbinfo), argc, argv, this_arg, data);
 }
 
 napi_status napi_get_new_target(
     napi_env env,
     napi_callback_info cbinfo,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetNewTarget(cbinfo, result);
+  return CHECKED_ENV(env)->getNewTarget(
+      reinterpret_cast<CallbackInfo *>(cbinfo), result);
 }
 
 napi_status napi_call_function(
@@ -5042,7 +5041,7 @@ napi_status napi_call_function(
     size_t argc,
     const napi_value *argv,
     napi_value *result) {
-  return CHECKED_ENV(env)->CallFunction(recv, func, argc, argv, result);
+  return CHECKED_ENV(env)->callFunction(recv, func, argc, argv, result);
 }
 
 napi_status napi_get_global(napi_env env, napi_value *result) {
