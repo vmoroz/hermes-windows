@@ -798,7 +798,7 @@ struct NodeApiEnvironment {
 
   static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
 
- private:
+ public:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
 #else
@@ -1650,12 +1650,114 @@ napi_status NodeApiEnvironment::GetLastErrorInfo(
   return napi_ok;
 }
 
+struct HFContext;
+
+struct CallbackInfo final {
+  CallbackInfo(HFContext &context, hermes::vm::NativeArgs &hvArgs) noexcept
+      : context_(context), hvArgs_(hvArgs) {}
+
+ private:
+  HFContext &context_;
+  hermes::vm::NativeArgs &hvArgs_;
+};
+
+struct HFContext final {
+  HFContext(
+      NodeApiEnvironment &env,
+      napi_callback hostCallback,
+      void *hostCallbackData)
+      : env_(env),
+        hostCallback_(hostCallback),
+        hostCallbackData_(hostCallbackData) {}
+
+  static hermes::vm::CallResult<hermes::vm::HermesValue> func(
+      void *context,
+      hermes::vm::Runtime *runtime,
+      hermes::vm::NativeArgs hvArgs) {
+    HFContext *hfc = reinterpret_cast<HFContext *>(context);
+    NodeApiEnvironment &env = hfc->env_;
+    assert(runtime == &env.runtime_);
+    auto &stats = env.runtime_.getRuntimeStats();
+    const hermes::vm::instrumentation::RAIITimer timer{
+        "Host Function", stats, stats.hostFunction};
+
+    CallbackInfo callbackInfo{*hfc, hvArgs};
+    auto result = hfc->hostCallback_(
+        reinterpret_cast<napi_env>(&env),
+        reinterpret_cast<napi_callback_info>(&callbackInfo));
+    return env.phv(result);
+    // TODO: handle errors
+    // TODO: Add call in module
+  }
+
+  static void finalize(void *context) {
+    delete reinterpret_cast<HFContext *>(context);
+  }
+
+  NodeApiEnvironment &env_;
+  napi_callback hostCallback_;
+  void *hostCallbackData_;
+};
+
 napi_status NodeApiEnvironment::CreateFunction(
-    const char *utf8name,
+    const char *utf8Name,
     size_t length,
     napi_callback cb,
     void *callback_data,
     napi_value *result) noexcept {
+  return handleExceptions([&] {
+    hermes::vm::PinnedHermesValue nameStr;
+    STATUS_CALL(CreateStringUtf8(utf8Name, length, reinterpret_cast<napi_value*>(&nameStr)));
+    auto nameID = nameStr.getSymbol();
+    auto context = std::make_unique<HFContext>(*this, cb, callback_data);
+    auto funcRes =
+        hermes::vm::FinalizableNativeFunction::createWithoutPrototype(
+            &runtime_,
+            context.get(),
+            &HFContext::func,
+            &HFContext::finalize,
+            nameID,
+            /*paramCount:*/ 0);
+    CHECK_STATUS(funcRes.getStatus());
+    context.release();
+    *result = addStackValue(*funcRes);
+    return ClearLastError();
+  });
+
+  //       jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
+  //     const jsi::PropNameID &name,
+  //     unsigned int paramCount,
+  //     jsi::HostFunctionType func) {
+  //   return maybeRethrow([&] {
+  //     auto context = std::make_unique<HFContext>(std::move(func), *this);
+  //     auto hostfunc =
+  //         createFunctionFromHostFunction(context.get(), name, paramCount);
+  //     context.release();
+  //     return hostfunc;
+  //   });
+  // }
+
+  // template <typename ContextType>
+  // jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
+  //     ContextType *context,
+  //     const jsi::PropNameID &name,
+  //     unsigned int paramCount) {
+  //   return maybeRethrow([&] {
+  //     vm::GCScope gcScope(&runtime_);
+  //     vm::SymbolID nameID = phv(name).getSymbol();
+  //     auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
+  //         &runtime_,
+  //         context,
+  //         &ContextType::func,
+  //         &ContextType::finalize,
+  //         nameID,
+  //         paramCount);
+  //     checkStatus(funcRes.getStatus());
+  //     jsi::Function ret = add<jsi::Object>(*funcRes).getFunction(*this);
+  //     return ret;
+  //   });
+  // }
+
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
   // CHECK_ARG(env, cb);
@@ -1676,7 +1778,7 @@ napi_status NodeApiEnvironment::CreateFunction(
   // *result = v8impl::JsValueFromV8LocalValue(return_value);
 
   // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  //  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::DefineClass(
@@ -2022,11 +2124,15 @@ napi_status NodeApiEnvironment::GetNamedProperty(
     CHECK_ARG(utf8name);
     CHECK_ARG(result);
     size_t length = std::char_traits<char>::length(utf8name);
-    auto res1 = stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
+    auto res1 =
+        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
     CHECK_STATUS(res1.getStatus());
     auto h = handle(object);
     auto key = hermes::vm::PinnedHermesValue(*res1);
-    auto res2 = h->getComputed_RJS(h, &runtime_, ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key));
+    auto res2 = h->getComputed_RJS(
+        h,
+        &runtime_,
+        ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key));
     CHECK_STATUS(res2.getStatus());
     *result = addStackValue(res2->get());
     return napi_ok;
@@ -4451,7 +4557,10 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       }
     }
     bcErr = hermes::hbc::BCProviderFromSrc::createBCProviderFromSrc(
-        std::move(buffer), std::string(sourceURL ? sourceURL : ""), std::move(sourceMap), compileFlags_);
+        std::move(buffer),
+        std::string(sourceURL ? sourceURL : ""),
+        std::move(sourceMap),
+        compileFlags_);
 #endif
   }
   if (!bcErr.first) {
@@ -4468,7 +4577,10 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
-          std::move(bcErr.first), runtimeFlags, sourceURL ? sourceURL : "", isBytecode));
+          std::move(bcErr.first),
+          runtimeFlags,
+          sourceURL ? sourceURL : "",
+          isBytecode));
   return ClearLastError();
 }
 
