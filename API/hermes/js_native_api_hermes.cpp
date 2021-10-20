@@ -42,12 +42,11 @@ using ::hermes::hermesLog;
   } while (0)
 #endif
 
-#define STATUS_CALL(call)             \
-  do {                                \
-    napi_status status12345 = (call); \
-    if (status12345 != napi_ok) {     \
-      return status12345;             \
-    }                                 \
+#define STATUS_CALL(call)              \
+  do {                                 \
+    if (napi_status status = (call)) { \
+      return status;                   \
+    }                                  \
   } while (false)
 
 #define RETURN_STATUS_IF_FALSE(condition, status) \
@@ -99,6 +98,16 @@ using ::hermes::hermesLog;
   CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
 
 #define CHECK_STATUS(hermesStatus) STATUS_CALL(checkStatus(hermesStatus))
+
+#define CONCAT_IMPL(left, right) left##right
+#define CONCAT(left, right) CONCAT_IMPL(left, right)
+#define TEMP_VARNAME(tempSuffix) CONCAT(temp_, tempSuffix)
+#define ASSIGN_CHECKED_IMPL(var, expr, tempSuffix)    \
+  auto TEMP_VARNAME(tempSuffix) = (expr);             \
+  CHECK_STATUS(TEMP_VARNAME(tempSuffix).getStatus()); \
+  var = *TEMP_VARNAME(tempSuffix);
+
+#define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
 
 struct Marker {
   size_t ChunkIndex{0};
@@ -349,7 +358,7 @@ struct NodeApiEnvironment {
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
-  hermes::vm::Handle<> vmHandleFromValue(napi_value value) noexcept;
+  hermes::vm::Handle<> toHandle(napi_value value) noexcept;
 
   // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
   // v8impl::Persistent<v8::Context> context_persistent;
@@ -406,10 +415,14 @@ struct NodeApiEnvironment {
   void *instance_data{nullptr};
 
   static hermes::vm::PinnedHermesValue &phv(napi_value value) noexcept;
-  static hermes::vm::Handle<::hermes::vm::JSObject> handle(
+  static hermes::vm::Handle<::hermes::vm::JSObject> toObjectHandle(
       napi_value value) noexcept;
   static hermes::vm::Handle<hermes::vm::HermesValue> stringHandle(
       napi_value value) noexcept;
+  static hermes::vm::Handle<::hermes::vm::JSArray> arrayHandle(
+      napi_value value) noexcept;
+  hermes::vm::Handle<hermes::vm::HermesValue> toHandle(
+      const hermes::vm::HermesValue &value) noexcept;
 
   napi_status SetLastError(
       napi_status error_code,
@@ -436,9 +449,9 @@ struct NodeApiEnvironment {
       const napi_property_descriptor *properties,
       napi_value *result) noexcept;
 
-  napi_status GetPropertyNames(napi_value object, napi_value *result) noexcept;
+  napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
 
-  napi_status GetAllPropertyNames(
+  napi_status getAllPropertyNames(
       napi_value object,
       napi_key_collection_mode key_mode,
       napi_key_filter key_filter,
@@ -446,59 +459,58 @@ struct NodeApiEnvironment {
       napi_value *result) noexcept;
 
   napi_status
-  SetProperty(napi_value object, napi_value key, napi_value value) noexcept;
+  setProperty(napi_value object, napi_value key, napi_value value) noexcept;
 
   napi_status
-  HasProperty(napi_value object, napi_value key, bool *result) noexcept;
+  hasProperty(napi_value object, napi_value key, bool *result) noexcept;
 
   napi_status
-  GetProperty(napi_value object, napi_value key, napi_value *result) noexcept;
+  getProperty(napi_value object, napi_value key, napi_value *result) noexcept;
 
   napi_status
-  DeleteProperty(napi_value object, napi_value key, bool *result) noexcept;
+  deleteProperty(napi_value object, napi_value key, bool *result) noexcept;
 
   napi_status
-  HasOwnProperty(napi_value object, napi_value key, bool *result) noexcept;
+  hasOwnProperty(napi_value object, napi_value key, bool *result) noexcept;
 
-  napi_status SetNamedProperty(
+  napi_status setNamedProperty(
       napi_value object,
       const char *utf8name,
       napi_value value) noexcept;
 
-  napi_status HasNamedProperty(
+  napi_status hasNamedProperty(
       napi_value object,
       const char *utf8name,
       bool *result) noexcept;
 
-  napi_status GetNamedProperty(
+  napi_status getNamedProperty(
       napi_value object,
       const char *utf8name,
       napi_value *result) noexcept;
 
   napi_status
-  SetElement(napi_value object, uint32_t index, napi_value value) noexcept;
+  setElement(napi_value arr, uint32_t index, napi_value value) noexcept;
+
+  napi_status hasElement(napi_value arr, uint32_t index, bool *result) noexcept;
 
   napi_status
-  HasElement(napi_value object, uint32_t index, bool *result) noexcept;
+  getElement(napi_value arr, uint32_t index, napi_value *result) noexcept;
 
   napi_status
-  GetElement(napi_value object, uint32_t index, napi_value *result) noexcept;
+  deleteElement(napi_value arr, uint32_t index, bool *result) noexcept;
 
-  napi_status
-  DeleteElement(napi_value object, uint32_t index, bool *result) noexcept;
-
-  napi_status DefineProperties(
+  napi_status defineProperties(
       napi_value object,
       size_t property_count,
       const napi_property_descriptor *properties) noexcept;
 
-  napi_status ObjectFreeze(napi_value object) noexcept;
+  napi_status objectFreeze(napi_value object) noexcept;
 
-  napi_status ObjectSeal(napi_value object) noexcept;
+  napi_status objectSeal(napi_value object) noexcept;
 
-  napi_status IsArray(napi_value value, bool *result) noexcept;
+  napi_status isArray(napi_value value, bool *result) noexcept;
 
-  napi_status GetArrayLength(napi_value value, uint32_t *result) noexcept;
+  napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
 
   napi_status
   StrictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
@@ -559,9 +571,9 @@ struct NodeApiEnvironment {
 
   napi_status TypeOf(napi_value value, napi_valuetype *result) noexcept;
 
-  napi_status GetUndefined(napi_value *result) noexcept;
+  napi_status getUndefined(napi_value *result) noexcept;
 
-  napi_status GetNull(napi_value *result) noexcept;
+  napi_status getNull(napi_value *result) noexcept;
 
   napi_status getCallbackInfo(
       CallbackInfo *callbackInfo,
@@ -581,7 +593,7 @@ struct NodeApiEnvironment {
       const napi_value *args,
       napi_value *result) noexcept;
 
-  napi_status GetGlobal(napi_value *result) noexcept;
+  napi_status getGlobal(napi_value *result) noexcept;
 
   napi_status Throw(napi_value error) noexcept;
 
@@ -854,6 +866,8 @@ struct NodeApiEnvironment {
   hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromUtf8(
       const uint8_t *utf8,
       size_t length) noexcept;
+  hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromUtf8(
+      const char *utf8) noexcept;
   napi_value addStackValue(hermes::vm::HermesValue value) noexcept;
   napi_status checkStatus(hermes::vm::ExecutionStatus status) noexcept;
 
@@ -1633,6 +1647,12 @@ NodeApiEnvironment::stringHVFromUtf8(
       &runtime_, std::move(out));
 }
 
+hermes::vm::CallResult<hermes::vm::HermesValue>
+NodeApiEnvironment::stringHVFromUtf8(const char *utf8) noexcept {
+  size_t length = std::char_traits<char>::length(utf8);
+  return stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8), length);
+}
+
 napi_value NodeApiEnvironment::addStackValue(
     hermes::vm::HermesValue value) noexcept {
   m_stackValues.emplace_back(value);
@@ -1887,10 +1907,10 @@ napi_status NodeApiEnvironment::DefineClass(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetPropertyNames(
+napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
-  return GetAllPropertyNames(
+  return getAllPropertyNames(
       object,
       napi_key_include_prototypes,
       static_cast<napi_key_filter>(napi_key_enumerable | napi_key_skip_symbols),
@@ -1898,7 +1918,7 @@ napi_status NodeApiEnvironment::GetPropertyNames(
       result);
 }
 
-napi_status NodeApiEnvironment::GetAllPropertyNames(
+napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value object,
     napi_key_collection_mode key_mode,
     napi_key_filter key_filter,
@@ -1973,7 +1993,7 @@ napi_status NodeApiEnvironment::GetAllPropertyNames(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::SetProperty(
+napi_status NodeApiEnvironment::setProperty(
     napi_value object,
     napi_value key,
     napi_value value) noexcept {
@@ -1996,7 +2016,7 @@ napi_status NodeApiEnvironment::SetProperty(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::HasProperty(
+napi_status NodeApiEnvironment::hasProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
@@ -2004,7 +2024,7 @@ napi_status NodeApiEnvironment::HasProperty(
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(result);
-    auto h = handle(object);
+    auto h = toObjectHandle(object);
     auto res = h->hasComputed(h, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = *res;
@@ -2012,7 +2032,7 @@ napi_status NodeApiEnvironment::HasProperty(
   });
 }
 
-napi_status NodeApiEnvironment::GetProperty(
+napi_status NodeApiEnvironment::getProperty(
     napi_value object,
     napi_value key,
     napi_value *result) noexcept {
@@ -2020,7 +2040,7 @@ napi_status NodeApiEnvironment::GetProperty(
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(result);
-    auto h = handle(object);
+    auto h = toObjectHandle(object);
     auto res = h->getComputed_RJS(h, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->get());
@@ -2028,7 +2048,7 @@ napi_status NodeApiEnvironment::GetProperty(
   });
 }
 
-napi_status NodeApiEnvironment::DeleteProperty(
+napi_status NodeApiEnvironment::deleteProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
@@ -2050,7 +2070,7 @@ napi_status NodeApiEnvironment::DeleteProperty(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::HasOwnProperty(
+napi_status NodeApiEnvironment::hasOwnProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
@@ -2072,8 +2092,7 @@ napi_status NodeApiEnvironment::HasOwnProperty(
   return napi_ok;
 }
 
-hermes::vm::Handle<> NodeApiEnvironment::vmHandleFromValue(
-    napi_value value) noexcept {
+hermes::vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   auto &hv = phv(value);
   if (hv.isUndefined()) {
     return hermes::vm::Runtime::getUndefinedValue();
@@ -2091,123 +2110,91 @@ hermes::vm::Handle<> NodeApiEnvironment::vmHandleFromValue(
   }
 }
 
-napi_status NodeApiEnvironment::SetNamedProperty(
+napi_status NodeApiEnvironment::setNamedProperty(
     napi_value object,
-    const char *utf8name,
+    const char *utf8Name,
     napi_value value) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_ARG(utf8name);
+    CHECK_ARG(utf8Name);
     CHECK_ARG(value);
-    size_t length = std::char_traits<char>::length(utf8name);
-    auto res1 =
-        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
-    CHECK_STATUS(res1.getStatus());
-    auto h = handle(object);
-    auto key = hermes::vm::PinnedHermesValue(*res1);
-    CHECK_STATUS(
-        h->putComputed_RJS(
-             h,
-             &runtime_,
-             ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key),
-             vmHandleFromValue(value),
-             hermes::vm::PropOpFlags().plusThrowOnError())
-            .getStatus());
-    return napi_ok;
+
+    auto objHandle = toObjectHandle(object);
+    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+    CHECK_STATUS(objHandle
+                     ->putComputed_RJS(
+                         objHandle,
+                         &runtime_,
+                         toHandle(name),
+                         toHandle(value),
+                         hermes::vm::PropOpFlags().plusThrowOnError())
+                     .getStatus());
+    return ClearLastError();
   });
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Name> key;
-  // CHECK_NEW_FROM_UTF8(env, key, utf8name);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-
-  // v8::Maybe<bool> set_maybe = obj->Set(context, key, val);
-
-  // RETURN_STATUS_IF_FALSE(env, set_maybe.FromMaybe(false),
-  // napi_generic_failure); return GET_RETURN_STATUS(env);
-  return napi_ok;
 }
 
-napi_status NodeApiEnvironment::HasNamedProperty(
+napi_status NodeApiEnvironment::hasNamedProperty(
     napi_value object,
-    const char *utf8name,
+    const char *utf8Name,
     bool *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(utf8Name);
+    CHECK_ARG(result);
 
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
+    auto objHandle = toObjectHandle(object);
+    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
 
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Name> key;
-  // CHECK_NEW_FROM_UTF8(env, key, utf8name);
-
-  // v8::Maybe<bool> has_maybe = obj->Has(context, key);
-
-  // CHECK_MAYBE_NOTHING(env, has_maybe, napi_generic_failure);
-
-  // *result = has_maybe.FromMaybe(false);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    ASSIGN_CHECKED(
+        *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::GetNamedProperty(
+napi_status NodeApiEnvironment::getNamedProperty(
     napi_value object,
-    const char *utf8name,
+    const char *utf8Name,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_ARG(utf8name);
+    CHECK_ARG(utf8Name);
     CHECK_ARG(result);
-    size_t length = std::char_traits<char>::length(utf8name);
-    auto res1 =
-        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8name), length);
-    CHECK_STATUS(res1.getStatus());
-    auto h = handle(object);
-    auto key = hermes::vm::PinnedHermesValue(*res1);
-    auto res2 = h->getComputed_RJS(
-        h,
-        &runtime_,
-        ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&key));
-    CHECK_STATUS(res2.getStatus());
-    *result = addStackValue(res2->get());
-    return napi_ok;
+
+    auto objHandle = toObjectHandle(object);
+    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+
+    ASSIGN_CHECKED(
+        const auto& res,
+        objHandle->getComputed_RJS(objHandle, &runtime_, toHandle(name)));
+    *result = addStackValue(res.get());
+    return ClearLastError();
   });
-
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-
-  // v8::Local<v8::Name> key;
-  // CHECK_NEW_FROM_UTF8(env, key, utf8name);
-
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // auto get_maybe = obj->Get(context, key);
-
-  // CHECK_MAYBE_EMPTY(env, get_maybe, napi_generic_failure);
-
-  // v8::Local<v8::Value> val = get_maybe.ToLocalChecked();
-  // *result = v8impl::JsValueFromV8LocalValue(val);
-  // return GET_RETURN_STATUS(env);
-  // return napi_ok;
 }
 
-napi_status NodeApiEnvironment::SetElement(
-    napi_value object,
+napi_status NodeApiEnvironment::setElement(
+    napi_value arr,
     uint32_t index,
     napi_value value) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(arr);
+    CHECK_ARG(value);
+
+    // TODO:
+    // if (LLVM_UNLIKELY(index >= size(arr))) {
+    //   throw makeJSError(
+    //       *this,
+    //       "setValueAtIndex: index ",
+    //       i,
+    //       " is out of bounds [0, ",
+    //       size(arr),
+    //       ")");
+    // }
+
+    auto h = arrayHandle(arr);
+    h->setElementAt(h, &runtime_, index, toHandle(value));
+
+    return ClearLastError();
+  });
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, value);
 
@@ -2223,10 +2210,10 @@ napi_status NodeApiEnvironment::SetElement(
   // napi_generic_failure);
 
   // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  // return napi_ok;
 }
 
-napi_status NodeApiEnvironment::HasElement(
+napi_status NodeApiEnvironment::hasElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
@@ -2247,7 +2234,7 @@ napi_status NodeApiEnvironment::HasElement(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetElement(
+napi_status NodeApiEnvironment::getElement(
     napi_value object,
     uint32_t index,
     napi_value *result) noexcept {
@@ -2268,7 +2255,7 @@ napi_status NodeApiEnvironment::GetElement(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::DeleteElement(
+napi_status NodeApiEnvironment::deleteElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
@@ -2288,7 +2275,7 @@ napi_status NodeApiEnvironment::DeleteElement(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::DefineProperties(
+napi_status NodeApiEnvironment::defineProperties(
     napi_value object,
     size_t property_count,
     const napi_property_descriptor *properties) noexcept {
@@ -2368,7 +2355,7 @@ napi_status NodeApiEnvironment::DefineProperties(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ObjectFreeze(napi_value object) noexcept {
+napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
   // NAPI_PREAMBLE(env);
 
   // v8::Local<v8::Context> context = env->context();
@@ -2386,7 +2373,7 @@ napi_status NodeApiEnvironment::ObjectFreeze(napi_value object) noexcept {
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ObjectSeal(napi_value object) noexcept {
+napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
   // NAPI_PREAMBLE(env);
 
   // v8::Local<v8::Context> context = env->context();
@@ -2404,7 +2391,7 @@ napi_status NodeApiEnvironment::ObjectSeal(napi_value object) noexcept {
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsArray(
+napi_status NodeApiEnvironment::isArray(
     napi_value value,
     bool *result) noexcept {
   // CHECK_ENV(env);
@@ -2418,7 +2405,7 @@ napi_status NodeApiEnvironment::IsArray(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetArrayLength(
+napi_status NodeApiEnvironment::getArrayLength(
     napi_value value,
     uint32_t *result) noexcept {
   // NAPI_PREAMBLE(env);
@@ -2823,14 +2810,14 @@ napi_status NodeApiEnvironment::TypeOf(
   return ClearLastError();
 }
 
-napi_status NodeApiEnvironment::GetUndefined(napi_value *result) noexcept {
+napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getUndefinedValue().getHermesValue());
   return ClearLastError();
 }
 
-napi_status NodeApiEnvironment::GetNull(napi_value *result) noexcept {
+napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getNullValue().getHermesValue());
@@ -2949,7 +2936,7 @@ napi_status NodeApiEnvironment::callFunction(
   // }
 }
 
-napi_status NodeApiEnvironment::GetGlobal(napi_value *result) noexcept {
+napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getGlobal().getHermesValue());
@@ -3819,14 +3806,24 @@ hermes::vm::PinnedHermesValue &NodeApiEnvironment::phv(
   return *reinterpret_cast<hermes::vm::PinnedHermesValue *>(value);
 }
 
-hermes::vm::Handle<hermes::vm::JSObject> NodeApiEnvironment::handle(
+hermes::vm::Handle<hermes::vm::JSObject> NodeApiEnvironment::toObjectHandle(
     napi_value value) noexcept {
   return hermes::vm::Handle<::hermes::vm::JSObject>::vmcast(&phv(value));
 }
 
 hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::stringHandle(
     napi_value value) noexcept {
-  return ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&phv(value));
+  return hermes::vm::Handle<hermes::vm::HermesValue>::vmcast(&phv(value));
+}
+
+hermes::vm::Handle<hermes::vm::JSArray> NodeApiEnvironment::arrayHandle(
+    napi_value value) noexcept {
+  return hermes::vm::Handle<hermes::vm::JSArray>::vmcast(&phv(value));
+}
+
+hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::toHandle(
+    const hermes::vm::HermesValue &value) noexcept {
+  return runtime_.makeHandle(value);
 }
 
 napi_status NodeApiEnvironment::InstanceOf(
@@ -3883,7 +3880,7 @@ napi_status NodeApiEnvironment::GetAndClearLastException(
   CHECK_ARG(result);
 
   if (lastException_.isEmpty()) {
-    return GetUndefined(result);
+    return getUndefined(result);
   } else {
     *result = addStackValue(lastException_);
     lastException_ = EmptyHermesValue;
@@ -4751,7 +4748,7 @@ napi_status napi_define_class(
 
 napi_status
 napi_get_property_names(napi_env env, napi_value object, napi_value *result) {
-  return CHECKED_ENV(env)->GetPropertyNames(object, result);
+  return CHECKED_ENV(env)->getPropertyNames(object, result);
 }
 
 napi_status napi_get_all_property_names(
@@ -4761,7 +4758,7 @@ napi_status napi_get_all_property_names(
     napi_key_filter key_filter,
     napi_key_conversion key_conversion,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetAllPropertyNames(
+  return CHECKED_ENV(env)->getAllPropertyNames(
       object, key_mode, key_filter, key_conversion, result);
 }
 
@@ -4770,7 +4767,7 @@ napi_status napi_set_property(
     napi_value object,
     napi_value key,
     napi_value value) {
-  return CHECKED_ENV(env)->SetProperty(object, key, value);
+  return CHECKED_ENV(env)->setProperty(object, key, value);
 }
 
 napi_status napi_has_property(
@@ -4778,7 +4775,7 @@ napi_status napi_has_property(
     napi_value object,
     napi_value key,
     bool *result) {
-  return CHECKED_ENV(env)->HasProperty(object, key, result);
+  return CHECKED_ENV(env)->hasProperty(object, key, result);
 }
 
 napi_status napi_get_property(
@@ -4786,7 +4783,7 @@ napi_status napi_get_property(
     napi_value object,
     napi_value key,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetProperty(object, key, result);
+  return CHECKED_ENV(env)->getProperty(object, key, result);
 }
 
 napi_status napi_delete_property(
@@ -4794,7 +4791,7 @@ napi_status napi_delete_property(
     napi_value object,
     napi_value key,
     bool *result) {
-  return CHECKED_ENV(env)->DeleteProperty(object, key, result);
+  return CHECKED_ENV(env)->deleteProperty(object, key, result);
 }
 
 napi_status napi_has_own_property(
@@ -4802,7 +4799,7 @@ napi_status napi_has_own_property(
     napi_value object,
     napi_value key,
     bool *result) {
-  return CHECKED_ENV(env)->HasOwnProperty(object, key, result);
+  return CHECKED_ENV(env)->hasOwnProperty(object, key, result);
 }
 
 napi_status napi_set_named_property(
@@ -4810,7 +4807,7 @@ napi_status napi_set_named_property(
     napi_value object,
     const char *utf8name,
     napi_value value) {
-  return CHECKED_ENV(env)->SetNamedProperty(object, utf8name, value);
+  return CHECKED_ENV(env)->setNamedProperty(object, utf8name, value);
 }
 
 napi_status napi_has_named_property(
@@ -4818,7 +4815,7 @@ napi_status napi_has_named_property(
     napi_value object,
     const char *utf8name,
     bool *result) {
-  return CHECKED_ENV(env)->HasNamedProperty(object, utf8name, result);
+  return CHECKED_ENV(env)->hasNamedProperty(object, utf8name, result);
 }
 
 napi_status napi_get_named_property(
@@ -4826,7 +4823,7 @@ napi_status napi_get_named_property(
     napi_value object,
     const char *utf8name,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetNamedProperty(object, utf8name, result);
+  return CHECKED_ENV(env)->getNamedProperty(object, utf8name, result);
 }
 
 napi_status napi_set_element(
@@ -4834,7 +4831,7 @@ napi_status napi_set_element(
     napi_value object,
     uint32_t index,
     napi_value value) {
-  return CHECKED_ENV(env)->SetElement(object, index, value);
+  return CHECKED_ENV(env)->setElement(object, index, value);
 }
 
 napi_status napi_has_element(
@@ -4842,7 +4839,7 @@ napi_status napi_has_element(
     napi_value object,
     uint32_t index,
     bool *result) {
-  return CHECKED_ENV(env)->HasElement(object, index, result);
+  return CHECKED_ENV(env)->hasElement(object, index, result);
 }
 
 napi_status napi_get_element(
@@ -4850,7 +4847,7 @@ napi_status napi_get_element(
     napi_value object,
     uint32_t index,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetElement(object, index, result);
+  return CHECKED_ENV(env)->getElement(object, index, result);
 }
 
 napi_status napi_delete_element(
@@ -4858,7 +4855,7 @@ napi_status napi_delete_element(
     napi_value object,
     uint32_t index,
     bool *result) {
-  return CHECKED_ENV(env)->DeleteElement(object, index, result);
+  return CHECKED_ENV(env)->deleteElement(object, index, result);
 }
 
 napi_status napi_define_properties(
@@ -4866,24 +4863,24 @@ napi_status napi_define_properties(
     napi_value object,
     size_t property_count,
     const napi_property_descriptor *properties) {
-  return CHECKED_ENV(env)->DefineProperties(object, property_count, properties);
+  return CHECKED_ENV(env)->defineProperties(object, property_count, properties);
 }
 
 napi_status napi_object_freeze(napi_env env, napi_value object) {
-  return CHECKED_ENV(env)->ObjectFreeze(object);
+  return CHECKED_ENV(env)->objectFreeze(object);
 }
 
 napi_status napi_object_seal(napi_env env, napi_value object) {
-  return CHECKED_ENV(env)->ObjectSeal(object);
+  return CHECKED_ENV(env)->objectSeal(object);
 }
 
 napi_status napi_is_array(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->IsArray(value, result);
+  return CHECKED_ENV(env)->isArray(value, result);
 }
 
 napi_status
 napi_get_array_length(napi_env env, napi_value value, uint32_t *result) {
-  return CHECKED_ENV(env)->GetArrayLength(value, result);
+  return CHECKED_ENV(env)->getArrayLength(value, result);
 }
 
 napi_status
@@ -5008,11 +5005,11 @@ napi_typeof(napi_env env, napi_value value, napi_valuetype *result) {
 }
 
 napi_status napi_get_undefined(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->GetUndefined(result);
+  return CHECKED_ENV(env)->getUndefined(result);
 }
 
 napi_status napi_get_null(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->GetNull(result);
+  return CHECKED_ENV(env)->getNull(result);
 }
 
 napi_status napi_get_cb_info(
@@ -5045,7 +5042,7 @@ napi_status napi_call_function(
 }
 
 napi_status napi_get_global(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->GetGlobal(result);
+  return CHECKED_ENV(env)->getGlobal(result);
 }
 
 napi_status napi_throw(napi_env env, napi_value error) {
