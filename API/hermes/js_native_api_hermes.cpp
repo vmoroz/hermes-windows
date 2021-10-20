@@ -63,9 +63,10 @@ using ::hermes::hermesLog;
     }                          \
   } while (false)
 
-#define CHECKED_ENV(env)                \
-  ((env) == nullptr) ? napi_invalid_arg \
-                     : reinterpret_cast<NodeApiEnvironment *>(env)
+#define CHECKED_ENV(env) \
+  ((env) == nullptr)     \
+      ? napi_invalid_arg \
+      : reinterpret_cast<hermes::napi::NodeApiEnvironment *>(env)
 
 #define CHECK_ARG(arg) \
   RETURN_STATUS_IF_FALSE(((arg) != nullptr), napi_invalid_arg)
@@ -108,6 +109,9 @@ using ::hermes::hermesLog;
   var = *TEMP_VARNAME(tempSuffix);
 
 #define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
+
+namespace hermes {
+namespace napi {
 
 struct Marker {
   size_t ChunkIndex{0};
@@ -4702,6 +4706,9 @@ napi_status NodeApiEnvironment::serializePreparedScript(
   return ClearLastError();
 }
 
+} // namespace napi
+} // namespace hermes
+
 //=============================================================================
 // NAPI implementation
 //=============================================================================
@@ -5016,7 +5023,11 @@ napi_status napi_get_cb_info(
     napi_value *this_arg,
     void **data) {
   return CHECKED_ENV(env)->getCallbackInfo(
-      reinterpret_cast<CallbackInfo *>(cbinfo), argc, argv, this_arg, data);
+      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo),
+      argc,
+      argv,
+      this_arg,
+      data);
 }
 
 napi_status napi_get_new_target(
@@ -5024,7 +5035,7 @@ napi_status napi_get_new_target(
     napi_callback_info cbinfo,
     napi_value *result) {
   return CHECKED_ENV(env)->getNewTarget(
-      reinterpret_cast<CallbackInfo *>(cbinfo), result);
+      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo), result);
 }
 
 napi_status napi_call_function(
@@ -5505,7 +5516,7 @@ napi_status napi_create_hermes_env(napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = reinterpret_cast<napi_env>(new NodeApiEnvironment());
+  *env = reinterpret_cast<napi_env>(new hermes::napi::NodeApiEnvironment());
   return napi_status::napi_ok;
 }
 
@@ -5561,8 +5572,9 @@ napi_status __cdecl napi_ext_run_script_with_source_map(
     const char *source_url,
     napi_value *result) {
   return CHECKED_ENV(env)->runScriptWithSourceMap(
-      makeHermesBuffer(env, script, get_script_range, delete_script),
-      makeHermesBuffer(
+      hermes::napi::makeHermesBuffer(
+          env, script, get_script_range, delete_script),
+      hermes::napi::makeHermesBuffer(
           env, source_map, get_source_map_range, delete_source_map),
       source_url,
       result);
@@ -5580,8 +5592,9 @@ napi_status __cdecl napi_ext_prepare_script_with_source_map(
     const char *source_url,
     napi_ext_prepared_script *prepared_script) {
   return CHECKED_ENV(env)->prepareScriptWithSourceMap(
-      makeHermesBuffer(env, script, get_script_range, delete_script),
-      makeHermesBuffer(
+      hermes::napi::makeHermesBuffer(
+          env, script, get_script_range, delete_script),
+      hermes::napi::makeHermesBuffer(
           env, source_map, get_source_map_range, delete_source_map),
       source_url,
       prepared_script);
