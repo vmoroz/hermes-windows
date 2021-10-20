@@ -716,7 +716,7 @@ struct NodeApiEnvironment {
 
   napi_status GetAndClearLastException(napi_value *result) noexcept;
 
-  napi_status IsArrayBuffer(napi_value value, bool *result) noexcept;
+  napi_status isArrayBuffer(napi_value value, bool *result) noexcept;
 
   napi_status CreateArrayBuffer(
       size_t byte_length,
@@ -2068,11 +2068,10 @@ napi_status NodeApiEnvironment::hasOwnProperty(
   //   CHECK_ARG(result);
 
   //   auto objHandle = toObjectHandle(object);
-  //   ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+  //   ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
 
   //   ASSIGN_CHECKED(
-  //       *result, objHandle->hasComputed(objHandle, &runtime_,
-  //       toHandle(name)));
+  //       *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
   //   return ClearLastError();
   // });
   // NAPI_PREAMBLE(env);
@@ -2359,15 +2358,12 @@ napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
 napi_status NodeApiEnvironment::isArray(
     napi_value value,
     bool *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(result);
 
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-
-  // *result = val->IsArray();
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = vm::vmisa<vm::JSArray>(phv(value));
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::getArrayLength(
@@ -3860,7 +3856,7 @@ napi_status NodeApiEnvironment::GetAndClearLastException(
   return ClearLastError();
 }
 
-napi_status NodeApiEnvironment::IsArrayBuffer(
+napi_status NodeApiEnvironment::isArrayBuffer(
     napi_value value,
     bool *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -5306,7 +5302,7 @@ napi_status napi_get_and_clear_last_exception(
 }
 
 napi_status napi_is_arraybuffer(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->IsArrayBuffer(value, result);
+  return CHECKED_ENV(env)->isArrayBuffer(value, result);
 }
 
 napi_status napi_create_arraybuffer(
