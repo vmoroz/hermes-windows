@@ -475,17 +475,17 @@ struct NodeApiEnvironment {
 
   napi_status setNamedProperty(
       napi_value object,
-      const char *utf8name,
+      const char *utf8Name,
       napi_value value) noexcept;
 
   napi_status hasNamedProperty(
       napi_value object,
-      const char *utf8name,
+      const char *utf8Name,
       bool *result) noexcept;
 
   napi_status getNamedProperty(
       napi_value object,
-      const char *utf8name,
+      const char *utf8Name,
       napi_value *result) noexcept;
 
   napi_status
@@ -2074,6 +2074,19 @@ napi_status NodeApiEnvironment::hasOwnProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
+  // return handleExceptions([&] {
+  //   CHECK_OBJECT_ARG(object);
+  //   CHECK_ARG(key);
+  //   CHECK_ARG(result);
+
+  //   auto objHandle = toObjectHandle(object);
+  //   ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+
+  //   ASSIGN_CHECKED(
+  //       *result, objHandle->hasComputed(objHandle, &runtime_,
+  //       toHandle(name)));
+  //   return ClearLastError();
+  // });
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, key);
   // CHECK_ARG(env, result);
@@ -2092,24 +2105,6 @@ napi_status NodeApiEnvironment::hasOwnProperty(
   return napi_ok;
 }
 
-hermes::vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
-  auto &hv = phv(value);
-  if (hv.isUndefined()) {
-    return hermes::vm::Runtime::getUndefinedValue();
-  } else if (hv.isNull()) {
-    return hermes::vm::Runtime::getNullValue();
-  } else if (hv.isBool()) {
-    return hermes::vm::Runtime::getBoolValue(hv.getBool());
-  } else if (hv.isNumber()) {
-    return runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
-  } else if (hv.isSymbol() || hv.isString() || hv.isObject()) {
-    return hermes::vm::Handle<hermes::vm::HermesValue>(&hv);
-  } else {
-    llvm_unreachable("unknown value kind");
-  }
-}
-
 napi_status NodeApiEnvironment::setNamedProperty(
     napi_value object,
     const char *utf8Name,
@@ -2120,7 +2115,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
     CHECK_ARG(value);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
     CHECK_STATUS(objHandle
                      ->putComputed_RJS(
                          objHandle,
@@ -2143,7 +2138,7 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     CHECK_ARG(result);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
 
     ASSIGN_CHECKED(
         *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
@@ -2161,10 +2156,10 @@ napi_status NodeApiEnvironment::getNamedProperty(
     CHECK_ARG(result);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto& name, stringHVFromUtf8(utf8Name));
+    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
 
     ASSIGN_CHECKED(
-        const auto& res,
+        const auto &res,
         objHandle->getComputed_RJS(objHandle, &runtime_, toHandle(name)));
     *result = addStackValue(res.get());
     return ClearLastError();
@@ -2356,39 +2351,22 @@ napi_status NodeApiEnvironment::defineProperties(
 }
 
 napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
-  // NAPI_PREAMBLE(env);
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
 
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Maybe<bool> set_frozen =
-  //     obj->SetIntegrityLevel(context, v8::IntegrityLevel::kFrozen);
-
-  // RETURN_STATUS_IF_FALSE_WITH_PREAMBLE(
-  //     env, set_frozen.FromMaybe(false), napi_generic_failure);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    CHECK_STATUS(
+        hermes::vm::JSObject::freeze(toObjectHandle(object), &runtime_));
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
-  // NAPI_PREAMBLE(env);
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
 
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Maybe<bool> set_sealed =
-  //     obj->SetIntegrityLevel(context, v8::IntegrityLevel::kSealed);
-
-  // RETURN_STATUS_IF_FALSE_WITH_PREAMBLE(
-  //     env, set_sealed.FromMaybe(false), napi_generic_failure);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    CHECK_STATUS(hermes::vm::JSObject::seal(toObjectHandle(object), &runtime_));
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::isArray(
@@ -3824,6 +3802,24 @@ hermes::vm::Handle<hermes::vm::JSArray> NodeApiEnvironment::arrayHandle(
 hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::toHandle(
     const hermes::vm::HermesValue &value) noexcept {
   return runtime_.makeHandle(value);
+}
+
+hermes::vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
+  auto &hv = phv(value);
+  if (hv.isUndefined()) {
+    return hermes::vm::Runtime::getUndefinedValue();
+  } else if (hv.isNull()) {
+    return hermes::vm::Runtime::getNullValue();
+  } else if (hv.isBool()) {
+    return hermes::vm::Runtime::getBoolValue(hv.getBool());
+  } else if (hv.isNumber()) {
+    return runtime_.makeHandle(
+        hermes::vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
+  } else if (hv.isSymbol() || hv.isString() || hv.isObject()) {
+    return hermes::vm::Handle<hermes::vm::HermesValue>(&hv);
+  } else {
+    llvm_unreachable("unknown value kind");
+  }
 }
 
 napi_status NodeApiEnvironment::InstanceOf(
