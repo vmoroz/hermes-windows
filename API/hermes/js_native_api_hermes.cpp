@@ -293,15 +293,14 @@ struct RefTracker {
   RefList *prev_ = nullptr;
 };
 
-napi_value napiValue(const hermes::vm::PinnedHermesValue *hv) noexcept {
-  return reinterpret_cast<napi_value>(
-      const_cast<hermes::vm::PinnedHermesValue *>(hv));
+napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
+  return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
 }
 
 struct HFContext;
 
 struct CallbackInfo final {
-  CallbackInfo(HFContext &context, hermes::vm::NativeArgs &hvArgs) noexcept
+  CallbackInfo(HFContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
 
   void Args(napi_value *args, size_t *argCount) noexcept {
@@ -325,7 +324,7 @@ struct CallbackInfo final {
 
  private:
   HFContext &context_;
-  hermes::vm::NativeArgs &hvArgs_;
+  vm::NativeArgs &hvArgs_;
 };
 
 struct NodeApiEnvironment;
@@ -334,10 +333,8 @@ struct HFContext final {
   HFContext(NodeApiEnvironment &env, napi_callback hostCallback, void *data)
       : env_(env), hostCallback_(hostCallback), data_(data) {}
 
-  static hermes::vm::CallResult<hermes::vm::HermesValue> func(
-      void *context,
-      hermes::vm::Runtime *runtime,
-      hermes::vm::NativeArgs hvArgs);
+  static vm::CallResult<vm::HermesValue>
+  func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
 
   static void finalize(void *context) {
     delete reinterpret_cast<HFContext *>(context);
@@ -356,13 +353,13 @@ struct HermesBuffer;
 
 struct NodeApiEnvironment {
   explicit NodeApiEnvironment(
-      const hermes::vm::RuntimeConfig &runtimeConfig = {}) noexcept;
+      const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
   virtual ~NodeApiEnvironment();
 
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
-  hermes::vm::Handle<> toHandle(napi_value value) noexcept;
+  vm::Handle<> toHandle(napi_value value) noexcept;
 
   // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
   // v8impl::Persistent<v8::Context> context_persistent;
@@ -418,15 +415,11 @@ struct NodeApiEnvironment {
   // int open_callback_scopes = 0;
   void *instance_data{nullptr};
 
-  static hermes::vm::PinnedHermesValue &phv(napi_value value) noexcept;
-  static hermes::vm::Handle<::hermes::vm::JSObject> toObjectHandle(
-      napi_value value) noexcept;
-  static hermes::vm::Handle<hermes::vm::HermesValue> stringHandle(
-      napi_value value) noexcept;
-  static hermes::vm::Handle<::hermes::vm::JSArray> arrayHandle(
-      napi_value value) noexcept;
-  hermes::vm::Handle<hermes::vm::HermesValue> toHandle(
-      const hermes::vm::HermesValue &value) noexcept;
+  static vm::PinnedHermesValue &phv(napi_value value) noexcept;
+  static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
+  static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
+  static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
+  vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
 
   napi_status SetLastError(
       napi_status error_code,
@@ -861,19 +854,18 @@ struct NodeApiEnvironment {
       void *bufferHint) noexcept;
 
   // Utility
-  hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromAscii(
+  vm::CallResult<vm::HermesValue> stringHVFromAscii(
       const char *str,
       size_t length) noexcept;
-  hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromLatin1(
+  vm::CallResult<vm::HermesValue> stringHVFromLatin1(
       const char *str,
       size_t length) noexcept;
-  hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromUtf8(
+  vm::CallResult<vm::HermesValue> stringHVFromUtf8(
       const uint8_t *utf8,
       size_t length) noexcept;
-  hermes::vm::CallResult<hermes::vm::HermesValue> stringHVFromUtf8(
-      const char *utf8) noexcept;
-  napi_value addStackValue(hermes::vm::HermesValue value) noexcept;
-  napi_status checkStatus(hermes::vm::ExecutionStatus status) noexcept;
+  vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
+  napi_value addStackValue(vm::HermesValue value) noexcept;
+  napi_status checkStatus(vm::ExecutionStatus status) noexcept;
 
   static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
 
@@ -881,37 +873,37 @@ struct NodeApiEnvironment {
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
 #else
-  std::shared_ptr<::hermes::vm::Runtime> rt_;
+  std::shared_ptr<vm::Runtime> rt_;
 #endif
-  ::hermes::vm::Runtime &runtime_;
+  vm::Runtime &runtime_;
 #ifdef HERMES_ENABLE_DEBUGGER
   friend class debugger::Debugger;
   std::unique_ptr<debugger::Debugger> debugger_;
 #endif
-  ::hermes::vm::experiments::VMExperimentFlags vmExperimentFlags_{0};
-  std::shared_ptr<hermes::vm::CrashManager> crashMgr_;
+  vm::experiments::VMExperimentFlags vmExperimentFlags_{0};
+  std::shared_ptr<vm::CrashManager> crashMgr_;
 
   /// Compilation flags used by prepareJavaScript().
-  hermes::hbc::CompileFlags compileFlags_{};
+  hbc::CompileFlags compileFlags_{};
   /// The default setting of "emit async break check" in this runtime.
   bool defaultEmitAsyncBreakCheck_{false};
 
   std::atomic<int> m_refs{1};
 
   // TODO: use it as a GC root
-  hermes::vm::PinnedHermesValue lastException_{EmptyHermesValue};
+  vm::PinnedHermesValue lastException_{EmptyHermesValue};
 
  public:
-  NonMovableObjStack<hermes::vm::PinnedHermesValue> m_stackValues;
+  NonMovableObjStack<vm::PinnedHermesValue> m_stackValues;
   NonMovableObjStack<Marker> m_stackMarkers;
   static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
   static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
       kEscapeableSentinelNativeValue + 1;
-  static constexpr hermes::vm::HermesValue EmptyHermesValue{
-      hermes::vm::HermesValue::encodeEmptyValue()};
+  static constexpr vm::HermesValue EmptyHermesValue{
+      vm::HermesValue::encodeEmptyValue()};
 };
 
-struct HermesBuffer : hermes::Buffer {
+struct HermesBuffer : Buffer {
   HermesBuffer(
       napi_env env,
       napi_ext_buffer buffer,
@@ -946,8 +938,8 @@ std::unique_ptr<HermesBuffer> makeHermesBuffer(
 /// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
 struct HermesPreparedJavaScript {
   explicit HermesPreparedJavaScript(
-      std::unique_ptr<hermes::hbc::BCProvider> bcProvider,
-      hermes::vm::RuntimeModuleFlags runtimeFlags,
+      std::unique_ptr<hbc::BCProvider> bcProvider,
+      vm::RuntimeModuleFlags runtimeFlags,
       std::string sourceURL,
       bool isBytecode)
       : bcProvider_(std::move(bcProvider)),
@@ -955,11 +947,11 @@ struct HermesPreparedJavaScript {
         sourceURL_(std::move(sourceURL)),
         isBytecode_(isBytecode) {}
 
-  std::shared_ptr<hermes::hbc::BCProvider> bytecodeProvider() const {
+  std::shared_ptr<hbc::BCProvider> bytecodeProvider() const {
     return bcProvider_;
   }
 
-  hermes::vm::RuntimeModuleFlags runtimeFlags() const {
+  vm::RuntimeModuleFlags runtimeFlags() const {
     return runtimeFlags_;
   }
 
@@ -972,8 +964,8 @@ struct HermesPreparedJavaScript {
   }
 
  private:
-  std::shared_ptr<hermes::hbc::BCProvider> bcProvider_;
-  hermes::vm::RuntimeModuleFlags runtimeFlags_;
+  std::shared_ptr<hbc::BCProvider> bcProvider_;
+  vm::RuntimeModuleFlags runtimeFlags_;
   std::string sourceURL_;
   bool isBytecode_{false};
 };
@@ -994,7 +986,7 @@ struct ExtRefCounter : protected RefTracker {
     }
   }
 
-  virtual hermes::vm::PinnedHermesValue *Get(NodeApiEnvironment *env) = 0;
+  virtual vm::PinnedHermesValue *Get(NodeApiEnvironment *env) = 0;
 
  protected:
   ExtRefCounter(NodeApiEnvironment *env) {
@@ -1013,27 +1005,27 @@ struct ExtRefCounter : protected RefTracker {
 struct ExtReference : protected ExtRefCounter {
   static ExtReference *New(
       NodeApiEnvironment *env,
-      hermes::vm::PinnedHermesValue &value) {
+      vm::PinnedHermesValue &value) {
     return new ExtReference(env, value);
   }
 
-  hermes::vm::PinnedHermesValue *Get(NodeApiEnvironment * /*env*/) override {
+  vm::PinnedHermesValue *Get(NodeApiEnvironment * /*env*/) override {
     return &persistent_;
   }
 
  protected:
-  ExtReference(NodeApiEnvironment *env, hermes::vm::PinnedHermesValue value)
+  ExtReference(NodeApiEnvironment *env, vm::PinnedHermesValue value)
       : ExtRefCounter(env), persistent_(value) {}
 
  private:
-  hermes::vm::PinnedHermesValue persistent_;
+  vm::PinnedHermesValue persistent_;
 };
 
 // Associates data with ExtReference.
 struct ExtReferenceWithData : protected ExtReference {
   static ExtReferenceWithData *New(
       NodeApiEnvironment *env,
-      hermes::vm::PinnedHermesValue value,
+      vm::PinnedHermesValue value,
       void *native_object,
       napi_finalize finalize_cb,
       void *finalize_hint) {
@@ -1044,7 +1036,7 @@ struct ExtReferenceWithData : protected ExtReference {
  protected:
   ExtReferenceWithData(
       NodeApiEnvironment *env,
-      hermes::vm::PinnedHermesValue value,
+      vm::PinnedHermesValue value,
       void *native_object,
       napi_finalize finalize_cb,
       void *finalize_hint)
@@ -1074,7 +1066,7 @@ struct ExtReferenceWithData : protected ExtReference {
 // TODO:
 // struct ExtWeakReference : protected ExtRefCounter {
 //   static ExtWeakReference *New(napi_env env,
-//   hermes::vm::WeakRef<hermes::vm::HermesValue> value) {
+//   vm::WeakRef<vm::HermesValue> value) {
 //     return new ExtWeakReference(env, value);
 //   }
 
@@ -1290,7 +1282,7 @@ class Reference : public RefBase {
   template <typename... Args>
   Reference(
       NodeApiEnvironment *env,
-      hermes::vm::PinnedHermesValue value,
+      vm::PinnedHermesValue value,
       Args &&...args)
       : RefBase(env, std::forward<Args>(args)...), _persistent(value) {
     if (RefCount() == 0) {
@@ -1303,7 +1295,7 @@ class Reference : public RefBase {
  public:
   static inline Reference *New(
       NodeApiEnvironment *env,
-      hermes::vm::PinnedHermesValue value,
+      vm::PinnedHermesValue value,
       uint32_t initial_refcount,
       bool delete_self,
       napi_finalize finalize_callback = nullptr,
@@ -1339,7 +1331,7 @@ class Reference : public RefBase {
     return refcount;
   }
 
-  hermes::vm::PinnedHermesValue *Get() {
+  vm::PinnedHermesValue *Get() {
     // TODO: [vmoroz] Implement
     // if (_persistent.IsEmpty()) {
     //   return v8::Local<v8::Value>();
@@ -1390,18 +1382,16 @@ class Reference : public RefBase {
   //   data.GetParameter()->Finalize();
   // }
 
-  hermes::vm::PinnedHermesValue _persistent;
+  vm::PinnedHermesValue _persistent;
 };
 
-/*static*/ hermes::vm::CallResult<hermes::vm::HermesValue> HFContext::func(
-    void *context,
-    hermes::vm::Runtime *runtime,
-    hermes::vm::NativeArgs hvArgs) {
+/*static*/ vm::CallResult<vm::HermesValue>
+HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
   HFContext *hfc = reinterpret_cast<HFContext *>(context);
   NodeApiEnvironment &env = hfc->env_;
   assert(runtime == &env.runtime_);
   auto &stats = env.runtime_.getRuntimeStats();
-  const hermes::vm::instrumentation::RAIITimer timer{
+  const vm::instrumentation::RAIITimer timer{
       "Host Function", stats, stats.hostFunction};
 
   CallbackInfo callbackInfo{*hfc, hvArgs};
@@ -1424,22 +1414,22 @@ namespace {
 // Calculated by: (thread stack size - size of runtime -
 // 8 memory pages for other stuff in the thread)
 static constexpr unsigned kMaxNumRegisters =
-    (512 * 1024 - sizeof(::hermes::vm::Runtime) - 4096 * 8) /
-    sizeof(::hermes::vm::PinnedHermesValue);
+    (512 * 1024 - sizeof(vm::Runtime) - 4096 * 8) /
+    sizeof(vm::PinnedHermesValue);
 } // namespace
 
 NodeApiEnvironment::NodeApiEnvironment(
-    const hermes::vm::RuntimeConfig &runtimeConfig) noexcept
+    const vm::RuntimeConfig &runtimeConfig) noexcept
     :
 // TODO: pass parameters
 #ifdef HERMESJSI_ON_STACK
       stackRuntime_(runtimeConfig),
       runtime_(stackRuntime_.getRuntime()),
 #else
-      rt_(hermes::vm::Runtime::create(runtimeConfig.rebuild()
-                                          .withRegisterStack(nullptr)
-                                          .withMaxNumRegisters(kMaxNumRegisters)
-                                          .build())),
+      rt_(vm::Runtime::create(runtimeConfig.rebuild()
+                                  .withRegisterStack(nullptr)
+                                  .withMaxNumRegisters(kMaxNumRegisters)
+                                  .build())),
       runtime_(*rt_),
 #endif
       vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()),
@@ -1450,14 +1440,14 @@ NodeApiEnvironment::NodeApiEnvironment(
 #endif
 
   switch (runtimeConfig.getCompilationMode()) {
-    case hermes::vm::SmartCompilation:
+    case vm::SmartCompilation:
       compileFlags_.lazy = true;
       // (Leaves thresholds at default values)
       break;
-    case hermes::vm::ForceEagerCompilation:
+    case vm::ForceEagerCompilation:
       compileFlags_.lazy = false;
       break;
-    case hermes::vm::ForceLazyCompilation:
+    case vm::ForceLazyCompilation:
       compileFlags_.lazy = true;
       compileFlags_.preemptiveFileCompilationThreshold = 0;
       compileFlags_.preemptiveFunctionCompilationThreshold = 0;
@@ -1470,22 +1460,21 @@ NodeApiEnvironment::NodeApiEnvironment(
 
 #ifndef HERMESJSI_ON_STACK
   // Register the memory for the runtime if it isn't stored on the stack.
-  crashMgr_->registerMemory(&runtime_, sizeof(hermes::vm::Runtime));
+  crashMgr_->registerMemory(&runtime_, sizeof(vm::Runtime));
 #endif
-  runtime_.addCustomRootsFunction(
-      [this](hermes::vm::GC *, hermes::vm::RootAcceptor &acceptor) {
-        m_stackValues.for_each([&](const hermes::vm::PinnedHermesValue &phv) {
-          acceptor.accept(const_cast<hermes::vm::PinnedHermesValue &>(phv));
-        });
-        // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
-        //   if (it->get() == 0) {
-        //     it = hermesValues_->erase(it);
-        //   } else {
-        //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
-        //     ++it;
-        //   }
-        // }
-      });
+  runtime_.addCustomRootsFunction([this](vm::GC *, vm::RootAcceptor &acceptor) {
+    m_stackValues.for_each([&](const vm::PinnedHermesValue &phv) {
+      acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
+    });
+    // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
+    //   if (it->get() == 0) {
+    //     it = hermesValues_->erase(it);
+    //   } else {
+    //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
+    //     ++it;
+    //   }
+    // }
+  });
   // runtime_.addCustomWeakRootsFunction(
   //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
   //       for (auto it = weakHermesValues_->begin();
@@ -1549,11 +1538,11 @@ template <typename F>
 napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
   RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
   ClearLastError();
-  hermes::vm::GCScope gcScope(&runtime_);
+  vm::GCScope gcScope(&runtime_);
 #ifdef HERMESVM_EXCEPTION_ON_OOM
   try {
     return f();
-  } catch (const ::hermes::vm::JSOutOfMemoryError &ex) {
+  } catch (const vm::JSOutOfMemoryError &ex) {
     return SetLastError(napi_generic_failure);
   }
 #else // HERMESVM_EXCEPTION_ON_OOM
@@ -1590,17 +1579,17 @@ napi_status NodeApiEnvironment::ClearLastError() noexcept {
   return napi_ok;
 }
 
-hermes::vm::CallResult<hermes::vm::HermesValue>
-NodeApiEnvironment::stringHVFromAscii(const char *str, size_t length) noexcept {
-  return hermes::vm::StringPrimitive::createEfficient(
+vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromAscii(
+    const char *str,
+    size_t length) noexcept {
+  return vm::StringPrimitive::createEfficient(
       &runtime_, llvh::makeArrayRef(str, length));
 }
 
-hermes::vm::CallResult<hermes::vm::HermesValue>
-NodeApiEnvironment::stringHVFromLatin1(
+vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromLatin1(
     const char *str,
     size_t length) noexcept {
-  if (::hermes::isAllASCII(str, str + length)) {
+  if (isAllASCII(str, str + length)) {
     return stringHVFromAscii(str, length);
   }
 
@@ -1610,8 +1599,7 @@ NodeApiEnvironment::stringHVFromLatin1(
   for (auto i = 0; i < length; ++i) {
     out[i] = str[i];
   }
-  return hermes::vm::StringPrimitive::createEfficient(
-      &runtime_, std::move(out));
+  return vm::StringPrimitive::createEfficient(&runtime_, std::move(out));
 }
 
 static void convertUtf8ToUtf16(
@@ -1638,34 +1626,31 @@ static void convertUtf8ToUtf16(
   out.resize((char16_t *)targetStart - &out[0]);
 }
 
-hermes::vm::CallResult<hermes::vm::HermesValue>
-NodeApiEnvironment::stringHVFromUtf8(
+vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
     const uint8_t *utf8,
     size_t length) noexcept {
-  if (::hermes::isAllASCII(utf8, utf8 + length)) {
+  if (isAllASCII(utf8, utf8 + length)) {
     return stringHVFromAscii((const char *)utf8, length);
   }
   std::u16string out;
   convertUtf8ToUtf16(utf8, length, out);
-  return hermes::vm::StringPrimitive::createEfficient(
-      &runtime_, std::move(out));
+  return vm::StringPrimitive::createEfficient(&runtime_, std::move(out));
 }
 
-hermes::vm::CallResult<hermes::vm::HermesValue>
-NodeApiEnvironment::stringHVFromUtf8(const char *utf8) noexcept {
+vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
+    const char *utf8) noexcept {
   size_t length = std::char_traits<char>::length(utf8);
   return stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8), length);
 }
 
-napi_value NodeApiEnvironment::addStackValue(
-    hermes::vm::HermesValue value) noexcept {
+napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   m_stackValues.emplace_back(value);
   return reinterpret_cast<napi_value>(&m_stackValues.back());
 }
 
 napi_status NodeApiEnvironment::checkStatus(
-    hermes::vm::ExecutionStatus status) noexcept {
-  if (LLVM_LIKELY(status != hermes::vm::ExecutionStatus::EXCEPTION)) {
+    vm::ExecutionStatus status) noexcept {
+  if (LLVM_LIKELY(status != vm::ExecutionStatus::EXCEPTION)) {
     return napi_ok;
   }
 
@@ -1735,18 +1720,17 @@ napi_status NodeApiEnvironment::CreateFunction(
   return handleExceptions([&] {
     napi_value nameValue{};
     STATUS_CALL(CreateStringUtf8(utf8Name, length, &nameValue));
-    auto nameRes = hermes::vm::stringToSymbolID(
-        &runtime_, hermes::vm::createPseudoHandle(phv(nameValue).getString()));
+    auto nameRes = vm::stringToSymbolID(
+        &runtime_, vm::createPseudoHandle(phv(nameValue).getString()));
     CHECK_STATUS(nameRes.getStatus());
     auto context = std::make_unique<HFContext>(*this, cb, callback_data);
-    auto funcRes =
-        hermes::vm::FinalizableNativeFunction::createWithoutPrototype(
-            &runtime_,
-            context.get(),
-            &HFContext::func,
-            &HFContext::finalize,
-            nameRes->get(),
-            /*paramCount:*/ 0);
+    auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
+        &runtime_,
+        context.get(),
+        &HFContext::func,
+        &HFContext::finalize,
+        nameRes->get(),
+        /*paramCount:*/ 0);
     CHECK_STATUS(funcRes.getStatus());
     context.release();
     *result = addStackValue(*funcRes);
@@ -2126,7 +2110,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
                          &runtime_,
                          toHandle(name),
                          toHandle(value),
-                         hermes::vm::PropOpFlags().plusThrowOnError())
+                         vm::PropOpFlags().plusThrowOnError())
                      .getStatus());
     return ClearLastError();
   });
@@ -2358,8 +2342,7 @@ napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
 
-    CHECK_STATUS(
-        hermes::vm::JSObject::freeze(toObjectHandle(object), &runtime_));
+    CHECK_STATUS(vm::JSObject::freeze(toObjectHandle(object), &runtime_));
     return ClearLastError();
   });
 }
@@ -2368,7 +2351,7 @@ napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
 
-    CHECK_STATUS(hermes::vm::JSObject::seal(toObjectHandle(object), &runtime_));
+    CHECK_STATUS(vm::JSObject::seal(toObjectHandle(object), &runtime_));
     return ClearLastError();
   });
 }
@@ -2451,8 +2434,7 @@ napi_status NodeApiEnvironment::CreateObject(napi_value *result) noexcept {
 napi_status NodeApiEnvironment::CreateArray(napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    auto res =
-        hermes::vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
+    auto res = vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->getHermesValue());
     return ClearLastError();
@@ -2464,7 +2446,7 @@ napi_status NodeApiEnvironment::CreateArray(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    auto res = hermes::vm::JSArray::create(&runtime_, length, length);
+    auto res = vm::JSArray::create(&runtime_, length, length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->getHermesValue());
     return ClearLastError();
@@ -2521,7 +2503,7 @@ napi_status NodeApiEnvironment::CreateStringUtf16(
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char16_t>::length(str);
     }
-    auto res = hermes::vm::StringPrimitive::createEfficient(
+    auto res = vm::StringPrimitive::createEfficient(
         &runtime_, llvh::makeArrayRef(str, length));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
@@ -2534,8 +2516,7 @@ napi_status NodeApiEnvironment::CreateNumber(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    *result = addStackValue(
-        hermes::vm::HermesValue::encodeUntrustedDoubleValue(value));
+    *result = addStackValue(vm::HermesValue::encodeUntrustedDoubleValue(value));
     return ClearLastError();
   });
 }
@@ -2545,7 +2526,7 @@ napi_status NodeApiEnvironment::CreateNumber(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    *result = addStackValue(hermes::vm::HermesValue::encodeNumberValue(value));
+    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
     return ClearLastError();
   });
 }
@@ -2555,7 +2536,7 @@ napi_status NodeApiEnvironment::CreateNumber(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    *result = addStackValue(hermes::vm::HermesValue::encodeNumberValue(value));
+    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
     return ClearLastError();
   });
 }
@@ -2565,7 +2546,7 @@ napi_status NodeApiEnvironment::CreateNumber(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    *result = addStackValue(hermes::vm::HermesValue::encodeNumberValue(value));
+    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
     return ClearLastError();
   });
 }
@@ -2685,14 +2666,12 @@ napi_status NodeApiEnvironment::CreateError(
     CHECK_STRING_ARG(msg);
     CHECK_ARG(result);
 
-    auto err = hermes::vm::JSError::create(
-        &runtime_,
-        hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
-            &runtime_.ErrorPrototype));
+    auto err = vm::JSError::create(
+        &runtime_, vm::Handle<vm::JSObject>::vmcast(&runtime_.ErrorPrototype));
 
-    hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(hermes::vm::JSError::setMessage(
-        hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
         stringHandle(msg)));
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
@@ -2710,14 +2689,13 @@ napi_status NodeApiEnvironment::CreateTypeError(
     CHECK_STRING_ARG(msg);
     CHECK_ARG(result);
 
-    auto err = hermes::vm::JSError::create(
+    auto err = vm::JSError::create(
         &runtime_,
-        hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
-            &runtime_.TypeErrorPrototype));
+        vm::Handle<vm::JSObject>::vmcast(&runtime_.TypeErrorPrototype));
 
-    hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(hermes::vm::JSError::setMessage(
-        hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
         stringHandle(msg)));
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
@@ -2735,14 +2713,13 @@ napi_status NodeApiEnvironment::CreateRangeError(
     CHECK_STRING_ARG(msg);
     CHECK_ARG(result);
 
-    auto err = hermes::vm::JSError::create(
+    auto err = vm::JSError::create(
         &runtime_,
-        hermes::vm::Handle<hermes::vm::JSObject>::vmcast(
-            &runtime_.RangeErrorPrototype));
+        vm::Handle<vm::JSObject>::vmcast(&runtime_.RangeErrorPrototype));
 
-    hermes::vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(hermes::vm::JSError::setMessage(
-        hermes::vm::Handle<hermes::vm::JSError>::vmcast(&err_phv),
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
         stringHandle(msg)));
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
@@ -2759,7 +2736,7 @@ napi_status NodeApiEnvironment::TypeOf(
   CHECK_ARG(value);
   CHECK_ARG(result);
 
-  const hermes::vm::PinnedHermesValue &hv = phv(value);
+  const vm::PinnedHermesValue &hv = phv(value);
 
   if (hv.isNumber()) {
     *result = napi_number;
@@ -2769,9 +2746,9 @@ napi_status NodeApiEnvironment::TypeOf(
   } else if (hv.isString()) {
     *result = napi_string;
   } else if (hv.isObject()) {
-    if (hermes::vm::vmisa<hermes::vm::Callable>(hv)) {
+    if (vm::vmisa<vm::Callable>(hv)) {
       *result = napi_function;
-    } else if (hermes::vm::vmisa<hermes::vm::HostObject>(hv)) {
+    } else if (vm::vmisa<vm::HostObject>(hv)) {
       *result = napi_external;
     } else {
       *result = napi_object;
@@ -2858,8 +2835,8 @@ napi_status NodeApiEnvironment::callFunction(
     if (argCount > 0) {
       CHECK_ARG(args);
     }
-    hermes::vm::Handle<hermes::vm::Callable> handle =
-        hermes::vm::Handle<hermes::vm::Callable>::vmcast(&phv(func));
+    vm::Handle<vm::Callable> handle =
+        vm::Handle<vm::Callable>::vmcast(&phv(func));
     if (argCount > std::numeric_limits<uint32_t>::max() ||
         !runtime_.checkAvailableStack((uint32_t)argCount)) {
       LOG_EXCEPTION_CAUSE(
@@ -2872,23 +2849,23 @@ napi_status NodeApiEnvironment::callFunction(
     }
 
     auto &stats = runtime_.getRuntimeStats();
-    const hermes::vm::instrumentation::RAIITimer timer{
+    const vm::instrumentation::RAIITimer timer{
         "Incoming Function", stats, stats.incomingFunction};
-    hermes::vm::ScopedNativeCallFrame newFrame{
+    vm::ScopedNativeCallFrame newFrame{
         &runtime_,
         static_cast<uint32_t>(argCount),
         handle.getHermesValue(),
-        hermes::vm::HermesValue::encodeUndefinedValue(),
+        vm::HermesValue::encodeUndefinedValue(),
         phv(object)};
     if (LLVM_UNLIKELY(newFrame.overflowed())) {
       CHECK_STATUS(runtime_.raiseStackOverflow(
-          ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack));
+          vm::StackRuntime::StackOverflowKind::NativeStack));
     }
 
     for (uint32_t i = 0; i < argCount; ++i) {
       newFrame->getArgRef(i) = phv(args[i]);
     }
-    auto callRes = hermes::vm::Callable::call(handle, &runtime_);
+    auto callRes = vm::Callable::call(handle, &runtime_);
     CHECK_STATUS(callRes.getStatus());
 
     *result = addStackValue(callRes->get());
@@ -3106,10 +3083,9 @@ napi_status NodeApiEnvironment::GetValueStringLatin1(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+    vm::Handle<vm::StringPrimitive> handle(
         &runtime_, stringHandle(value)->getString());
-    auto view =
-        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
+    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
       CHECK_ARG(result);
@@ -3143,17 +3119,17 @@ static size_t utf8Length(llvh::ArrayRef<char16_t> input) {
     }
 
     char32_t c32;
-    if (hermes::isLowSurrogate(c)) {
+    if (isLowSurrogate(c)) {
       // Unpaired low surrogate.
-      c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
-    } else if (hermes::isHighSurrogate(c)) {
+      c32 = UNICODE_REPLACEMENT_CHARACTER;
+    } else if (isHighSurrogate(c)) {
       // Leading high surrogate. See if the next character is a low surrogate.
-      if (cur + 1 == end || !hermes::isLowSurrogate(cur[1])) {
+      if (cur + 1 == end || !isLowSurrogate(cur[1])) {
         // Trailing or unpaired high surrogate.
-        c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+        c32 = UNICODE_REPLACEMENT_CHARACTER;
       } else {
         // Decode surrogate pair and increment, because we consumed two chars.
-        c32 = hermes::decodeSurrogatePair(c, cur[1]);
+        c32 = decodeSurrogatePair(c, cur[1]);
         ++cur;
       }
     } else {
@@ -3209,17 +3185,17 @@ static char *convertUTF16ToUTF8WithReplacements(
     }
 
     char32_t c32;
-    if (hermes::isLowSurrogate(c)) {
+    if (isLowSurrogate(c)) {
       // Unpaired low surrogate.
-      c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
-    } else if (hermes::isHighSurrogate(c)) {
+      c32 = UNICODE_REPLACEMENT_CHARACTER;
+    } else if (isHighSurrogate(c)) {
       // Leading high surrogate. See if the next character is a low surrogate.
-      if (cur + 1 == end || !hermes::isLowSurrogate(cur[1])) {
+      if (cur + 1 == end || !isLowSurrogate(cur[1])) {
         // Trailing or unpaired high surrogate.
-        c32 = hermes::UNICODE_REPLACEMENT_CHARACTER;
+        c32 = UNICODE_REPLACEMENT_CHARACTER;
       } else {
         // Decode surrogate pair and increment, because we consumed two chars.
-        c32 = hermes::decodeSurrogatePair(c, cur[1]);
+        c32 = decodeSurrogatePair(c, cur[1]);
         ++cur;
       }
     } else {
@@ -3227,9 +3203,9 @@ static char *convertUTF16ToUTF8WithReplacements(
       c32 = c;
     }
 
-    char buff[hermes::UTF8CodepointMaxBytes];
+    char buff[UTF8CodepointMaxBytes];
     char *ptr = buff;
-    hermes::encodeUTF8(ptr, c32);
+    encodeUTF8(ptr, c32);
     ptrdiff_t u8length = ptr - buff;
     if (curBuf + u8length <= endBuf) {
       for (auto u8ptr = buff; u8ptr < ptr; ++u8ptr) {
@@ -3258,25 +3234,23 @@ napi_status NodeApiEnvironment::GetValueStringUtf8(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+    vm::Handle<vm::StringPrimitive> handle(
         &runtime_, stringHandle(value)->getString());
-    auto view =
-        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
+    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
       CHECK_ARG(result);
       *result = view.isASCII() || view.length() == 0
           ? view.length()
-          : utf8Length(
-                hermes::vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
+          : utf8Length(vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
     } else if (bufsize != 0) {
       char *end = view.length() > 0 ? view.isASCII()
               ? convertASCIIToUTF8(
-                    hermes::vm::ASCIIRef(view.castToCharPtr(), view.length()),
+                    vm::ASCIIRef(view.castToCharPtr(), view.length()),
                     buf,
                     bufsize - 1)
               : convertUTF16ToUTF8WithReplacements(
-                    hermes::vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
+                    vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
                     buf,
                     bufsize - 1)
                                     : buf;
@@ -3307,10 +3281,9 @@ napi_status NodeApiEnvironment::GetValueStringUtf16(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    hermes::vm::Handle<hermes::vm::StringPrimitive> handle(
+    vm::Handle<vm::StringPrimitive> handle(
         &runtime_, stringHandle(value)->getString());
-    auto view =
-        hermes::vm::StringPrimitive::createStringView(&runtime_, handle);
+    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
       CHECK_ARG(result);
@@ -3682,8 +3655,8 @@ napi_status NodeApiEnvironment::OpenEscapableHandleScope(
   }
 
   m_stackValues.emplace_back(); // value to escape to parent scope
-  m_stackValues.emplace_back(hermes::vm::HermesValue::encodeNativeUInt32(
-      kEscapeableSentinelNativeValue));
+  m_stackValues.emplace_back(
+      vm::HermesValue::encodeNativeUInt32(kEscapeableSentinelNativeValue));
 
   return OpenHandleScope(reinterpret_cast<napi_handle_scope *>(result));
 }
@@ -3735,7 +3708,7 @@ napi_status NodeApiEnvironment::EscapeHandle(
     return napi_invalid_arg;
   }
 
-  hermes::vm::PinnedHermesValue *sentinelTag = m_stackValues.at(sentinelMarker);
+  vm::PinnedHermesValue *sentinelTag = m_stackValues.at(sentinelMarker);
   if (!sentinelTag || !sentinelTag->isNativeValue()) {
     return napi_invalid_arg;
   }
@@ -3746,9 +3719,8 @@ napi_status NodeApiEnvironment::EscapeHandle(
     return napi_invalid_arg;
   }
 
-  hermes::vm::PinnedHermesValue *escapedValue =
-      m_stackValues.at(escapedValueMarker);
-  *escapedValue = *reinterpret_cast<hermes::vm::PinnedHermesValue *>(escapee);
+  vm::PinnedHermesValue *escapedValue = m_stackValues.at(escapedValueMarker);
+  *escapedValue = *reinterpret_cast<vm::PinnedHermesValue *>(escapee);
 
   return ClearLastError();
 }
@@ -3783,44 +3755,43 @@ napi_status NodeApiEnvironment::NewInstance(
   return napi_ok;
 }
 
-hermes::vm::PinnedHermesValue &NodeApiEnvironment::phv(
-    napi_value value) noexcept {
-  return *reinterpret_cast<hermes::vm::PinnedHermesValue *>(value);
+vm::PinnedHermesValue &NodeApiEnvironment::phv(napi_value value) noexcept {
+  return *reinterpret_cast<vm::PinnedHermesValue *>(value);
 }
 
-hermes::vm::Handle<hermes::vm::JSObject> NodeApiEnvironment::toObjectHandle(
+vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
     napi_value value) noexcept {
-  return hermes::vm::Handle<::hermes::vm::JSObject>::vmcast(&phv(value));
+  return vm::Handle<vm::JSObject>::vmcast(&phv(value));
 }
 
-hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::stringHandle(
+vm::Handle<vm::HermesValue> NodeApiEnvironment::stringHandle(
     napi_value value) noexcept {
-  return hermes::vm::Handle<hermes::vm::HermesValue>::vmcast(&phv(value));
+  return vm::Handle<vm::HermesValue>::vmcast(&phv(value));
 }
 
-hermes::vm::Handle<hermes::vm::JSArray> NodeApiEnvironment::arrayHandle(
+vm::Handle<vm::JSArray> NodeApiEnvironment::arrayHandle(
     napi_value value) noexcept {
-  return hermes::vm::Handle<hermes::vm::JSArray>::vmcast(&phv(value));
+  return vm::Handle<vm::JSArray>::vmcast(&phv(value));
 }
 
-hermes::vm::Handle<hermes::vm::HermesValue> NodeApiEnvironment::toHandle(
-    const hermes::vm::HermesValue &value) noexcept {
+vm::Handle<vm::HermesValue> NodeApiEnvironment::toHandle(
+    const vm::HermesValue &value) noexcept {
   return runtime_.makeHandle(value);
 }
 
-hermes::vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
+vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   auto &hv = phv(value);
   if (hv.isUndefined()) {
-    return hermes::vm::Runtime::getUndefinedValue();
+    return vm::Runtime::getUndefinedValue();
   } else if (hv.isNull()) {
-    return hermes::vm::Runtime::getNullValue();
+    return vm::Runtime::getNullValue();
   } else if (hv.isBool()) {
-    return hermes::vm::Runtime::getBoolValue(hv.getBool());
+    return vm::Runtime::getBoolValue(hv.getBool());
   } else if (hv.isNumber()) {
     return runtime_.makeHandle(
-        hermes::vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
+        vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
   } else if (hv.isSymbol() || hv.isString() || hv.isObject()) {
-    return hermes::vm::Handle<hermes::vm::HermesValue>(&hv);
+    return vm::Handle<vm::HermesValue>(&hv);
   } else {
     llvm_unreachable("unknown value kind");
   }
@@ -3834,7 +3805,7 @@ napi_status NodeApiEnvironment::InstanceOf(
     CHECK_OBJECT_ARG(object);
     CHECK_FUNCTION_ARG(constructor);
     CHECK_ARG(result);
-    auto res = hermes::vm::instanceOfOperator_RJS(
+    auto res = vm::instanceOfOperator_RJS(
         &runtime_,
         runtime_.makeHandle(phv(object)),
         runtime_.makeHandle(phv(constructor)));
@@ -3896,7 +3867,7 @@ napi_status NodeApiEnvironment::IsArrayBuffer(
   CHECK_OBJECT_ARG(value);
   CHECK_ARG(result);
 
-  *result = hermes::vm::vmisa<hermes::vm::JSArrayBuffer>(phv(value));
+  *result = vm::vmisa<vm::JSArrayBuffer>(phv(value));
   return ClearLastError();
 }
 
@@ -3906,9 +3877,9 @@ napi_status NodeApiEnvironment::CreateArrayBuffer(
     napi_value *result) noexcept {
   // CHECK_ARG(this, result);
   // return HandleExceptions([&] {
-  //   hermes::vm::GCScope gcScope(&runtime_);
-  //   hermes::vm::JSArrayBuffer::create(&runtime_, ) auto res =
-  //       hermes::vm::JSArray::create(&runtime_, length, length);
+  //   vm::GCScope gcScope(&runtime_);
+  //   vm::JSArrayBuffer::create(&runtime_, ) auto res =
+  //       vm::JSArray::create(&runtime_, length, length);
   //   CHECK_STATUS(res.getStatus());
   //   *result = AddStackValue(res->getHermesValue());
   // });
@@ -4538,7 +4509,7 @@ napi_status NodeApiEnvironment::runScriptWithSourceMap(
 /*static*/ bool NodeApiEnvironment::isHermesBytecode(
     const uint8_t *data,
     size_t len) noexcept {
-  return hermes::hbc::BCProviderFromBuffer::isBytecodeStream(
+  return hbc::BCProviderFromBuffer::isBytecodeStream(
       llvh::ArrayRef<uint8_t>(data, len));
 }
 
@@ -4547,8 +4518,8 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
     std::unique_ptr<HermesBuffer> sourceMapBuf,
     const char *sourceURL,
     napi_ext_prepared_script *preparedScript) noexcept {
-  std::pair<std::unique_ptr<hermes::hbc::BCProvider>, std::string> bcErr{};
-  hermes::vm::RuntimeModuleFlags runtimeFlags{};
+  std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
+  vm::RuntimeModuleFlags runtimeFlags{};
   runtimeFlags.persistent = true;
 
   bool isBytecode = isHermesBytecode(buffer->data(), buffer->size());
@@ -4570,23 +4541,23 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
           0,
           "Source map cannot be specified with bytecode");
     }
-    bcErr = hermes::hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
+    bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
         std::move(buffer));
   } else {
 #if defined(HERMESVM_LEAN)
     bcErr.second = "prepareJavaScript source compilation not supported";
 #else
-    std::unique_ptr<::hermes::SourceMap> sourceMap{};
+    std::unique_ptr<SourceMap> sourceMap{};
     if (sourceMapBuf) {
       // Convert the buffer into a form the parser needs.
       llvh::MemoryBufferRef mbref(
           llvh::StringRef(
               (const char *)sourceMapBuf->data(), sourceMapBuf->size()),
           "");
-      ::hermes::SimpleDiagHandler diag;
-      ::hermes::SourceErrorManager sm;
+      SimpleDiagHandler diag;
+      SourceErrorManager sm;
       diag.installInto(sm);
-      sourceMap = ::hermes::SourceMapParser::parse(mbref, sm);
+      sourceMap = SourceMapParser::parse(mbref, sm);
       if (!sourceMap) {
         auto errorStr = diag.getErrorString();
         LOG_EXCEPTION_CAUSE("Error parsing source map: %s", errorStr.c_str());
@@ -4595,7 +4566,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
         // errorStr);
       }
     }
-    bcErr = hermes::hbc::BCProviderFromSrc::createBCProviderFromSrc(
+    bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
         std::move(buffer),
         std::string(sourceURL ? sourceURL : ""),
         std::move(sourceMap),
@@ -4630,7 +4601,7 @@ napi_status NodeApiEnvironment::runPreparedScript(
     CHECK_ARG(preparedScript);
     CHECK_ARG(result);
     auto &stats = runtime_.getRuntimeStats();
-    const hermes::vm::instrumentation::RAIITimer timer{
+    const vm::instrumentation::RAIITimer timer{
         "Evaluate JS", stats, stats.evaluateJS};
     const auto *hermesPrep =
         reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
@@ -4638,7 +4609,7 @@ napi_status NodeApiEnvironment::runPreparedScript(
         hermesPrep->bytecodeProvider(),
         hermesPrep->runtimeFlags(),
         hermesPrep->sourceURL(),
-        hermes::vm::Runtime::makeNullHandle<hermes::vm::Environment>());
+        vm::Runtime::makeNullHandle<vm::Environment>());
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
     return ClearLastError();
@@ -4663,9 +4634,8 @@ napi_status NodeApiEnvironment::serializePreparedScript(
       reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
 
   if (hermesPreparedScript->isBytecode()) {
-    auto bytecodeProvider =
-        std::static_pointer_cast<hermes::hbc::BCProviderFromBuffer>(
-            hermesPreparedScript->bytecodeProvider());
+    auto bytecodeProvider = std::static_pointer_cast<hbc::BCProviderFromBuffer>(
+        hermesPreparedScript->bytecodeProvider());
     auto bufferRef = bytecodeProvider->getRawBuffer();
     bufferCallback(
         reinterpret_cast<napi_env>(this),
@@ -4673,16 +4643,15 @@ napi_status NodeApiEnvironment::serializePreparedScript(
         bufferRef.size(),
         bufferHint);
   } else {
-    auto bytecodeProvider =
-        std::static_pointer_cast<hermes::hbc::BCProviderFromSrc>(
-            hermesPreparedScript->bytecodeProvider());
+    auto bytecodeProvider = std::static_pointer_cast<hbc::BCProviderFromSrc>(
+        hermesPreparedScript->bytecodeProvider());
     auto *bcModule = bytecodeProvider->getBytecodeModule();
 
     // Serialize/deserialize can't handle lazy compilation as of now. Do a
     // check to make sure there is no lazy BytecodeFunction in module_.
     for (uint32_t i = 0; i < bcModule->getNumFunctions(); i++) {
       if (bytecodeProvider->isFunctionLazy(i)) {
-        hermes::hermes_fatal("Cannot serialize lazy functions");
+        hermes_fatal("Cannot serialize lazy functions");
       }
     }
 
@@ -4691,10 +4660,10 @@ napi_status NodeApiEnvironment::serializePreparedScript(
     // first and make life easier for Deserializer. This is going to be slower
     // than writing to Serializer directly but it's OK to slow down
     // serialization if it speeds up Deserializer.
-    auto bytecodeGenOpts = hermes::BytecodeGenerationOptions::defaults();
+    auto bytecodeGenOpts = BytecodeGenerationOptions::defaults();
     llvh::SmallVector<char, 0> bytecodeVector;
     llvh::raw_svector_ostream OS(bytecodeVector);
-    hermes::hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
+    hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
     BS.serialize(*bcModule, bytecodeProvider->getSourceHash());
     bufferCallback(
         reinterpret_cast<napi_env>(this),
