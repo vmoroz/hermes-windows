@@ -1,10 +1,10 @@
 name: 0.0.$(Date:yyMM.d)$(Rev:rrr)
 
 trigger:
-  - master
+  - main
 
 pr:
-  - master
+  - main
 
 pool:
   vmImage: 'windows-latest'
