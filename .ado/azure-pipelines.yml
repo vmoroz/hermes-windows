@@ -119,7 +119,7 @@ jobs:
       # Make symbols available through http://symweb.
       - task: PublishSymbols@2
         displayName: Publish symbols
-        condition: not(eq(variables['ArtifactServices.Symbol.PAT'], ''))
+        condition: not(eq(variables['Build.Reason'], 'PullRequest'))
         inputs:
           SearchPattern: $(Build.ArtifactStagingDirectory)/**/*.pdb
           SymbolServerType: TeamServices
