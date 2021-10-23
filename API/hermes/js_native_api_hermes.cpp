@@ -498,7 +498,7 @@ struct NodeApiEnvironment {
 
   napi_status defineProperties(
       napi_value object,
-      size_t property_count,
+      size_t propertyCount,
       const napi_property_descriptor *properties) noexcept;
 
   napi_status objectFreeze(napi_value object) noexcept;
@@ -868,6 +868,10 @@ struct NodeApiEnvironment {
   napi_status checkStatus(vm::ExecutionStatus status) noexcept;
 
   static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
+
+  napi_status symbolIDFromPropertyDescriptor(
+      const napi_property_descriptor *p,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
  public:
 #ifdef HERMESJSI_ON_STACK
@@ -2071,7 +2075,8 @@ napi_status NodeApiEnvironment::hasOwnProperty(
   //   ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
 
   //   ASSIGN_CHECKED(
-  //       *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
+  //       *result, objHandle->hasComputed(objHandle, &runtime_,
+  //       toHandle(name)));
   //   return ClearLastError();
   // });
   // NAPI_PREAMBLE(env);
@@ -2257,10 +2262,114 @@ napi_status NodeApiEnvironment::deleteElement(
   return napi_ok;
 }
 
+napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
+    const napi_property_descriptor *p,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  if (p->utf8name != nullptr) {
+    napi_value nameValue{};
+    STATUS_CALL(CreateStringUtf8(p->utf8name, NAPI_AUTO_LENGTH, &nameValue));
+    ASSIGN_CHECKED(
+        *result,
+        vm::stringToSymbolID(
+            &runtime_, vm::createPseudoHandle(phv(nameValue).getString())));
+  } else {
+    auto namePHV = phv(p->name);
+    if (namePHV.isString()) {
+      ASSIGN_CHECKED(
+          *result,
+          vm::stringToSymbolID(
+              &runtime_, vm::createPseudoHandle(namePHV.getString())));
+    } else if (namePHV.isSymbol()) {
+      *result = namePHV.getSymbol();
+    } else {
+      return SetLastError(napi_name_expected);
+    }
+  }
+
+  return napi_ok;
+}
+
 napi_status NodeApiEnvironment::defineProperties(
     napi_value object,
-    size_t property_count,
+    size_t propertyCount,
     const napi_property_descriptor *properties) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    if (propertyCount > 0) {
+      CHECK_ARG(properties);
+    }
+
+    for (size_t i = 0; i < propertyCount; ++i) {
+      const napi_property_descriptor *p = &properties[i];
+      vm::MutableHandle<vm::SymbolID> name{&runtime_};
+      STATUS_CALL(symbolIDFromPropertyDescriptor(p, &name));
+
+      if (p->getter != nullptr || p->setter != nullptr) {
+        //     v8::Local<v8::Function> local_getter;
+        //     v8::Local<v8::Function> local_setter;
+
+        //     if (p->getter != nullptr) {
+        //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
+        //           env, p->getter, p->data, &local_getter));
+        //     }
+        //     if (p->setter != nullptr) {
+        //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
+        //           env, p->setter, p->data, &local_setter));
+        //     }
+
+        //     v8::PropertyDescriptor descriptor(local_getter, local_setter);
+        //     descriptor.set_enumerable((p->attributes & napi_enumerable) !=
+        //     0); descriptor.set_configurable((p->attributes &
+        //     napi_configurable) != 0);
+
+        //     auto define_maybe =
+        //         obj->DefineProperty(context, property_name, descriptor);
+
+        //     if (!define_maybe.FromMaybe(false)) {
+        //       return napi_set_last_error(env, napi_invalid_arg);
+        //     }
+      } else if (p->method != nullptr) {
+        //     v8::Local<v8::Function> method;
+        //     STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
+        //         env, p->method, p->data, &method));
+        //     v8::PropertyDescriptor descriptor(
+        //         method, (p->attributes & napi_writable) != 0);
+        //     descriptor.set_enumerable((p->attributes & napi_enumerable) !=
+        //     0); descriptor.set_configurable((p->attributes &
+        //     napi_configurable) != 0);
+
+        //     auto define_maybe =
+        //         obj->DefineProperty(context, property_name, descriptor);
+
+        //     if (!define_maybe.FromMaybe(false)) {
+        //       return napi_set_last_error(env, napi_generic_failure);
+        //     }
+      } else {
+        auto dpFlags = vm::DefinePropertyFlags::getDefaultNewPropertyFlags();
+        //     v8::Local<v8::Value> value =
+        //     v8impl::V8LocalValueFromJsValue(p->value);
+
+        if ((p->attributes & napi_writable) == 0) {
+          dpFlags.writable = 0;
+        }
+        if ((p->attributes & napi_enumerable) == 0) {
+          dpFlags.enumerable = 0;
+        }
+        if ((p->attributes & napi_configurable) == 0) {
+          dpFlags.configurable = 0;
+        }
+        CHECK_STATUS(vm::JSObject::defineOwnProperty(
+            toObjectHandle(object),
+            &runtime_,
+            name.get(),
+            dpFlags,
+            toHandle(p->value),
+            vm::PropOpFlags().plusThrowOnError()).getStatus());
+      }
+    }
+
+    return ClearLastError();
+  });
   // NAPI_PREAMBLE(env);
   // if (property_count > 0) {
   //   CHECK_ARG(env, properties);
@@ -2293,7 +2402,8 @@ napi_status NodeApiEnvironment::defineProperties(
 
   //     v8::PropertyDescriptor descriptor(local_getter, local_setter);
   //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) != 0);
+  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
+  //     0);
 
   //     auto define_maybe =
   //         obj->DefineProperty(context, property_name, descriptor);
@@ -2308,7 +2418,8 @@ napi_status NodeApiEnvironment::defineProperties(
   //     v8::PropertyDescriptor descriptor(
   //         method, (p->attributes & napi_writable) != 0);
   //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) != 0);
+  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
+  //     0);
 
   //     auto define_maybe =
   //         obj->DefineProperty(context, property_name, descriptor);
@@ -2317,12 +2428,14 @@ napi_status NodeApiEnvironment::defineProperties(
   //       return napi_set_last_error(env, napi_generic_failure);
   //     }
   //   } else {
-  //     v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(p->value);
+  //     v8::Local<v8::Value> value =
+  //     v8impl::V8LocalValueFromJsValue(p->value);
 
   //     v8::PropertyDescriptor descriptor(
   //         value, (p->attributes & napi_writable) != 0);
   //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) != 0);
+  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
+  //     0);
 
   //     auto define_maybe =
   //         obj->DefineProperty(context, property_name, descriptor);
@@ -2554,7 +2667,8 @@ napi_status NodeApiEnvironment::CreateBigInt(
   // CHECK_ARG(env, result);
 
   // *result =
-  //     v8impl::JsValueFromV8LocalValue(v8::BigInt::New(env->isolate, value));
+  //     v8impl::JsValueFromV8LocalValue(v8::BigInt::New(env->isolate,
+  //     value));
 
   // return napi_clear_last_error(env);
   return napi_ok;
@@ -2615,7 +2729,8 @@ napi_status NodeApiEnvironment::CreateSymbol(
   // if (description == nullptr) {
   //   *result = v8impl::JsValueFromV8LocalValue(v8::Symbol::New(isolate));
   // } else {
-  //   v8::Local<v8::Value> desc = v8impl::V8LocalValueFromJsValue(description);
+  //   v8::Local<v8::Value> desc =
+  //   v8impl::V8LocalValueFromJsValue(description);
   //   RETURN_STATUS_IF_FALSE(env, desc->IsString(), napi_string_expected);
 
   //   *result = v8impl::JsValueFromV8LocalValue(
@@ -4651,11 +4766,11 @@ napi_status NodeApiEnvironment::serializePreparedScript(
       }
     }
 
-    // Serialize the bytecode. Call BytecodeSerializer to do the heavy lifting.
-    // Write to a SmallVector first, so we can know the total bytes and write it
-    // first and make life easier for Deserializer. This is going to be slower
-    // than writing to Serializer directly but it's OK to slow down
-    // serialization if it speeds up Deserializer.
+    // Serialize the bytecode. Call BytecodeSerializer to do the heavy
+    // lifting. Write to a SmallVector first, so we can know the total bytes
+    // and write it first and make life easier for Deserializer. This is going
+    // to be slower than writing to Serializer directly but it's OK to slow
+    // down serialization if it speeds up Deserializer.
     auto bytecodeGenOpts = BytecodeGenerationOptions::defaults();
     llvh::SmallVector<char, 0> bytecodeVector;
     llvh::raw_svector_ostream OS(bytecodeVector);
