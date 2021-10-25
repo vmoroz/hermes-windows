@@ -543,16 +543,6 @@ struct NodeApiEnvironment {
 
   napi_status CreateNumber(int64_t value, napi_value *result) noexcept;
 
-  napi_status CreateBigInt(int64_t value, napi_value *result) noexcept;
-
-  napi_status CreateBigInt(uint64_t value, napi_value *result) noexcept;
-
-  napi_status CreateBigInt(
-      int sign_bit,
-      size_t word_count,
-      const uint64_t *words,
-      napi_value *result) noexcept;
-
   napi_status GetBoolean(bool value, napi_value *result) noexcept;
 
   napi_status CreateSymbol(napi_value description, napi_value *result) noexcept;
@@ -611,18 +601,6 @@ struct NodeApiEnvironment {
   napi_status GetNumberValue(napi_value value, uint32_t *result) noexcept;
 
   napi_status GetNumberValue(napi_value value, int64_t *result) noexcept;
-
-  napi_status
-  GetBigIntValue(napi_value value, int64_t *result, bool *lossless) noexcept;
-
-  napi_status
-  GetBigIntValue(napi_value value, uint64_t *result, bool *lossless) noexcept;
-
-  napi_status GetBigIntValue(
-      napi_value value,
-      int *sign_bit,
-      size_t *word_count,
-      uint64_t *words) noexcept;
 
   napi_status GetBoolValue(napi_value value, bool *result) noexcept;
 
@@ -2539,56 +2517,6 @@ napi_status NodeApiEnvironment::CreateNumber(
   });
 }
 
-napi_status NodeApiEnvironment::CreateBigInt(
-    int64_t value,
-    napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result =
-  //     v8impl::JsValueFromV8LocalValue(v8::BigInt::New(env->isolate,
-  //     value));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::CreateBigInt(
-    uint64_t value,
-    napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(
-  //     v8::BigInt::NewFromUnsigned(env->isolate, value));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::CreateBigInt(
-    int sign_bit,
-    size_t word_count,
-    const uint64_t *words,
-    napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, words);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-
-  // RETURN_STATUS_IF_FALSE(env, word_count <= INT_MAX, napi_invalid_arg);
-
-  // v8::MaybeLocal<v8::BigInt> b =
-  //     v8::BigInt::NewFromWords(context, sign_bit, word_count, words);
-
-  // CHECK_MAYBE_EMPTY_WITH_PREAMBLE(env, b, napi_generic_failure);
-
-  // *result = v8impl::JsValueFromV8LocalValue(b.ToLocalChecked());
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
-}
-
 napi_status NodeApiEnvironment::GetBoolean(
     bool value,
     napi_value *result) noexcept {
@@ -3020,31 +2948,6 @@ napi_status NodeApiEnvironment::GetNumberValue(
 
   *result = phv(value).getNumberAs<int64_t>();
   return ClearLastError();
-}
-
-napi_status NodeApiEnvironment::GetBigIntValue(
-    napi_value /*value*/,
-    int64_t * /*result*/,
-    bool * /*lossless*/) noexcept {
-  // BigInt is not implemented in Hermes
-  return SetLastError(napi_generic_failure);
-}
-
-napi_status NodeApiEnvironment::GetBigIntValue(
-    napi_value /*value*/,
-    uint64_t * /*result*/,
-    bool * /*lossless*/) noexcept {
-  // BigInt is not implemented in Hermes
-  return SetLastError(napi_generic_failure);
-}
-
-napi_status NodeApiEnvironment::GetBigIntValue(
-    napi_value /*value*/,
-    int * /*sign_bit*/,
-    size_t * /*word_count*/,
-    uint64_t * /*words*/) noexcept {
-  // BigInt is not implemented in Hermes
-  return SetLastError(napi_generic_failure);
 }
 
 napi_status NodeApiEnvironment::GetBoolValue(
@@ -4916,12 +4819,14 @@ napi_status napi_create_int64(napi_env env, int64_t value, napi_value *result) {
 
 napi_status
 napi_create_bigint_int64(napi_env env, int64_t value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateBigInt(value, result);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status
 napi_create_bigint_uint64(napi_env env, uint64_t value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateBigInt(value, result);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status napi_create_bigint_words(
@@ -4930,7 +4835,8 @@ napi_status napi_create_bigint_words(
     size_t word_count,
     const uint64_t *words,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateBigInt(sign_bit, word_count, words, result);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status napi_get_boolean(napi_env env, bool value, napi_value *result) {
@@ -5063,7 +4969,8 @@ napi_status napi_get_value_bigint_int64(
     napi_value value,
     int64_t *result,
     bool *lossless) {
-  return CHECKED_ENV(env)->GetBigIntValue(value, result, lossless);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bigint_uint64(
@@ -5071,7 +4978,8 @@ napi_status napi_get_value_bigint_uint64(
     napi_value value,
     uint64_t *result,
     bool *lossless) {
-  return CHECKED_ENV(env)->GetBigIntValue(value, result, lossless);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bigint_words(
@@ -5080,7 +4988,8 @@ napi_status napi_get_value_bigint_words(
     int *sign_bit,
     size_t *word_count,
     uint64_t *words) {
-  return CHECKED_ENV(env)->GetBigIntValue(value, sign_bit, word_count, words);
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bool(napi_env env, napi_value value, bool *result) {
