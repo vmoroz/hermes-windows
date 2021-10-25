@@ -19,6 +19,7 @@
 
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/HostModel.h"
+#include "hermes/VM/PropertyAccessor.h"
 #include "hermes/VM/StringPrimitive.h"
 
 #include "llvh/Support/ConvertUTF.h"
@@ -430,11 +431,11 @@ struct NodeApiEnvironment {
   napi_status GetLastErrorInfo(
       const napi_extended_error_info **result) noexcept;
 
-  napi_status CreateFunction(
-      const char *utf8name,
+  napi_status createFunction(
+      const char *utf8Name,
       size_t length,
-      napi_callback cb,
-      void *callback_data,
+      napi_callback callback,
+      void *callbackData,
       napi_value *result) noexcept;
 
   napi_status DefineClass(
@@ -866,6 +867,12 @@ struct NodeApiEnvironment {
   vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
   napi_value addStackValue(vm::HermesValue value) noexcept;
   napi_status checkStatus(vm::ExecutionStatus status) noexcept;
+
+  napi_status newFunction(
+      vm::SymbolID name,
+      napi_callback callback,
+      void *callbackData,
+      napi_value *result) noexcept;
 
   static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
 
@@ -1715,11 +1722,30 @@ napi_status NodeApiEnvironment::GetLastErrorInfo(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreateFunction(
+napi_status NodeApiEnvironment::newFunction(
+    vm::SymbolID name,
+    napi_callback callback,
+    void *callbackData,
+    napi_value *result) noexcept {
+  auto context = std::make_unique<HFContext>(*this, callback, callbackData);
+  auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
+      &runtime_,
+      context.get(),
+      &HFContext::func,
+      &HFContext::finalize,
+      name,
+      /*paramCount:*/ 0);
+  CHECK_STATUS(funcRes.getStatus());
+  context.release();
+  *result = addStackValue(*funcRes);
+  return ClearLastError();
+}
+
+napi_status NodeApiEnvironment::createFunction(
     const char *utf8Name,
     size_t length,
-    napi_callback cb,
-    void *callback_data,
+    napi_callback callback,
+    void *callbackData,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     napi_value nameValue{};
@@ -1727,75 +1753,9 @@ napi_status NodeApiEnvironment::CreateFunction(
     auto nameRes = vm::stringToSymbolID(
         &runtime_, vm::createPseudoHandle(phv(nameValue).getString()));
     CHECK_STATUS(nameRes.getStatus());
-    auto context = std::make_unique<HFContext>(*this, cb, callback_data);
-    auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
-        &runtime_,
-        context.get(),
-        &HFContext::func,
-        &HFContext::finalize,
-        nameRes->get(),
-        /*paramCount:*/ 0);
-    CHECK_STATUS(funcRes.getStatus());
-    context.release();
-    *result = addStackValue(*funcRes);
+    STATUS_CALL(newFunction(nameRes->get(), callback, callbackData, result));
     return ClearLastError();
   });
-
-  //       jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
-  //     const jsi::PropNameID &name,
-  //     unsigned int paramCount,
-  //     jsi::HostFunctionType func) {
-  //   return maybeRethrow([&] {
-  //     auto context = std::make_unique<HFContext>(std::move(func), *this);
-  //     auto hostfunc =
-  //         createFunctionFromHostFunction(context.get(), name, paramCount);
-  //     context.release();
-  //     return hostfunc;
-  //   });
-  // }
-
-  // template <typename ContextType>
-  // jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
-  //     ContextType *context,
-  //     const jsi::PropNameID &name,
-  //     unsigned int paramCount) {
-  //   return maybeRethrow([&] {
-  //     vm::GCScope gcScope(&runtime_);
-  //     vm::SymbolID nameID = phv(name).getSymbol();
-  //     auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
-  //         &runtime_,
-  //         context,
-  //         &ContextType::func,
-  //         &ContextType::finalize,
-  //         nameID,
-  //         paramCount);
-  //     checkStatus(funcRes.getStatus());
-  //     jsi::Function ret = add<jsi::Object>(*funcRes).getFunction(*this);
-  //     return ret;
-  //   });
-  // }
-
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-  // CHECK_ARG(env, cb);
-
-  // v8::Local<v8::Function> return_value;
-  // v8::EscapableHandleScope scope(env->isolate);
-  // v8::Local<v8::Function> fn;
-  // STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-  //     env, cb, callback_data, &fn));
-  // return_value = scope.Escape(fn);
-
-  // if (utf8name != nullptr) {
-  //   v8::Local<v8::String> name_string;
-  //   CHECK_NEW_FROM_UTF8_LEN(env, name_string, utf8name, length);
-  //   return_value->SetName(name_string);
-  // }
-
-  // *result = v8impl::JsValueFromV8LocalValue(return_value);
-
-  // return GET_RETURN_STATUS(env);
-  //  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::DefineClass(
@@ -2304,150 +2264,72 @@ napi_status NodeApiEnvironment::defineProperties(
       vm::MutableHandle<vm::SymbolID> name{&runtime_};
       STATUS_CALL(symbolIDFromPropertyDescriptor(p, &name));
 
+      auto dpFlags = vm::DefinePropertyFlags::getDefaultNewPropertyFlags();
+      if ((p->attributes & napi_writable) == 0) {
+        dpFlags.writable = 0;
+      }
+      if ((p->attributes & napi_enumerable) == 0) {
+        dpFlags.enumerable = 0;
+      }
+      if ((p->attributes & napi_configurable) == 0) {
+        dpFlags.configurable = 0;
+      }
+
       if (p->getter != nullptr || p->setter != nullptr) {
-        //     v8::Local<v8::Function> local_getter;
-        //     v8::Local<v8::Function> local_setter;
+        napi_value localGetter{};
+        napi_value localSetter{};
 
-        //     if (p->getter != nullptr) {
-        //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-        //           env, p->getter, p->data, &local_getter));
-        //     }
-        //     if (p->setter != nullptr) {
-        //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-        //           env, p->setter, p->data, &local_setter));
-        //     }
-
-        //     v8::PropertyDescriptor descriptor(local_getter, local_setter);
-        //     descriptor.set_enumerable((p->attributes & napi_enumerable) !=
-        //     0); descriptor.set_configurable((p->attributes &
-        //     napi_configurable) != 0);
-
-        //     auto define_maybe =
-        //         obj->DefineProperty(context, property_name, descriptor);
-
-        //     if (!define_maybe.FromMaybe(false)) {
-        //       return napi_set_last_error(env, napi_invalid_arg);
-        //     }
-      } else if (p->method != nullptr) {
-        //     v8::Local<v8::Function> method;
-        //     STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-        //         env, p->method, p->data, &method));
-        //     v8::PropertyDescriptor descriptor(
-        //         method, (p->attributes & napi_writable) != 0);
-        //     descriptor.set_enumerable((p->attributes & napi_enumerable) !=
-        //     0); descriptor.set_configurable((p->attributes &
-        //     napi_configurable) != 0);
-
-        //     auto define_maybe =
-        //         obj->DefineProperty(context, property_name, descriptor);
-
-        //     if (!define_maybe.FromMaybe(false)) {
-        //       return napi_set_last_error(env, napi_generic_failure);
-        //     }
-      } else {
-        auto dpFlags = vm::DefinePropertyFlags::getDefaultNewPropertyFlags();
-        //     v8::Local<v8::Value> value =
-        //     v8impl::V8LocalValueFromJsValue(p->value);
-
-        if ((p->attributes & napi_writable) == 0) {
-          dpFlags.writable = 0;
+        if (p->getter != nullptr) {
+          auto cr = vm::stringToSymbolID(
+              &runtime_, vm::StringPrimitive::createNoThrow(&runtime_, "get"));
+          CHECK_STATUS(cr.getStatus());
+          STATUS_CALL(newFunction(cr->get(), p->getter, p->data, &localGetter));
         }
-        if ((p->attributes & napi_enumerable) == 0) {
-          dpFlags.enumerable = 0;
+        if (p->setter != nullptr) {
+          auto cr = vm::stringToSymbolID(
+              &runtime_, vm::StringPrimitive::createNoThrow(&runtime_, "set"));
+          CHECK_STATUS(cr.getStatus());
+          STATUS_CALL(newFunction(cr->get(), p->getter, p->data, &localSetter));
         }
-        if ((p->attributes & napi_configurable) == 0) {
-          dpFlags.configurable = 0;
-        }
-        CHECK_STATUS(vm::JSObject::defineOwnProperty(
-            toObjectHandle(object),
+
+        auto propRes = vm::PropertyAccessor::create(
             &runtime_,
-            name.get(),
-            dpFlags,
-            toHandle(p->value),
-            vm::PropOpFlags().plusThrowOnError()).getStatus());
+            vm::Handle<vm::Callable>::vmcast(&phv(localGetter)),
+            vm::Handle<vm::Callable>::vmcast(&phv(localSetter)));
+        CHECK_STATUS(propRes.getStatus());
+        CHECK_STATUS(vm::JSObject::defineOwnProperty(
+                         toObjectHandle(object),
+                         &runtime_,
+                         name.get(),
+                         dpFlags,
+                         toHandle(*propRes),
+                         vm::PropOpFlags().plusThrowOnError())
+                         .getStatus());
+      } else if (p->method != nullptr) {
+        napi_value method{};
+        STATUS_CALL(newFunction(name.get(), p->getter, p->data, &method));
+        CHECK_STATUS(vm::JSObject::defineOwnProperty(
+                         toObjectHandle(object),
+                         &runtime_,
+                         name.get(),
+                         dpFlags,
+                         toHandle(method),
+                         vm::PropOpFlags().plusThrowOnError())
+                         .getStatus());
+      } else {
+        CHECK_STATUS(vm::JSObject::defineOwnProperty(
+                         toObjectHandle(object),
+                         &runtime_,
+                         name.get(),
+                         dpFlags,
+                         toHandle(p->value),
+                         vm::PropOpFlags().plusThrowOnError())
+                         .getStatus());
       }
     }
 
     return ClearLastError();
   });
-  // NAPI_PREAMBLE(env);
-  // if (property_count > 0) {
-  //   CHECK_ARG(env, properties);
-  // }
-
-  // v8::Local<v8::Context> context = env->context();
-
-  // v8::Local<v8::Object> obj;
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // for (size_t i = 0; i < property_count; i++) {
-  //   const napi_property_descriptor *p = &properties[i];
-
-  //   v8::Local<v8::Name> property_name;
-  //   STATUS_CALL(v8impl::V8NameFromPropertyDescriptor(env, p,
-  //   &property_name));
-
-  //   if (p->getter != nullptr || p->setter != nullptr) {
-  //     v8::Local<v8::Function> local_getter;
-  //     v8::Local<v8::Function> local_setter;
-
-  //     if (p->getter != nullptr) {
-  //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-  //           env, p->getter, p->data, &local_getter));
-  //     }
-  //     if (p->setter != nullptr) {
-  //       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-  //           env, p->setter, p->data, &local_setter));
-  //     }
-
-  //     v8::PropertyDescriptor descriptor(local_getter, local_setter);
-  //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
-  //     0);
-
-  //     auto define_maybe =
-  //         obj->DefineProperty(context, property_name, descriptor);
-
-  //     if (!define_maybe.FromMaybe(false)) {
-  //       return napi_set_last_error(env, napi_invalid_arg);
-  //     }
-  //   } else if (p->method != nullptr) {
-  //     v8::Local<v8::Function> method;
-  //     STATUS_CALL(v8impl::FunctionCallbackWrapper::NewFunction(
-  //         env, p->method, p->data, &method));
-  //     v8::PropertyDescriptor descriptor(
-  //         method, (p->attributes & napi_writable) != 0);
-  //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
-  //     0);
-
-  //     auto define_maybe =
-  //         obj->DefineProperty(context, property_name, descriptor);
-
-  //     if (!define_maybe.FromMaybe(false)) {
-  //       return napi_set_last_error(env, napi_generic_failure);
-  //     }
-  //   } else {
-  //     v8::Local<v8::Value> value =
-  //     v8impl::V8LocalValueFromJsValue(p->value);
-
-  //     v8::PropertyDescriptor descriptor(
-  //         value, (p->attributes & napi_writable) != 0);
-  //     descriptor.set_enumerable((p->attributes & napi_enumerable) != 0);
-  //     descriptor.set_configurable((p->attributes & napi_configurable) !=
-  //     0);
-
-  //     auto define_maybe =
-  //         obj->DefineProperty(context, property_name, descriptor);
-
-  //     if (!define_maybe.FromMaybe(false)) {
-  //       return napi_set_last_error(env, napi_invalid_arg);
-  //     }
-  //   }
-  // }
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
@@ -4806,7 +4688,7 @@ napi_status napi_create_function(
     napi_callback cb,
     void *callback_data,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateFunction(
+  return CHECKED_ENV(env)->createFunction(
       utf8name, length, cb, callback_data, result);
 }
 
