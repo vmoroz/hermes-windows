@@ -514,13 +514,13 @@ struct NodeApiEnvironment {
   napi_status
   strictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
 
-  napi_status GetPrototype(napi_value object, napi_value *result) noexcept;
+  napi_status getPrototype(napi_value object, napi_value *result) noexcept;
 
-  napi_status CreateObject(napi_value *result) noexcept;
+  napi_status createObject(napi_value *result) noexcept;
 
-  napi_status CreateArray(napi_value *result) noexcept;
+  napi_status createArray(napi_value *result) noexcept;
 
-  napi_status CreateArray(size_t length, napi_value *result) noexcept;
+  napi_status createArray(size_t length, napi_value *result) noexcept;
 
   napi_status CreateStringLatin1(
       const char *str,
@@ -1950,23 +1950,22 @@ napi_status NodeApiEnvironment::setProperty(
     napi_value object,
     napi_value key,
     napi_value value) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, key);
-  // CHECK_ARG(env, value);
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(key);
+    CHECK_ARG(value);
 
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Value> k = v8impl::V8LocalValueFromJsValue(key);
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-
-  // v8::Maybe<bool> set_maybe = obj->Set(context, k, val);
-
-  // RETURN_STATUS_IF_FALSE(env, set_maybe.FromMaybe(false),
-  // napi_generic_failure); return GET_RETURN_STATUS(env);
-  return napi_ok;
+    auto objHandle = toObjectHandle(object);
+    CHECK_STATUS(objHandle
+                     ->putComputed_RJS(
+                         objHandle,
+                         &runtime_,
+                         toHandle(key),
+                         toHandle(value),
+                         vm::PropOpFlags().plusThrowOnError())
+                     .getStatus());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::hasProperty(
@@ -2398,34 +2397,29 @@ napi_status NodeApiEnvironment::strictEquals(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetPrototype(
+napi_status NodeApiEnvironment::getPrototype(
     napi_value object,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-
-  // v8::Local<v8::Object> obj;
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Value> val = obj->GetPrototype();
-  // *result = v8impl::JsValueFromV8LocalValue(val);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(result);
+    auto res = vm::JSObject::getPrototypeOf(
+        vm::PseudoHandle<vm::JSObject>(toObjectHandle(object)), &runtime_);
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(res->getHermesValue());
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::CreateObject(napi_value *result) noexcept {
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, result);
-
-  // *result = v8impl::JsValueFromV8LocalValue(v8::Object::New(env->isolate));
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+    *result = addStackValue(vm::JSObject::create(&runtime_).getHermesValue());
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::CreateArray(napi_value *result) noexcept {
+napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     auto res = vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
@@ -2435,7 +2429,7 @@ napi_status NodeApiEnvironment::CreateArray(napi_value *result) noexcept {
   });
 }
 
-napi_status NodeApiEnvironment::CreateArray(
+napi_status NodeApiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
   return handleExceptions([&] {
@@ -4863,20 +4857,20 @@ napi_strict_equals(napi_env env, napi_value lhs, napi_value rhs, bool *result) {
 
 napi_status
 napi_get_prototype(napi_env env, napi_value object, napi_value *result) {
-  return CHECKED_ENV(env)->GetPrototype(object, result);
+  return CHECKED_ENV(env)->getPrototype(object, result);
 }
 
 napi_status napi_create_object(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->CreateObject(result);
+  return CHECKED_ENV(env)->createObject(result);
 }
 
 napi_status napi_create_array(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->CreateArray(result);
+  return CHECKED_ENV(env)->createArray(result);
 }
 
 napi_status
 napi_create_array_with_length(napi_env env, size_t length, napi_value *result) {
-  return CHECKED_ENV(env)->CreateArray(length, result);
+  return CHECKED_ENV(env)->createArray(length, result);
 }
 
 napi_status napi_create_string_latin1(
