@@ -512,7 +512,7 @@ struct NodeApiEnvironment {
   napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
 
   napi_status
-  StrictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
+  strictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
 
   napi_status GetPrototype(napi_value object, napi_value *result) noexcept;
 
@@ -2367,7 +2367,9 @@ napi_status NodeApiEnvironment::getArrayLength(
     uint32_t *result) noexcept {
   return handleExceptions([&] {
     auto res = vm::JSObject::getNamed_RJS(
-        toArrayHandle(value), &runtime_, vm::Predefined::getSymbolID(vm::Predefined::length));
+        toArrayHandle(value),
+        &runtime_,
+        vm::Predefined::getSymbolID(vm::Predefined::length));
     CHECK_STATUS(res.getStatus());
     if (!(*res)->isNumber()) {
       return SetLastError(napi_number_expected);
@@ -2377,20 +2379,22 @@ napi_status NodeApiEnvironment::getArrayLength(
   });
 }
 
-napi_status NodeApiEnvironment::StrictEquals(
+napi_status NodeApiEnvironment::strictEquals(
     napi_value lhs,
     napi_value rhs,
     bool *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, lhs);
-  // CHECK_ARG(env, rhs);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> a = v8impl::V8LocalValueFromJsValue(lhs);
-  // v8::Local<v8::Value> b = v8impl::V8LocalValueFromJsValue(rhs);
-
-  // *result = a->StrictEquals(b);
-  // return GET_RETURN_STATUS(env);
+  const vm::PinnedHermesValue &lhsHV = phv(lhs);
+  const vm::PinnedHermesValue &rhsHV = phv(rhs);
+  auto lhsTag = lhsHV.getTag();
+  if (lhsTag != rhsHV.getTag()) {
+    *result = false;
+  } else if (lhsTag == vm::StrTag) {
+    *result = lhsHV.getString()->equals(rhsHV.getString());
+  } else if (lhsTag == vm::SymbolTag) {
+    *result = lhsHV.getSymbol() == rhsHV.getSymbol();
+  } else {
+    *result = lhsHV.getRaw() == rhsHV.getRaw();
+  }
   return napi_ok;
 }
 
@@ -4854,7 +4858,7 @@ napi_get_array_length(napi_env env, napi_value value, uint32_t *result) {
 
 napi_status
 napi_strict_equals(napi_env env, napi_value lhs, napi_value rhs, bool *result) {
-  return CHECKED_ENV(env)->StrictEquals(lhs, rhs, result);
+  return CHECKED_ENV(env)->strictEquals(lhs, rhs, result);
 }
 
 napi_status
