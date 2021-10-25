@@ -418,6 +418,7 @@ struct NodeApiEnvironment {
 
   static vm::PinnedHermesValue &phv(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
+  static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
@@ -2364,18 +2365,16 @@ napi_status NodeApiEnvironment::isArray(
 napi_status NodeApiEnvironment::getArrayLength(
     napi_value value,
     uint32_t *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsArray(), napi_array_expected);
-
-  // v8::Local<v8::Array> arr = val.As<v8::Array>();
-  // *result = arr->Length();
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    auto res = vm::JSObject::getNamed_RJS(
+        toArrayHandle(value), &runtime_, vm::Predefined::getSymbolID(vm::Predefined::length));
+    CHECK_STATUS(res.getStatus());
+    if (!(*res)->isNumber()) {
+      return SetLastError(napi_number_expected);
+    }
+    *result = static_cast<uint32_t>((*res)->getDouble());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::StrictEquals(
@@ -3755,6 +3754,11 @@ vm::PinnedHermesValue &NodeApiEnvironment::phv(napi_value value) noexcept {
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::JSObject>::vmcast(&phv(value));
+}
+
+vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
+    napi_value value) noexcept {
+  return vm::Handle<vm::JSArray>::vmcast(&phv(value));
 }
 
 vm::Handle<vm::HermesValue> NodeApiEnvironment::stringHandle(
