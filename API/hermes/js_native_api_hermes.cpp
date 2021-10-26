@@ -2285,11 +2285,11 @@ napi_status NodeApiEnvironment::hasProperty(
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(result);
-    auto h = toObjectHandle(object);
-    auto res = h->hasComputed(h, &runtime_, stringHandle(key));
+    auto objHandle = toObjectHandle(object);
+    auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = *res;
-    return napi_ok;
+    return ClearLastError();
   });
 }
 
@@ -2301,11 +2301,11 @@ napi_status NodeApiEnvironment::getProperty(
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(result);
-    auto h = toObjectHandle(object);
-    auto res = h->getComputed_RJS(h, &runtime_, stringHandle(key));
+    auto objHandle = toObjectHandle(object);
+    auto res = objHandle->getComputed_RJS(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->get());
-    return napi_ok;
+    return ClearLastError();
   });
 }
 
@@ -2313,57 +2313,36 @@ napi_status NodeApiEnvironment::deleteProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, key);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Value> k = v8impl::V8LocalValueFromJsValue(key);
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-  // v8::Maybe<bool> delete_maybe = obj->Delete(context, k);
-  // CHECK_MAYBE_NOTHING(env, delete_maybe, napi_generic_failure);
-
-  // if (result != nullptr)
-  //   *result = delete_maybe.FromMaybe(false);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(key);
+    CHECK_ARG(result);
+    auto objHandle = toObjectHandle(object);
+    auto res = vm::JSObject::deleteComputed(
+        objHandle,
+        &runtime_,
+        stringHandle(key),
+        vm::PropOpFlags().plusThrowOnError());
+    CHECK_STATUS(res.getStatus());
+    *result = *res;
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::hasOwnProperty(
     napi_value object,
     napi_value key,
     bool *result) noexcept {
-  // return handleExceptions([&] {
-  //   CHECK_OBJECT_ARG(object);
-  //   CHECK_ARG(key);
-  //   CHECK_ARG(result);
-
-  //   auto objHandle = toObjectHandle(object);
-  //   ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
-
-  //   ASSIGN_CHECKED(
-  //       *result, objHandle->hasComputed(objHandle, &runtime_,
-  //       toHandle(name)));
-  //   return ClearLastError();
-  // });
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, key);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-  // v8::Local<v8::Value> k = v8impl::V8LocalValueFromJsValue(key);
-  // RETURN_STATUS_IF_FALSE(env, k->IsName(), napi_name_expected);
-  // v8::Maybe<bool> has_maybe = obj->HasOwnProperty(context, k.As<v8::Name>());
-  // CHECK_MAYBE_NOTHING(env, has_maybe, napi_generic_failure);
-  // *result = has_maybe.FromMaybe(false);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(key);
+    CHECK_ARG(result);
+    auto objHandle = toObjectHandle(object);
+    auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
+    CHECK_STATUS(res.getStatus());
+    *result = *res;
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::setNamedProperty(
