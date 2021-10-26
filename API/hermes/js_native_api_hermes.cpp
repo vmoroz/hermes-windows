@@ -27,7 +27,10 @@
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
 #include "hermes/VM/JSError.h"
+#include "hermes/VM/JSProxy.h"
 #include "hermes/VM/PrimitiveBox.h"
+
+#include "llvh/ADT/SmallSet.h"
 
 #include "hermes_napi.h"
 
@@ -453,9 +456,9 @@ struct NodeApiEnvironment {
 
   napi_status getAllPropertyNames(
       napi_value object,
-      napi_key_collection_mode key_mode,
-      napi_key_filter key_filter,
-      napi_key_conversion key_conversion,
+      napi_key_collection_mode keyMode,
+      napi_key_filter keyFilter,
+      napi_key_conversion keyConversion,
       napi_value *result) noexcept;
 
   napi_status
@@ -1945,77 +1948,311 @@ napi_status NodeApiEnvironment::getPropertyNames(
 
 napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value object,
-    napi_key_collection_mode key_mode,
-    napi_key_filter key_filter,
-    napi_key_conversion key_conversion,
+    napi_key_collection_mode keyMode,
+    napi_key_filter keyFilter,
+    napi_key_conversion keyConversion,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+    CHECK_OBJECT_ARG(object);
+    RETURN_STATUS_IF_FALSE(
+        keyMode == napi_key_include_prototypes || keyMode == napi_key_own_only,
+        napi_invalid_arg);
+    RETURN_STATUS_IF_FALSE(
+        keyConversion == napi_key_keep_numbers ||
+            keyConversion == napi_key_numbers_to_strings,
+        napi_invalid_arg);
 
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-  // CHECK_TO_OBJECT(env, context, obj, object);
+    auto objHandle = toObjectHandle(object);
+    struct JSObjectAccessor : vm::JSObject {
+      auto getClazz() {
+        return clazz_;
+      }
+      auto getFlags() {
+        return flags_;
+      }
+    };
+    auto objAccessor = static_cast<JSObjectAccessor *>(objHandle.get());
+    auto objVT = reinterpret_cast<const vm::ObjectVTable *>(
+        static_cast<vm::GCCell *>(objHandle.get())->getVT());
 
-  // v8::PropertyFilter filter = v8::PropertyFilter::ALL_PROPERTIES;
-  // if (key_filter & napi_key_writable) {
-  //   filter = static_cast<v8::PropertyFilter>(
-  //       filter | v8::PropertyFilter::ONLY_WRITABLE);
-  // }
-  // if (key_filter & napi_key_enumerable) {
-  //   filter = static_cast<v8::PropertyFilter>(
-  //       filter | v8::PropertyFilter::ONLY_ENUMERABLE);
-  // }
-  // if (key_filter & napi_key_configurable) {
-  //   filter = static_cast<v8::PropertyFilter>(
-  //       filter | v8::PropertyFilter::ONLY_WRITABLE);
-  // }
-  // if (key_filter & napi_key_skip_strings) {
-  //   filter = static_cast<v8::PropertyFilter>(
-  //       filter | v8::PropertyFilter::SKIP_STRINGS);
-  // }
-  // if (key_filter & napi_key_skip_symbols) {
-  //   filter = static_cast<v8::PropertyFilter>(
-  //       filter | v8::PropertyFilter::SKIP_SYMBOLS);
-  // }
-  // v8::KeyCollectionMode collection_mode;
-  // v8::KeyConversionMode conversion_mode;
+    if (LLVM_UNLIKELY(
+            objAccessor->getFlags().lazyObject ||
+            objAccessor->getFlags().proxyObject)) {
+      if (objAccessor->getFlags().proxyObject) {
+        auto okFlags = vm::OwnKeysFlags();
+        okFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
+        okFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
+        okFlags.setIncludeNonEnumerable((keyFilter & napi_key_enumerable) == 0);
+        auto proxyRes =
+            vm::JSProxy::ownPropertyKeys(objHandle, &runtime_, okFlags);
+        CHECK_STATUS(proxyRes.getStatus());
+        *result = addStackValue(proxyRes->getHermesValue());
+        return ClearLastError();
+      }
+      assert(
+          objAccessor->getFlags().lazyObject &&
+          "descriptor flags are impossible");
+      vm::JSObject::initializeLazyObject(&runtime_, objHandle);
+    }
 
-  // switch (key_mode) {
-  //   case napi_key_include_prototypes:
-  //     collection_mode = v8::KeyCollectionMode::kIncludePrototypes;
-  //     break;
-  //   case napi_key_own_only:
-  //     collection_mode = v8::KeyCollectionMode::kOwnOnly;
-  //     break;
-  //   default:
-  //     return napi_set_last_error(env, napi_invalid_arg);
-  // }
+    auto range = objVT->getOwnIndexedRange(objHandle.get(), &runtime_);
 
-  // switch (key_conversion) {
-  //   case napi_key_keep_numbers:
-  //     conversion_mode = v8::KeyConversionMode::kKeepNumbers;
-  //     break;
-  //   case napi_key_numbers_to_strings:
-  //     conversion_mode = v8::KeyConversionMode::kConvertToString;
-  //     break;
-  //   default:
-  //     return napi_set_last_error(env, napi_invalid_arg);
-  // }
+    // Estimate the capacity of the output array.  This estimate is only
+    // reasonable for the non-symbol case.
+    uint32_t capacity = (keyFilter & napi_key_skip_strings) == 0
+        ? (objAccessor->getClazz().get(&runtime_)->getNumProperties() +
+           range.second - range.first)
+        : 0;
 
-  // v8::MaybeLocal<v8::Array> maybe_all_propertynames = obj->GetPropertyNames(
-  //     context,
-  //     collection_mode,
-  //     filter,
-  //     v8::IndexFilter::kIncludeIndices,
-  //     conversion_mode);
+    ASSIGN_CHECKED(auto array, vm::JSArray::create(&runtime_, capacity, 0));
 
-  // CHECK_MAYBE_EMPTY_WITH_PREAMBLE(
-  //     env, maybe_all_propertynames, napi_generic_failure);
+    // Optional array of SymbolIDs reported via host object API
+    llvh::Optional<vm::Handle<vm::JSArray>> hostObjectSymbols;
+    size_t hostObjectSymbolCount = 0;
 
-  // *result =
-  //     v8impl::JsValueFromV8LocalValue(maybe_all_propertynames.ToLocalChecked());
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    // If current object is a host object we need to deduplicate its properties
+    llvh::SmallSet<vm::SymbolID::RawType, 16> dedupSet;
+
+    // Output index.
+    uint32_t index = 0;
+
+    // Avoid allocating a new handle per element.
+    vm::MutableHandle<> tmpHandle{&runtime_};
+
+    // Number of indexed properties.
+    uint32_t numIndexed = 0;
+
+    // Regular properties with names that are array indexes are stashed here, if
+    // encountered.
+    llvh::SmallVector<uint32_t, 8> indexNames{};
+
+    // Iterate the named properties excluding those which use Symbols.
+    if ((keyFilter & napi_key_skip_strings) == 0) {
+      // Get host object property names
+      if (LLVM_UNLIKELY(objAccessor->getFlags().hostObject)) {
+        assert(
+            range.first == range.second &&
+            "Host objects cannot own indexed range");
+        ASSIGN_CHECKED(
+            auto hostSymbols,
+            vm::vmcast<vm::HostObject>(objHandle.get())
+                ->getHostPropertyNames());
+        if ((hostObjectSymbolCount = (*hostSymbols)->getEndIndex()) != 0) {
+          hostObjectSymbols = std::move(hostSymbols);
+          capacity += hostObjectSymbolCount;
+        }
+      }
+
+      // Iterate the indexed properties.
+      vm::GCScopeMarkerRAII marker{&runtime_};
+      for (auto i = range.first; i != range.second; ++i) {
+        auto propFlags =
+            objVT->getOwnIndexedPropertyFlags(objHandle.get(), &runtime_, i);
+        if (!propFlags)
+          continue;
+
+        // If specified, check whether it is enumerable.
+        if ((keyFilter & napi_key_enumerable) && !propFlags->enumerable) {
+          continue;
+        }
+        // If specified, check whether it is writable.
+        if ((keyFilter & napi_key_writable) && !propFlags->writable) {
+          continue;
+        }
+        // If specified, check whether it is configurable.
+        if ((keyFilter & napi_key_configurable) && !propFlags->configurable) {
+          continue;
+        }
+
+        tmpHandle = vm::HermesValue::encodeDoubleValue(i);
+        vm::JSArray::setElementAt(array, &runtime_, index++, tmpHandle);
+        marker.flush();
+      }
+
+      numIndexed = index;
+
+      vm::HiddenClass::forEachProperty(
+          runtime_.makeHandle(objAccessor->getClazz()),
+          &runtime_,
+          [this,
+           keyFilter,
+           array,
+           hostObjectSymbolCount,
+           &index,
+           &indexNames,
+           &tmpHandle,
+           &dedupSet](vm::SymbolID id, vm::NamedPropertyDescriptor desc) {
+            if (!isPropertyNamePrimitive(id)) {
+              return;
+            }
+
+            // If specified, check whether it is enumerable.
+            if ((keyFilter & napi_key_enumerable) && !desc.flags.enumerable) {
+              return;
+            }
+            // If specified, check whether it is writable.
+            if ((keyFilter & napi_key_writable) && !desc.flags.writable) {
+              return;
+            }
+            // If specified, check whether it is configurable.
+            if ((keyFilter & napi_key_configurable) &&
+                !desc.flags.configurable) {
+              return;
+            }
+
+            // Host properties might overlap with the ones recognized by the
+            // hidden class. If we're dealing with a host object then keep track
+            // of hidden class properties for the deduplication purposes.
+            if (LLVM_UNLIKELY(hostObjectSymbolCount > 0)) {
+              dedupSet.insert(id.unsafeGetRaw());
+            }
+
+            // Check if this property is an integer index. If it is, we stash it
+            // away to deal with it later. This check should be fast since most
+            // property names don't start with a digit.
+            auto propNameAsIndex = vm::toArrayIndex(
+                runtime_.getIdentifierTable().getStringView(&runtime_, id));
+            if (LLVM_UNLIKELY(propNameAsIndex)) {
+              indexNames.push_back(*propNameAsIndex);
+              return;
+            }
+
+            tmpHandle = vm::HermesValue::encodeStringValue(
+                runtime_.getStringPrimFromSymbolID(id));
+            vm::JSArray::setElementAt(array, &runtime_, index++, tmpHandle);
+          });
+      // Iterate over HostObject properties and append them to the array. Do not
+      // append duplicates.
+      if (LLVM_UNLIKELY(hostObjectSymbols)) {
+        for (size_t i = 0; i < hostObjectSymbolCount; ++i) {
+          assert(
+              (*hostObjectSymbols)->at(&runtime_, i).isSymbol() &&
+              "Host object needs to return array of SymbolIDs");
+          marker.flush();
+
+          vm::SymbolID id = (*hostObjectSymbols)->at(&runtime_, i).getSymbol();
+          if (dedupSet.count(id.unsafeGetRaw()) == 0) {
+            dedupSet.insert(id.unsafeGetRaw());
+            assert(
+                !vm::InternalProperty::isInternal(id) &&
+                "host object returned reserved symbol");
+            auto propNameAsIndex = vm::toArrayIndex(
+                runtime_.getIdentifierTable().getStringView(&runtime_, id));
+            if (LLVM_UNLIKELY(propNameAsIndex)) {
+              indexNames.push_back(*propNameAsIndex);
+              continue;
+            }
+            tmpHandle = vm::HermesValue::encodeStringValue(
+                runtime_.getStringPrimFromSymbolID(id));
+            vm::JSArray::setElementAt(array, &runtime_, index++, tmpHandle);
+          }
+        }
+      }
+    }
+
+    // Now iterate the named properties again, including only Symbols.
+    // We could iterate only once, if we chose to ignore (and disallow)
+    // own properties on HostObjects, as we do with Proxies.
+    if ((keyFilter & napi_key_skip_symbols) == 0) {
+      vm::MutableHandle<vm::SymbolID> idHandle{&runtime_};
+      vm::HiddenClass::forEachProperty(
+          runtime_.makeHandle(objAccessor->getClazz()),
+          &runtime_,
+          [this, keyFilter, array, &index, &idHandle](
+              vm::SymbolID id, vm::NamedPropertyDescriptor desc) {
+            if (!vm::isSymbolPrimitive(id)) {
+              return;
+            }
+            // If specified, check whether it is enumerable.
+            if ((keyFilter & napi_key_enumerable) && !desc.flags.enumerable) {
+              return;
+            }
+            // If specified, check whether it is writable.
+            if ((keyFilter & napi_key_writable) && !desc.flags.writable) {
+              return;
+            }
+            // If specified, check whether it is configurable.
+            if ((keyFilter & napi_key_configurable) &&
+                !desc.flags.configurable) {
+              return;
+            }
+            idHandle = id;
+            vm::JSArray::setElementAt(array, &runtime_, index++, idHandle);
+          });
+    }
+
+    // The end (exclusive) of the named properties.
+    uint32_t endNamed = index;
+
+    // Properly set the length of the array.
+    auto cr = vm::JSArray::setLengthProperty(
+        array, &runtime_, endNamed + indexNames.size(), vm::PropOpFlags{});
+    (void)cr;
+    assert(
+        cr != vm::ExecutionStatus::EXCEPTION && *cr &&
+        "JSArray::setLength() failed");
+
+    // If we have no index-like names, we are done.
+    if (LLVM_LIKELY(indexNames.empty())) {
+      *result = addStackValue(array.getHermesValue());
+      return ClearLastError();
+    }
+
+    // In the unlikely event that we encountered index-like names, we need to
+    // sort them and merge them with the real indexed properties. Note that it
+    // is guaranteed that there are no clashes.
+    std::sort(indexNames.begin(), indexNames.end());
+
+    // Also make space for the new elements by shifting all the named properties
+    // to the right. First, resize the array.
+    vm::JSArray::setStorageEndIndex(
+        array, &runtime_, endNamed + indexNames.size());
+
+    // Shift the non-index property names. The region [numIndexed..endNamed) is
+    // moved to [numIndexed+indexNames.size()..array->size()).
+    // TODO: optimize this by implementing memcpy-like functionality in
+    // ArrayImpl.
+    for (uint32_t last = endNamed, toLast = array->getEndIndex();
+         last != numIndexed;) {
+      --last;
+      --toLast;
+      tmpHandle = array->at(&runtime_, last);
+      vm::JSArray::setElementAt(array, &runtime_, toLast, tmpHandle);
+    }
+
+    // Now we need to merge the indexes in indexNames and the array
+    // [0..numIndexed). We start from the end and copy the larger element from
+    // either array.
+    // 1+ the destination position to copy into.
+    for (uint32_t toLast = numIndexed + indexNames.size(),
+                  indexNamesLast = indexNames.size();
+         toLast != 0;) {
+      if (numIndexed) {
+        uint32_t a = (uint32_t)array->at(&runtime_, numIndexed - 1).getNumber();
+        uint32_t b;
+
+        if (indexNamesLast && (b = indexNames[indexNamesLast - 1]) > a) {
+          tmpHandle = vm::HermesValue::encodeDoubleValue(b);
+          --indexNamesLast;
+        } else {
+          tmpHandle = vm::HermesValue::encodeDoubleValue(a);
+          --numIndexed;
+        }
+      } else {
+        assert(indexNamesLast && "prematurely ran out of source values");
+        tmpHandle =
+            vm::HermesValue::encodeDoubleValue(indexNames[indexNamesLast - 1]);
+        --indexNamesLast;
+      }
+
+      --toLast;
+      vm::JSArray::setElementAt(array, &runtime_, toLast, tmpHandle);
+    }
+
+    *result = addStackValue(array.getHermesValue());
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::setProperty(
