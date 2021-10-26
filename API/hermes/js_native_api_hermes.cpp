@@ -623,10 +623,10 @@ struct NodeApiEnvironment {
       size_t bufsize,
       size_t *result) noexcept;
 
-  napi_status CoerceToBool(napi_value value, napi_value *result) noexcept;
-  napi_status CoerceToNumber(napi_value value, napi_value *result) noexcept;
-  napi_status CoerceToObject(napi_value value, napi_value *result) noexcept;
-  napi_status CoerceToString(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToBool(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToNumber(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToObject(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToString(napi_value value, napi_value *result) noexcept;
 
   napi_status Wrap(
       napi_value js_object,
@@ -3291,70 +3291,55 @@ napi_status NodeApiEnvironment::GetValueStringUtf16(
   });
 }
 
-napi_status NodeApiEnvironment::CoerceToBool(
+napi_status NodeApiEnvironment::coerceToBool(
     napi_value value,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Isolate *isolate = env->isolate;
-  // v8::Local<v8::Boolean> b =
-  //     v8impl::V8LocalValueFromJsValue(value)->ToBoolean(isolate);
-  // *result = v8impl::JsValueFromV8LocalValue(b);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    bool res = vm::toBoolean(phv(value));
+    STATUS_CALL(GetBoolean(res, result));
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::CoerceToNumber(
+napi_status NodeApiEnvironment::coerceToNumber(
     napi_value value,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::MixedCaseName> str;
-
-  // CHECK_TO_##UpperCaseName(env, context, str, value);
-
-  // *result = v8impl::JsValueFromV8LocalValue(str);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    auto res = vm::toNumber_RJS(&runtime_, toHandle(value));
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(*res);
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::CoerceToObject(
+napi_status NodeApiEnvironment::coerceToObject(
     napi_value value,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::MixedCaseName> str;
-
-  // CHECK_TO_##UpperCaseName(env, context, str, value);
-
-  // *result = v8impl::JsValueFromV8LocalValue(str);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    auto res = vm::toObject(&runtime_, toHandle(value));
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(*res);
+    return ClearLastError();
+  });
 }
 
-napi_status NodeApiEnvironment::CoerceToString(
+napi_status NodeApiEnvironment::coerceToString(
     napi_value value,
     napi_value *result) noexcept {
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::MixedCaseName> str;
-
-  // CHECK_TO_##UpperCaseName(env, context, str, value);
-
-  // *result = v8impl::JsValueFromV8LocalValue(str);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    auto res = vm::toString_RJS(&runtime_, toHandle(value));
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(vm::HermesValue::encodeStringValue(res->get()));
+    return ClearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::Wrap(
@@ -5144,13 +5129,13 @@ napi_status napi_get_value_string_utf16(
 
 napi_status
 napi_coerce_to_bool(napi_env env, napi_value value, napi_value *result) {
-  return CHECKED_ENV(env)->CoerceToBool(value, result);
+  return CHECKED_ENV(env)->coerceToBool(value, result);
 }
 
 #define GEN_COERCE_FUNCTION(UpperCaseName, MixedCaseName, LowerCaseName) \
   napi_status napi_coerce_to_##LowerCaseName(                            \
       napi_env env, napi_value value, napi_value *result) {              \
-    return CHECKED_ENV(env)->CoerceTo##MixedCaseName(value, result);     \
+    return CHECKED_ENV(env)->coerceTo##MixedCaseName(value, result);     \
   }
 
 GEN_COERCE_FUNCTION(NUMBER, Number, number)
