@@ -562,7 +562,7 @@ struct NodeApiEnvironment {
       napi_value msg,
       napi_value *result) noexcept;
 
-  napi_status TypeOf(napi_value value, napi_valuetype *result) noexcept;
+  napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
 
   napi_status getUndefined(napi_value *result) noexcept;
 
@@ -2302,7 +2302,8 @@ napi_status NodeApiEnvironment::getProperty(
     CHECK_ARG(key);
     CHECK_ARG(result);
     auto objHandle = toObjectHandle(object);
-    auto res = objHandle->getComputed_RJS(objHandle, &runtime_, stringHandle(key));
+    auto res =
+        objHandle->getComputed_RJS(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->get());
     return ClearLastError();
@@ -2840,52 +2841,22 @@ napi_status NodeApiEnvironment::createSymbol(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    vm::SymbolID desc;
-    if (description != nullptr) {
-      RETURN_STATUS_IF_FALSE(phv(description).isString(), napi_string_expected);
-      ASSIGN_CHECKED(
-          auto descHandle,
-          vm::stringToSymbolID(
-              &runtime_, vm::createPseudoHandle(phv(description).getString())));
-      desc = descHandle.get();
+    vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
+    if (description) {
+      CHECK_STRING_ARG(description);
+      descString = phv(description).getString();
+    } else {
+      // If description is undefined, the descString will eventually be "".
+      descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
     }
-    *result = addStackValue(
-        vm::JSSymbol::create(
-            &runtime_,
-            desc,
-            vm::Handle<vm::JSObject>::vmcast(&runtime_.symbolPrototype))
-            .getHermesValue());
+
+    auto symbolRes = runtime_.getIdentifierTable().createNotUniquedSymbol(
+        &runtime_, descString);
+    CHECK_STATUS(symbolRes.getStatus());
+    *result = addStackValue(vm::HermesValue::encodeSymbolValue(*symbolRes));
     return ClearLastError();
   });
 }
-
-// static inline napi_status set_error_code(
-//     napi_env env,
-//     v8::Local<v8::Value> error,
-//     napi_value code,
-//     const char *code_cstring) {
-//   if ((code != nullptr) || (code_cstring != nullptr)) {
-//     v8::Local<v8::Context> context = env->context();
-//     v8::Local<v8::Object> err_object = error.As<v8::Object>();
-
-//     v8::Local<v8::Value> code_value = v8impl::V8LocalValueFromJsValue(code);
-//     if (code != nullptr) {
-//       code_value = v8impl::V8LocalValueFromJsValue(code);
-//       RETURN_STATUS_IF_FALSE(env, code_value->IsString(),
-//       napi_string_expected);
-//     } else {
-//       CHECK_NEW_FROM_UTF8(env, code_value, code_cstring);
-//     }
-
-//     v8::Local<v8::Name> code_key;
-//     CHECK_NEW_FROM_UTF8(env, code_key, "code");
-
-//     v8::Maybe<bool> set_maybe = err_object->Set(context, code_key,
-//     code_value); RETURN_STATUS_IF_FALSE(
-//         env, set_maybe.FromMaybe(false), napi_generic_failure);
-//   }
-//   return napi_ok;
-// }
 
 napi_status NodeApiEnvironment::CreateError(
     napi_value code,
@@ -2958,7 +2929,7 @@ napi_status NodeApiEnvironment::CreateRangeError(
   });
 }
 
-napi_status NodeApiEnvironment::TypeOf(
+napi_status NodeApiEnvironment::typeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -5170,7 +5141,7 @@ napi_status napi_create_range_error(
 
 napi_status
 napi_typeof(napi_env env, napi_value value, napi_valuetype *result) {
-  return CHECKED_ENV(env)->TypeOf(value, result);
+  return CHECKED_ENV(env)->typeOf(value, result);
 }
 
 napi_status napi_get_undefined(napi_env env, napi_value *result) {
