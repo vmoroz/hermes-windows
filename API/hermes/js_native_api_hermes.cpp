@@ -396,8 +396,8 @@ struct NodeApiEnvironment {
   //   return v8impl::PersistentToLocal::Strong(context_persistent);
   // }
 
-  napi_status ref() noexcept;
-  napi_status unref() noexcept;
+  napi_status incRefCount() noexcept;
+  napi_status decRefCount() noexcept;
 
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
@@ -689,9 +689,9 @@ struct NodeApiEnvironment {
 
   napi_status deleteReference(napi_ref ref) noexcept;
 
-  napi_status referenceRef(napi_ref ref, uint32_t *result) noexcept;
+  napi_status incReference(napi_ref ref, uint32_t *result) noexcept;
 
-  napi_status referenceUnref(napi_ref ref, uint32_t *result) noexcept;
+  napi_status decReference(napi_ref ref, uint32_t *result) noexcept;
 
   napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
 
@@ -1032,11 +1032,11 @@ struct ExtRefCounter : RefTracker {
     unlink();
   }
 
-  void ref() noexcept {
+  void incRefCount() noexcept {
     ++refCount_;
   }
 
-  void unref() noexcept {
+  void decRefCount() noexcept {
     if (--refCount_ == 0) {
       finalize(FinalizeReason::Destruction);
     }
@@ -1164,12 +1164,12 @@ struct Finalizer {
         finalizeHint_(finalizeHint),
         hasEnvReference_(refMode == EnvReferenceMode::KeepEnvReference) {
     if (hasEnvReference_)
-      env_->ref();
+      env_->incRefCount();
   }
 
   ~Finalizer() {
     if (hasEnvReference_) {
-      env_->unref();
+      env_->decRefCount();
     }
   }
 
@@ -1265,11 +1265,11 @@ struct RefBase : protected Finalizer, RefTracker {
     }
   }
 
-  uint32_t ref() noexcept {
+  uint32_t incRefCount() noexcept {
     return ++refCount_;
   }
 
-  uint32_t unref() noexcept {
+  uint32_t decRefCount() noexcept {
     if (refCount_ == 0) {
       return 0;
     }
@@ -1347,8 +1347,8 @@ struct Reference final : RefBase {
         finalizeHint);
   }
 
-  uint32_t ref() noexcept {
-    uint32_t refCount = RefBase::ref();
+  uint32_t incRefCount() noexcept {
+    uint32_t refCount = RefBase::incRefCount();
     if (refCount == 1) {
       // TODO:
       // env_.removeWeakRef(weakRef_);
@@ -1357,9 +1357,9 @@ struct Reference final : RefBase {
     return refCount;
   }
 
-  uint32_t unref() noexcept {
+  uint32_t decRefCount() noexcept {
     uint32_t oldRefCount = refCount();
-    uint32_t refCount = RefBase::unref();
+    uint32_t refCount = RefBase::decRefCount();
     if (oldRefCount == 1 && refCount == 0) {
       // TODO:
       // weakRef_ = env->addWeakRef(this, finalizeCallback, value_);
@@ -1677,12 +1677,12 @@ napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
 #endif
 }
 
-napi_status NodeApiEnvironment::ref() noexcept {
+napi_status NodeApiEnvironment::incRefCount() noexcept {
   refCount++;
   return napi_status::napi_ok;
 }
 
-napi_status NodeApiEnvironment::unref() noexcept {
+napi_status NodeApiEnvironment::decRefCount() noexcept {
   if (--refCount == 0) {
     delete this;
   }
@@ -3959,14 +3959,14 @@ napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
 // refcount is >0, and the referenced object is effectively "pinned".
 // Calling this when the refcount is 0 and the object is unavailable
 // results in an error.
-napi_status NodeApiEnvironment::referenceRef(
+napi_status NodeApiEnvironment::incReference(
     napi_ref ref,
     uint32_t *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(ref);
 
   Reference *reference = reinterpret_cast<Reference *>(ref);
-  uint32_t count = reference->ref();
+  uint32_t count = reference->incRefCount();
 
   if (result != nullptr) {
     *result = count;
@@ -3979,7 +3979,7 @@ napi_status NodeApiEnvironment::referenceRef(
 // the result is 0 the reference is now weak and the object may be GC'd at any
 // time if there are no other references. Calling this when the refcount is
 // already 0 results in an error.
-napi_status NodeApiEnvironment::referenceUnref(
+napi_status NodeApiEnvironment::decReference(
     napi_ref ref,
     uint32_t *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3991,7 +3991,7 @@ napi_status NodeApiEnvironment::referenceUnref(
     return setLastError(napi_generic_failure);
   }
 
-  uint32_t count = reference->unref();
+  uint32_t count = reference->decRefCount();
 
   if (result != nullptr) {
     *result = count;
@@ -5639,7 +5639,7 @@ napi_status napi_delete_reference(napi_env env, napi_ref ref) {
 // Calling this when the refcount is 0 and the object is unavailable
 // results in an error.
 napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
-  return CHECKED_ENV(env)->referenceRef(ref, result);
+  return CHECKED_ENV(env)->incReference(ref, result);
 }
 
 // Decrements the reference count, optionally returning the resulting count. If
@@ -5647,7 +5647,7 @@ napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
 // time if there are no other references. Calling this when the refcount is
 // already 0 results in an error.
 napi_status napi_reference_unref(napi_env env, napi_ref ref, uint32_t *result) {
-  return CHECKED_ENV(env)->referenceUnref(ref, result);
+  return CHECKED_ENV(env)->decReference(ref, result);
 }
 
 // Attempts to get a referenced value. If the reference is weak, the value might
@@ -5899,11 +5899,11 @@ napi_status napi_create_hermes_env(napi_env *env) {
 }
 
 napi_status napi_ext_env_ref(napi_env env) {
-  return CHECKED_ENV(env)->ref();
+  return CHECKED_ENV(env)->incRefCount();
 }
 
 napi_status napi_ext_env_unref(napi_env env) {
-  return CHECKED_ENV(env)->unref();
+  return CHECKED_ENV(env)->decRefCount();
 }
 
 // Runs script with the provided source_url origin.
