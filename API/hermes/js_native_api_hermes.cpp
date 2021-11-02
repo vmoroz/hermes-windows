@@ -682,18 +682,18 @@ struct NodeApiEnvironment {
 
   napi_status getValueExternal(napi_value value, void **result) noexcept;
 
-  napi_status CreateReference(
+  napi_status createReference(
       napi_value value,
-      uint32_t initial_refcount,
+      uint32_t initialRefCount,
       napi_ref *result) noexcept;
 
-  napi_status DeleteReference(napi_ref ref) noexcept;
+  napi_status deleteReference(napi_ref ref) noexcept;
 
-  napi_status ReferenceRef(napi_ref ref, uint32_t *result) noexcept;
+  napi_status referenceRef(napi_ref ref, uint32_t *result) noexcept;
 
-  napi_status ReferenceUnref(napi_ref ref, uint32_t *result) noexcept;
+  napi_status referenceUnref(napi_ref ref, uint32_t *result) noexcept;
 
-  napi_status GetReferenceValue(napi_ref ref, napi_value *result) noexcept;
+  napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
 
   napi_status OpenHandleScope(napi_handle_scope *result) noexcept;
 
@@ -1143,104 +1143,103 @@ struct ExtWeakReference : protected ExtRefCounter {
   napi_env env_{nullptr};
   napi_ref weakRef_{nullptr};
 };
-
+#endif
 // Adapter for napi_finalize callbacks.
-class Finalizer {
- public:
+struct Finalizer {
   // Some Finalizers are run during shutdown when the napi_env is destroyed,
   // and some need to keep an explicit reference to the napi_env because they
   // are run independently.
-  enum EnvReferenceMode { kNoEnvReference, kKeepEnvReference };
+  enum class EnvReferenceMode { NoEnvReference, KeepEnvReference };
 
  protected:
   Finalizer(
       NodeApiEnvironment *env,
-      napi_finalize finalize_callback,
-      void *finalize_data,
-      void *finalize_hint,
-      EnvReferenceMode refmode = kNoEnvReference)
-      : _env(env),
-        _finalize_callback(finalize_callback),
-        _finalize_data(finalize_data),
-        _finalize_hint(finalize_hint),
-        _has_env_reference(refmode == kKeepEnvReference) {
-    if (_has_env_reference)
-      _env->Ref();
+      napi_finalize finalizeCallback,
+      void *finalizeData,
+      void *finalizeHint,
+      EnvReferenceMode refMode = EnvReferenceMode::NoEnvReference)
+      : env_(env),
+        finalizeCallback_(finalizeCallback),
+        finalizeData_(finalizeData),
+        finalizeHint_(finalizeHint),
+        hasEnvReference_(refMode == EnvReferenceMode::KeepEnvReference) {
+    if (hasEnvReference_)
+      env_->Ref();
   }
 
   ~Finalizer() {
-    if (_has_env_reference)
-      _env->Unref();
+    if (hasEnvReference_) {
+      env_->Unref();
+    }
   }
 
  public:
-  static Finalizer *New(
+  static Finalizer *create(
       NodeApiEnvironment *env,
-      napi_finalize finalize_callback = nullptr,
-      void *finalize_data = nullptr,
-      void *finalize_hint = nullptr,
-      EnvReferenceMode refmode = kNoEnvReference) {
+      napi_finalize finalizeCallback = nullptr,
+      void *finalizeData = nullptr,
+      void *finalizeHint = nullptr,
+      EnvReferenceMode refMode = EnvReferenceMode::NoEnvReference) {
     return new Finalizer(
-        env, finalize_callback, finalize_data, finalize_hint, refmode);
+        env, finalizeCallback, finalizeData, finalizeHint, refMode);
   }
 
-  static void Delete(Finalizer *finalizer) {
+  static void destroy(Finalizer *finalizer) {
     delete finalizer;
   }
 
  protected:
-  NodeApiEnvironment *_env;
-  napi_finalize _finalize_callback;
-  void *_finalize_data;
-  void *_finalize_hint;
-  bool _finalize_ran = false;
-  bool _has_env_reference = false;
+  NodeApiEnvironment *env_;
+  napi_finalize finalizeCallback_;
+  void *finalizeData_;
+  void *finalizeHint_;
+  bool finalizeRan_ = false;
+  bool hasEnvReference_ = false;
 };
 
 // Wrapper around v8impl::Persistent that implements reference counting.
-class RefBase : protected Finalizer, RefTracker {
+struct RefBase : protected Finalizer, RefTracker {
  protected:
   RefBase(
       NodeApiEnvironment *env,
-      uint32_t initial_refcount,
-      bool delete_self,
-      napi_finalize finalize_callback,
-      void *finalize_data,
-      void *finalize_hint)
-      : Finalizer(env, finalize_callback, finalize_data, finalize_hint),
-        _refcount(initial_refcount),
-        _delete_self(delete_self) {
-    Link(
-        finalize_callback == nullptr ? &env->reflist
-                                     : &env->finalizing_reflist);
+      uint32_t initialRefCount,
+      bool deleteSelf,
+      napi_finalize finalizeCallback,
+      void *finalizeData,
+      void *finalizeHint)
+      : Finalizer(env, finalizeCallback, finalizeData, finalizeHint),
+        refCount_(initialRefCount),
+        deleteSelf_(deleteSelf) {
+    // TODO: it must be called from NodeApiEnvironment
+    link(finalizeCallback == nullptr ? &env->refList_ : &env->finalizingRefList_);
   }
 
  public:
-  static RefBase *New(
+  static RefBase *create(
       NodeApiEnvironment *env,
-      uint32_t initial_refcount,
-      bool delete_self,
-      napi_finalize finalize_callback,
-      void *finalize_data,
-      void *finalize_hint) {
+      uint32_t initialRefCount,
+      bool deleteSelf,
+      napi_finalize finalizeCallback,
+      void *finalizeData,
+      void *finalizeHint) noexcept {
     return new RefBase(
         env,
-        initial_refcount,
-        delete_self,
-        finalize_callback,
-        finalize_data,
-        finalize_hint);
+        initialRefCount,
+        deleteSelf,
+        finalizeCallback,
+        finalizeData,
+        finalizeHint);
   }
 
   virtual ~RefBase() {
-    Unlink();
+    unlink();
   }
 
-  inline void *Data() {
-    return _finalize_data;
+  void *data() noexcept {
+    return finalizeData_;
   }
 
-  // Delete is called in 2 ways. Either from the finalizer or
+  // Destroy is called in 2 ways. Either from the finalizer or
   // from one of Unwrap or napi_delete_reference.
   //
   // When it is called from Unwrap or napi_delete_reference we only
@@ -1255,34 +1254,34 @@ class RefBase : protected Finalizer, RefTracker {
   // The second way this is called is from
   // the finalizer and _delete_self is set. In this case we
   // know we need to do the deletion so just do it.
-  static inline void Delete(RefBase *reference) {
-    if ((reference->RefCount() != 0) || (reference->_delete_self) ||
-        (reference->_finalize_ran)) {
+  static void destroy(RefBase *reference) noexcept {
+    if ((reference->refCount() != 0) || (reference->deleteSelf_) ||
+        (reference->finalizeRan_)) {
       delete reference;
     } else {
       // defer until finalizer runs as
-      // it may alread be queued
-      reference->_delete_self = true;
+      // it may already be queued
+      reference->deleteSelf_ = true;
     }
   }
 
-  inline uint32_t Ref() {
-    return ++_refcount;
+  uint32_t ref() noexcept {
+    return ++refCount_;
   }
 
-  inline uint32_t Unref() {
-    if (_refcount == 0) {
+  uint32_t unref() noexcept {
+    if (refCount_ == 0) {
       return 0;
     }
-    return --_refcount;
+    return --refCount_;
   }
 
-  inline uint32_t RefCount() {
-    return _refcount;
+  uint32_t refCount() noexcept {
+    return refCount_;
   }
 
  protected:
-  inline void Finalize(bool is_env_teardown = false) override {
+  void finalize(FinalizeReason reason) noexcept override {
     // In addition to being called during environment teardown, this method is
     // also the entry point for the garbage collector. During environment
     // teardown we have to remove the garbage collector's reference to this
@@ -1302,13 +1301,14 @@ class RefBase : protected Finalizer, RefTracker {
     // happens to delete this reference so that the code in this function that
     // follows the call to the user's finalizer may safely access variables from
     // this instance.
-    if (is_env_teardown && RefCount() > 0)
-      _refcount = 0;
+    if (reason == FinalizeReason::EnvTeardown && refCount() > 0) {
+      refCount_ = 0;
+    }
 
-    if (_finalize_callback != nullptr) {
+    if (finalizeCallback_ != nullptr) {
       // This ensures that we never call the finalizer twice.
-      napi_finalize fini = _finalize_callback;
-      _finalize_callback = nullptr;
+      napi_finalize fini = finalizeCallback_;
+      finalizeCallback_ = nullptr;
       // TODO: [vmoroz] Implement
       //_env->CallFinalizer(fini, _finalize_data, _finalize_hint);
     }
@@ -1316,16 +1316,16 @@ class RefBase : protected Finalizer, RefTracker {
     // this is safe because if a request to delete the reference
     // is made in the finalize_callback it will defer deletion
     // to this block and set _delete_self to true
-    if (_delete_self || is_env_teardown) {
-      Delete(this);
+    if (deleteSelf_ || reason == FinalizeReason::EnvTeardown) {
+      destroy(this);
     } else {
-      _finalize_ran = true;
+      finalizeRan_ = true;
     }
   }
 
  private:
-  uint32_t _refcount;
-  bool _delete_self;
+  uint32_t refCount_;
+  bool deleteSelf_;
 };
 
 struct Reference final : RefBase {
@@ -1350,8 +1350,9 @@ struct Reference final : RefBase {
   uint32_t ref() noexcept {
     uint32_t refCount = RefBase::ref();
     if (refCount == 1) {
-      env_.removeWeakRef(weakRef_);
-      weakRef_ = nullptr;
+      // TODO:
+      // env_.removeWeakRef(weakRef_);
+      // weakRef_ = nullptr;
     }
     return refCount;
   }
@@ -1360,12 +1361,13 @@ struct Reference final : RefBase {
     uint32_t oldRefCount = refCount();
     uint32_t refCount = RefBase::unref();
     if (oldRefCount == 1 && refCount == 0) {
-      weakRef_ = env->addWeakRef(this, finalizeCallback, value_);
+      // TODO:
+      // weakRef_ = env->addWeakRef(this, finalizeCallback, value_);
     }
-    return refcount;
+    return refCount;
   }
 
-  vm::PinnedHermesValue get() noexcept {
+  vm::PinnedHermesValue &get() noexcept {
     return value_;
   }
 
@@ -1376,37 +1378,39 @@ struct Reference final : RefBase {
       vm::PinnedHermesValue value,
       TArgs &&...args) noexcept
       : RefBase(env, std::forward<TArgs>(args)...), value_(value) {
-    if (RefCount() == 0) {
-      weakRef_ = env->addWeakRef(this, finalizeCallback, value_);
+    if (refCount() == 0) {
+      // TODO:
+      // weakRef_ = env->addWeakRef(this, finalizeCallback, value_);
     }
   }
 
-  void finalize(bool isEnvTeardown = false) override {
+  void finalize(FinalizeReason reason) noexcept override {
     // During env teardown, `~napi_env()` alone is responsible for finalizing.
     // Thus, we don't want any stray gc passes to trigger a second call to
     // `finalize()`, so let's reset the persistent here if nothing is
     // keeping it alive.
-    if (isEnvTeardown && weakRef_) {
-      env_->removeWeakRef(weakRef_);
-      weakRef_ = nullptr;
-    }
+    // TODO:
+    // if (isEnvTeardown && weakRef_) {
+    // env_->removeWeakRef(weakRef_);
+    // weakRef_ = nullptr;
+    //}
 
     // Chain up to perform the rest of the finalization.
-    RefBase::finalize(isEnvTeardown);
+    RefBase::finalize(reason);
   }
 
  private:
   // TODO: Allow running finalizers when the GC in a good state - add a second
   // GC pass.
   static void finalizeCallback(void *data) noexcept {
-    Reference *reference = static_cast<Reference *>(data);
-    reference->finalize();
+    // Reference *reference = static_cast<Reference *>(data);
+    // reference->finalize();
   }
 
  private:
   vm::PinnedHermesValue value_;
 };
-#endif
+
 /*static*/ vm::CallResult<vm::HermesValue>
 HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
   HFContext *hfc = reinterpret_cast<HFContext *>(context);
@@ -3926,44 +3930,30 @@ napi_status NodeApiEnvironment::getValueExternal(
 }
 
 // Set initial_refcount to 0 for a weak reference, >0 for a strong reference.
-napi_status NodeApiEnvironment::CreateReference(
+napi_status NodeApiEnvironment::createReference(
     napi_value value,
-    uint32_t initial_refcount,
+    uint32_t initialRefCount,
     napi_ref *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(result);
 
-  // v8::Local<v8::Value> v8_value = v8impl::V8LocalValueFromJsValue(value);
+  Reference *reference = Reference::create(
+      this, phv(value), initialRefCount, /*deleteSelf:*/ false);
 
-  // if (!(v8_value->IsObject() || v8_value->IsFunction())) {
-  //   return napi_set_last_error(env, napi_object_expected);
-  // }
-
-  // v8impl::Reference *reference =
-  //     v8impl::Reference::New(env, v8_value, initial_refcount, false);
-
-  // *result = reinterpret_cast<napi_ref>(reference);
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  *result = reinterpret_cast<napi_ref>(reference);
+  return ClearLastError();
 }
 
 // Deletes a reference. The referenced value is released, and may be GC'd unless
 // there are other references to it.
-napi_status NodeApiEnvironment::DeleteReference(napi_ref ref) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, ref);
+napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_ARG(ref);
 
-  // v8impl::Reference::Delete(reinterpret_cast<v8impl::Reference *>(ref));
+  Reference::destroy(reinterpret_cast<Reference *>(ref));
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 // Increments the reference count, optionally returning the resulting count.
@@ -3971,74 +3961,61 @@ napi_status NodeApiEnvironment::DeleteReference(napi_ref ref) noexcept {
 // refcount is >0, and the referenced object is effectively "pinned".
 // Calling this when the refcount is 0 and the object is unavailable
 // results in an error.
-napi_status NodeApiEnvironment::ReferenceRef(
+napi_status NodeApiEnvironment::referenceRef(
     napi_ref ref,
     uint32_t *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, ref);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_ARG(ref);
 
-  // v8impl::Reference *reference = reinterpret_cast<v8impl::Reference
-  // *>(ref); uint32_t count = reference->Ref();
+  Reference *reference = reinterpret_cast<Reference *>(ref);
+  uint32_t count = reference->ref();
 
-  // if (result != nullptr) {
-  //   *result = count;
-  // }
+  if (result != nullptr) {
+    *result = count;
+  }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 // Decrements the reference count, optionally returning the resulting count. If
 // the result is 0 the reference is now weak and the object may be GC'd at any
 // time if there are no other references. Calling this when the refcount is
 // already 0 results in an error.
-napi_status NodeApiEnvironment::ReferenceUnref(
+napi_status NodeApiEnvironment::referenceUnref(
     napi_ref ref,
     uint32_t *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, ref);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_ARG(ref);
 
-  // v8impl::Reference *reference = reinterpret_cast<v8impl::Reference
-  // *>(ref);
+  Reference *reference = reinterpret_cast<Reference *>(ref);
 
-  // if (reference->RefCount() == 0) {
-  //   return napi_set_last_error(env, napi_generic_failure);
-  // }
+  if (reference->refCount() == 0) {
+    return SetLastError(napi_generic_failure);
+  }
 
-  // uint32_t count = reference->Unref();
+  uint32_t count = reference->unref();
 
-  // if (result != nullptr) {
-  //   *result = count;
-  // }
+  if (result != nullptr) {
+    *result = count;
+  }
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 // Attempts to get a referenced value. If the reference is weak, the value might
 // no longer be available, in that case the call is still successful but the
-// result is NULL.
-napi_status NodeApiEnvironment::GetReferenceValue(
+// result is nullptr.
+napi_status NodeApiEnvironment::getReferenceValue(
     napi_ref ref,
     napi_value *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // throw
-  // // JS exceptions.
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, ref);
-  // CHECK_ARG(env, result);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_ARG(ref);
+  CHECK_ARG(result);
 
-  // v8impl::Reference *reference = reinterpret_cast<v8impl::Reference
-  // *>(ref); *result = v8impl::JsValueFromV8LocalValue(reference->Get());
+  Reference *reference = reinterpret_cast<Reference *>(ref);
+  *result = addStackValue(reference->get());
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return ClearLastError();
 }
 
 napi_status NodeApiEnvironment::OpenHandleScope(
@@ -5654,13 +5631,13 @@ napi_status napi_create_reference(
     napi_value value,
     uint32_t initial_refcount,
     napi_ref *result) {
-  return CHECKED_ENV(env)->CreateReference(value, initial_refcount, result);
+  return CHECKED_ENV(env)->createReference(value, initial_refcount, result);
 }
 
 // Deletes a reference. The referenced value is released, and may be GC'd unless
 // there are other references to it.
 napi_status napi_delete_reference(napi_env env, napi_ref ref) {
-  return CHECKED_ENV(env)->DeleteReference(ref);
+  return CHECKED_ENV(env)->deleteReference(ref);
 }
 
 // Increments the reference count, optionally returning the resulting count.
@@ -5669,7 +5646,7 @@ napi_status napi_delete_reference(napi_env env, napi_ref ref) {
 // Calling this when the refcount is 0 and the object is unavailable
 // results in an error.
 napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
-  return CHECKED_ENV(env)->ReferenceRef(ref, result);
+  return CHECKED_ENV(env)->referenceRef(ref, result);
 }
 
 // Decrements the reference count, optionally returning the resulting count. If
@@ -5677,7 +5654,7 @@ napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
 // time if there are no other references. Calling this when the refcount is
 // already 0 results in an error.
 napi_status napi_reference_unref(napi_env env, napi_ref ref, uint32_t *result) {
-  return CHECKED_ENV(env)->ReferenceUnref(ref, result);
+  return CHECKED_ENV(env)->referenceUnref(ref, result);
 }
 
 // Attempts to get a referenced value. If the reference is weak, the value might
@@ -5685,7 +5662,7 @@ napi_status napi_reference_unref(napi_env env, napi_ref ref, uint32_t *result) {
 // result is NULL.
 napi_status
 napi_get_reference_value(napi_env env, napi_ref ref, napi_value *result) {
-  return CHECKED_ENV(env)->GetReferenceValue(ref, result);
+  return CHECKED_ENV(env)->getReferenceValue(ref, result);
 }
 
 napi_status napi_open_handle_scope(napi_env env, napi_handle_scope *result) {
