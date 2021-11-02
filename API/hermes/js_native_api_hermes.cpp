@@ -57,7 +57,7 @@ using ::hermes::hermesLog;
 #define RETURN_STATUS_IF_FALSE(condition, status) \
   do {                                            \
     if (!(condition)) {                           \
-      return SetLastError((status));              \
+      return setLastError((status));              \
     }                                             \
   } while (false)
 
@@ -94,7 +94,7 @@ using ::hermes::hermesLog;
   do {                                             \
     CHECK_OBJECT_ARG(arg);                         \
     if (vm::vmisa<vm::Callable>(phv(arg))) {       \
-      return SetLastError(napi_function_expected); \
+      return setLastError(napi_function_expected); \
     }                                              \
   } while (false)
 
@@ -123,17 +123,17 @@ namespace hermes {
 namespace napi {
 
 struct Marker {
-  size_t ChunkIndex{0};
-  size_t ItemIndex{0};
+  size_t chunkIndex{0};
+  size_t itemIndex{0};
 
-  bool IsValid() const {
-    return ChunkIndex < std::numeric_limits<size_t>::max();
+  bool isValid() const {
+    return chunkIndex < std::numeric_limits<size_t>::max();
   }
 
-  static const Marker InvalidMarker;
+  static const Marker invalidMarker;
 };
 
-/*static*/ const Marker Marker::InvalidMarker{
+/*static*/ const Marker Marker::invalidMarker{
     std::numeric_limits<size_t>::max(),
     0};
 
@@ -143,70 +143,70 @@ struct NonMovableObjStack {
     // There is always at least one chunk in the storage
     std::vector<T> firstChunk;
     firstChunk.reserve(ChunkSize);
-    m_storage.push_back(std::move(firstChunk));
+    storage_.push_back(std::move(firstChunk));
   }
 
   bool empty() const {
-    return m_storage[0].empty();
+    return storage_[0].empty();
   }
 
   template <typename... TArgs>
-  void emplace_back(TArgs &&...args) {
-    auto &storageChunk = m_storage.back();
+  void emplaceBack(TArgs &&...args) {
+    auto &storageChunk = storage_.back();
     if (storageChunk.size() == storageChunk.capacity()) {
       std::vector<T> newChunk;
       newChunk.reserve(std::min(storageChunk.capacity() * 2, MaxChunkSize));
-      m_storage.push_back(std::move(newChunk));
-      storageChunk = m_storage.back();
+      storage_.push_back(std::move(newChunk));
+      storageChunk = storage_.back();
     }
     storageChunk.emplace_back(std::forward<TArgs>(args)...);
   }
 
   T &back() {
-    return m_storage.back().back();
+    return storage_.back().back();
   }
 
-  bool pop_back() {
-    auto &storageChunk = m_storage.back();
+  bool popBack() {
+    auto &storageChunk = storage_.back();
     if (storageChunk.empty()) {
       return false;
     }
 
     storageChunk.pop_back();
-    if (storageChunk.empty() && m_storage.size() > 1) {
-      m_storage.pop_back();
+    if (storageChunk.empty() && storage_.size() > 1) {
+      storage_.pop_back();
     }
 
     return true;
   }
 
-  bool pop_marker(const Marker &marker) {
-    if (marker.ChunkIndex > m_storage.size()) {
+  bool popMarker(const Marker &marker) {
+    if (marker.chunkIndex > storage_.size()) {
       return false; // Invalid ChunkIndex
-    } else if (marker.ChunkIndex == m_storage.size()) {
+    } else if (marker.chunkIndex == storage_.size()) {
       // ChunkIndex is valid only if ItemIndex is 0.
       // In that case we have nothing to remove.
-      return marker.ItemIndex == 0;
+      return marker.itemIndex == 0;
     }
 
-    auto &markerChunk = m_storage[marker.ChunkIndex];
-    if (marker.ItemIndex >= markerChunk.size()) {
+    auto &markerChunk = storage_[marker.chunkIndex];
+    if (marker.itemIndex >= markerChunk.size()) {
       return false; // Invalid ItemIndex
     }
 
-    if (marker.ChunkIndex < m_storage.size() - 1) {
+    if (marker.chunkIndex < storage_.size() - 1) {
       // Delete the whole chunks
-      m_storage.erase(
-          m_storage.begin() + marker.ChunkIndex + 1, m_storage.end());
+      storage_.erase(
+          storage_.begin() + marker.chunkIndex + 1, storage_.end());
     }
 
-    if (marker.ChunkIndex > 0 && marker.ItemIndex == 0) {
+    if (marker.chunkIndex > 0 && marker.itemIndex == 0) {
       // Delete the last chunk
-      m_storage.erase(m_storage.begin() + marker.ChunkIndex, m_storage.end());
+      storage_.erase(storage_.begin() + marker.chunkIndex, storage_.end());
     } else {
       // Delete items in the marker chunk
       markerChunk.erase(
-          markerChunk.begin() + marker.ItemIndex, markerChunk.end());
+          markerChunk.begin() + marker.itemIndex, markerChunk.end());
     }
 
     return true;
@@ -214,41 +214,41 @@ struct NonMovableObjStack {
 
   // New marker points to a location where to insert a new element.
   // Thus, it always points to an invalid location after the last element.
-  Marker create_marker() {
-    auto &lastChunk = m_storage.back();
+  Marker createMarker() {
+    auto &lastChunk = storage_.back();
     if (lastChunk.size() < lastChunk.capacity()) {
-      return {m_storage.size() - 1, lastChunk.size()};
+      return {storage_.size() - 1, lastChunk.size()};
     } else {
-      return {m_storage.size(), 0};
+      return {storage_.size(), 0};
     }
   }
 
-  Marker get_previous_marker(const Marker &marker) {
-    if (marker.ItemIndex > 0) {
-      return {marker.ChunkIndex, marker.ItemIndex - 1};
-    } else if (marker.ChunkIndex > 0) {
-      auto prevChunkIndex = marker.ChunkIndex - 1;
-      if (m_storage[prevChunkIndex].size() > 0) {
-        return {prevChunkIndex, m_storage[prevChunkIndex].size() - 1};
+  Marker getPreviousMarker(const Marker &marker) {
+    if (marker.itemIndex > 0) {
+      return {marker.chunkIndex, marker.itemIndex - 1};
+    } else if (marker.chunkIndex > 0) {
+      auto prevChunkIndex = marker.chunkIndex - 1;
+      if (storage_[prevChunkIndex].size() > 0) {
+        return {prevChunkIndex, storage_[prevChunkIndex].size() - 1};
       }
     }
-    return Marker::InvalidMarker;
+    return Marker::invalidMarker;
   }
 
   T *at(const Marker &marker) {
-    if (marker.ChunkIndex >= m_storage.size()) {
+    if (marker.chunkIndex >= storage_.size()) {
       return nullptr;
     }
-    auto &chunk = m_storage[marker.ChunkIndex];
-    if (marker.ItemIndex >= chunk.size()) {
+    auto &chunk = storage_[marker.chunkIndex];
+    if (marker.itemIndex >= chunk.size()) {
       return nullptr;
     }
-    return &chunk[marker.ItemIndex];
+    return &chunk[marker.itemIndex];
   }
 
   template <typename F>
-  void for_each(const F &f) noexcept {
-    for (const auto &storageChunk : m_storage) {
+  void forEach(const F &f) noexcept {
+    for (const auto &storageChunk : storage_) {
       for (const auto &item : storageChunk) {
         f(item);
       }
@@ -259,7 +259,7 @@ struct NonMovableObjStack {
   static const size_t ChunkSize = 16;
   static const size_t MaxChunkSize = 4096;
   std::vector<std::vector<T>>
-      m_storage; // There is always at least one chunk in the storage
+      storage_; // There is always at least one chunk in the storage
 };
 
 struct NodeApiEnvironment;
@@ -396,8 +396,8 @@ struct NodeApiEnvironment {
   //   return v8impl::PersistentToLocal::Strong(context_persistent);
   // }
 
-  napi_status Ref() noexcept;
-  napi_status Unref() noexcept;
+  napi_status ref() noexcept;
+  napi_status unref() noexcept;
 
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
@@ -450,13 +450,13 @@ struct NodeApiEnvironment {
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
 
-  napi_status SetLastError(
+  napi_status setLastError(
       napi_status error_code,
       uint32_t engine_error_code = 0,
       void *engine_reserved = nullptr) noexcept;
-  napi_status ClearLastError() noexcept;
+  napi_status clearLastError() noexcept;
 
-  napi_status GetLastErrorInfo(
+  napi_status getLastErrorInfo(
       const napi_extended_error_info **result) noexcept;
 
   napi_status createFunction(
@@ -549,38 +549,38 @@ struct NodeApiEnvironment {
 
   napi_status createArray(size_t length, napi_value *result) noexcept;
 
-  napi_status CreateStringLatin1(
+  napi_status createStringLatin1(
       const char *str,
       size_t length,
       napi_value *result) noexcept;
 
   napi_status
-  CreateStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
+  createStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
 
-  napi_status CreateStringUtf16(
+  napi_status createStringUtf16(
       const char16_t *str,
       size_t length,
       napi_value *result) noexcept;
 
-  napi_status CreateNumber(double value, napi_value *result) noexcept;
+  napi_status createNumber(double value, napi_value *result) noexcept;
 
-  napi_status CreateNumber(int32_t value, napi_value *result) noexcept;
+  napi_status createNumber(int32_t value, napi_value *result) noexcept;
 
-  napi_status CreateNumber(uint32_t value, napi_value *result) noexcept;
+  napi_status createNumber(uint32_t value, napi_value *result) noexcept;
 
-  napi_status CreateNumber(int64_t value, napi_value *result) noexcept;
+  napi_status createNumber(int64_t value, napi_value *result) noexcept;
 
-  napi_status GetBoolean(bool value, napi_value *result) noexcept;
+  napi_status getBoolean(bool value, napi_value *result) noexcept;
 
   napi_status createSymbol(napi_value description, napi_value *result) noexcept;
 
   napi_status
-  CreateError(napi_value code, napi_value msg, napi_value *result) noexcept;
+  createError(napi_value code, napi_value msg, napi_value *result) noexcept;
 
   napi_status
-  CreateTypeError(napi_value code, napi_value msg, napi_value *result) noexcept;
+  createTypeError(napi_value code, napi_value msg, napi_value *result) noexcept;
 
-  napi_status CreateRangeError(
+  napi_status createRangeError(
       napi_value code,
       napi_value msg,
       napi_value *result) noexcept;
@@ -611,39 +611,39 @@ struct NodeApiEnvironment {
 
   napi_status getGlobal(napi_value *result) noexcept;
 
-  napi_status Throw(napi_value error) noexcept;
+  napi_status throwError(napi_value error) noexcept;
 
-  napi_status ThrowError(const char *code, const char *msg) noexcept;
+  napi_status throwError(const char *code, const char *msg) noexcept;
 
-  napi_status ThrowTypeError(const char *code, const char *msg) noexcept;
+  napi_status throwTypeError(const char *code, const char *msg) noexcept;
 
-  napi_status ThrowRangeError(const char *code, const char *msg) noexcept;
+  napi_status throwRangeError(const char *code, const char *msg) noexcept;
 
-  napi_status IsError(napi_value value, bool *result) noexcept;
+  napi_status isError(napi_value value, bool *result) noexcept;
 
-  napi_status GetNumberValue(napi_value value, double *result) noexcept;
+  napi_status getNumberValue(napi_value value, double *result) noexcept;
 
-  napi_status GetNumberValue(napi_value value, int32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
 
-  napi_status GetNumberValue(napi_value value, uint32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
 
-  napi_status GetNumberValue(napi_value value, int64_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
 
-  napi_status GetBoolValue(napi_value value, bool *result) noexcept;
+  napi_status getBoolValue(napi_value value, bool *result) noexcept;
 
-  napi_status GetValueStringLatin1(
+  napi_status getValueStringLatin1(
       napi_value value,
       char *buf,
       size_t bufsize,
       size_t *result) noexcept;
 
-  napi_status GetValueStringUtf8(
+  napi_status getValueStringUtf8(
       napi_value value,
       char *buf,
       size_t bufsize,
       size_t *result) noexcept;
 
-  napi_status GetValueStringUtf16(
+  napi_status getValueStringUtf16(
       napi_value value,
       char16_t *buf,
       size_t bufsize,
@@ -695,63 +695,63 @@ struct NodeApiEnvironment {
 
   napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
 
-  napi_status OpenHandleScope(napi_handle_scope *result) noexcept;
+  napi_status openHandleScope(napi_handle_scope *result) noexcept;
 
-  napi_status CloseHandleScope(napi_handle_scope scope) noexcept;
+  napi_status closeHandleScope(napi_handle_scope scope) noexcept;
 
-  napi_status OpenEscapableHandleScope(
+  napi_status openEscapableHandleScope(
       napi_escapable_handle_scope *result) noexcept;
 
-  napi_status CloseEscapableHandleScope(
+  napi_status closeEscapableHandleScope(
       napi_escapable_handle_scope scope) noexcept;
 
-  napi_status EscapeHandle(
+  napi_status escapeHandle(
       napi_escapable_handle_scope scope,
       napi_value escapee,
       napi_value *result) noexcept;
 
-  napi_status NewInstance(
+  napi_status newInstance(
       napi_value constructor,
       size_t argc,
       const napi_value *argv,
       napi_value *result) noexcept;
 
   napi_status
-  InstanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
+  instanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
 
-  napi_status IsExceptionPending(bool *result) noexcept;
+  napi_status isExceptionPending(bool *result) noexcept;
 
-  napi_status GetAndClearLastException(napi_value *result) noexcept;
+  napi_status getAndClearLastException(napi_value *result) noexcept;
 
   napi_status isArrayBuffer(napi_value value, bool *result) noexcept;
 
-  napi_status CreateArrayBuffer(
+  napi_status createArrayBuffer(
       size_t byte_length,
       void **data,
       napi_value *result) noexcept;
 
-  napi_status CreateExternalArrayBuffer(
+  napi_status createExternalArrayBuffer(
       void *external_data,
       size_t byte_length,
       napi_finalize finalize_cb,
       void *finalize_hint,
       napi_value *result) noexcept;
 
-  napi_status GetArrayBufferInfo(
+  napi_status getArrayBufferInfo(
       napi_value arraybuffer,
       void **data,
       size_t *byte_length) noexcept;
 
-  napi_status IsTypedArray(napi_value value, bool *result) noexcept;
+  napi_status isTypedArray(napi_value value, bool *result) noexcept;
 
-  napi_status CreateTypedArray(
+  napi_status createTypedArray(
       napi_typedarray_type type,
       size_t length,
       napi_value arraybuffer,
       size_t byte_offset,
       napi_value *result) noexcept;
 
-  napi_status GetTypedArrayInfo(
+  napi_status getTypedArrayInfo(
       napi_value typedarray,
       napi_typedarray_type *type,
       size_t *length,
@@ -759,42 +759,42 @@ struct NodeApiEnvironment {
       napi_value *arraybuffer,
       size_t *byte_offset) noexcept;
 
-  napi_status CreateDataView(
+  napi_status createDataView(
       size_t byte_length,
       napi_value arraybuffer,
       size_t byte_offset,
       napi_value *result) noexcept;
 
-  napi_status IsDataView(napi_value value, bool *result) noexcept;
+  napi_status isDataView(napi_value value, bool *result) noexcept;
 
-  napi_status GetDataViewInfo(
+  napi_status getDataViewInfo(
       napi_value dataview,
       size_t *byte_length,
       void **data,
       napi_value *arraybuffer,
       size_t *byte_offset) noexcept;
 
-  napi_status GetVersion(uint32_t *result) noexcept;
+  napi_status getVersion(uint32_t *result) noexcept;
 
-  napi_status CreatePromise(
+  napi_status createPromise(
       napi_deferred *deferred,
       napi_value *promise) noexcept;
 
-  napi_status ResolveDeferred(
+  napi_status resolveDeferred(
       napi_deferred deferred,
       napi_value resolution) noexcept;
 
-  napi_status RejectDeferred(
+  napi_status rejectDeferred(
       napi_deferred deferred,
       napi_value resolution) noexcept;
 
-  napi_status IsPromise(napi_value value, bool *is_promise) noexcept;
+  napi_status isPromise(napi_value value, bool *is_promise) noexcept;
 
-  napi_status CreateDate(double time, napi_value *result) noexcept;
+  napi_status createDate(double time, napi_value *result) noexcept;
 
-  napi_status IsDate(napi_value value, bool *is_date) noexcept;
+  napi_status isDate(napi_value value, bool *is_date) noexcept;
 
-  napi_status GetDateValue(napi_value value, double *result) noexcept;
+  napi_status getDateValue(napi_value value, double *result) noexcept;
 
   napi_status addFinalizer(
       napi_value object,
@@ -803,17 +803,17 @@ struct NodeApiEnvironment {
       void *finalizeHint,
       napi_ref *result) noexcept;
 
-  napi_status AdjustExternalMemory(
+  napi_status adjustExternalMemory(
       int64_t change_in_bytes,
       int64_t *adjusted_value) noexcept;
 
-  napi_status SetInstanceData(
+  napi_status setInstanceData(
       void *data,
       napi_finalize finalize_cb,
       void *finalize_hint) noexcept;
-  napi_status GetInstanceData(void **data) noexcept;
-  napi_status DetachArrayBuffer(napi_value arraybuffer) noexcept;
-  napi_status IsDetachedArrayBuffer(
+  napi_status getInstanceData(void **data) noexcept;
+  napi_status detachArrayBuffer(napi_value arraybuffer) noexcept;
+  napi_status isDetachedArrayBuffer(
       napi_value arraybuffer,
       bool *result) noexcept;
 
@@ -940,7 +940,7 @@ struct NodeApiEnvironment {
   /// The default setting of "emit async break check" in this runtime.
   bool defaultEmitAsyncBreakCheck_{false};
 
-  std::atomic<int> m_refs{1};
+  std::atomic<int> refCount{1};
 
   // TODO: use it as a GC root
   vm::PinnedHermesValue lastException_{EmptyHermesValue};
@@ -950,8 +950,8 @@ struct NodeApiEnvironment {
       predefinedValues_{};
 
  public:
-  NonMovableObjStack<vm::PinnedHermesValue> m_stackValues;
-  NonMovableObjStack<Marker> m_stackMarkers;
+  NonMovableObjStack<vm::PinnedHermesValue> stackValues_;
+  NonMovableObjStack<Marker> stackMarkers_;
   static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
   static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
       kEscapeableSentinelNativeValue + 1;
@@ -1164,12 +1164,12 @@ struct Finalizer {
         finalizeHint_(finalizeHint),
         hasEnvReference_(refMode == EnvReferenceMode::KeepEnvReference) {
     if (hasEnvReference_)
-      env_->Ref();
+      env_->ref();
   }
 
   ~Finalizer() {
     if (hasEnvReference_) {
-      env_->Unref();
+      env_->unref();
     }
   }
 
@@ -1567,7 +1567,7 @@ NodeApiEnvironment::NodeApiEnvironment(
   crashMgr_->registerMemory(&runtime_, sizeof(vm::Runtime));
 #endif
   runtime_.addCustomRootsFunction([this](vm::GC *, vm::RootAcceptor &acceptor) {
-    m_stackValues.for_each([&](const vm::PinnedHermesValue &phv) {
+    stackValues_.forEach([&](const vm::PinnedHermesValue &phv) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
     });
     // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
@@ -1664,7 +1664,7 @@ NodeApiEnvironment::~NodeApiEnvironment() {
 template <typename F>
 napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
   RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
-  ClearLastError();
+  clearLastError();
   vm::GCScope gcScope(&runtime_);
 #ifdef HERMESVM_EXCEPTION_ON_OOM
   try {
@@ -1677,19 +1677,19 @@ napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
 #endif
 }
 
-napi_status NodeApiEnvironment::Ref() noexcept {
-  m_refs++;
+napi_status NodeApiEnvironment::ref() noexcept {
+  refCount++;
   return napi_status::napi_ok;
 }
 
-napi_status NodeApiEnvironment::Unref() noexcept {
-  if (--m_refs == 0) {
+napi_status NodeApiEnvironment::unref() noexcept {
+  if (--refCount == 0) {
     delete this;
   }
   return napi_status::napi_ok;
 }
 
-napi_status NodeApiEnvironment::SetLastError(
+napi_status NodeApiEnvironment::setLastError(
     napi_status error_code,
     uint32_t engine_error_code,
     void *engine_reserved) noexcept {
@@ -1699,7 +1699,7 @@ napi_status NodeApiEnvironment::SetLastError(
   return error_code;
 }
 
-napi_status NodeApiEnvironment::ClearLastError() noexcept {
+napi_status NodeApiEnvironment::clearLastError() noexcept {
   lastError_.error_code = napi_ok;
   lastError_.engine_error_code = 0;
   lastError_.engine_reserved = nullptr;
@@ -1809,7 +1809,7 @@ napi_status NodeApiEnvironment::unwrapObject(
       // TODO: Reference::Delete(reference);
     }
 
-    return ClearLastError();
+    return clearLastError();
   });
 #endif
   return napi_ok;
@@ -1923,8 +1923,8 @@ vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
 }
 
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
-  m_stackValues.emplace_back(value);
-  return reinterpret_cast<napi_value>(&m_stackValues.back());
+  stackValues_.emplaceBack(value);
+  return reinterpret_cast<napi_value>(&stackValues_.back());
 }
 
 napi_status NodeApiEnvironment::checkStatus(
@@ -1964,7 +1964,7 @@ static const char *error_messages[] = {
     "Main thread would deadlock",
 };
 
-napi_status NodeApiEnvironment::GetLastErrorInfo(
+napi_status NodeApiEnvironment::getLastErrorInfo(
     const napi_extended_error_info **result) noexcept {
   // CHECK_ARG(env, result);
 
@@ -2006,7 +2006,7 @@ napi_status NodeApiEnvironment::newFunction(
   CHECK_STATUS(funcRes.getStatus());
   context.release();
   *result = addStackValue(*funcRes);
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createFunction(
@@ -2017,12 +2017,12 @@ napi_status NodeApiEnvironment::createFunction(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     napi_value nameValue{};
-    STATUS_CALL(CreateStringUtf8(utf8Name, length, &nameValue));
+    STATUS_CALL(createStringUtf8(utf8Name, length, &nameValue));
     auto nameRes = vm::stringToSymbolID(
         &runtime_, vm::createPseudoHandle(phv(nameValue).getString()));
     CHECK_STATUS(nameRes.getStatus());
     STATUS_CALL(newFunction(nameRes->get(), callback, callbackData, result));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2273,7 +2273,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             vm::JSProxy::ownPropertyKeys(objHandle, &runtime_, okFlags);
         CHECK_STATUS(proxyRes.getStatus());
         *result = addStackValue(proxyRes->getHermesValue());
-        return ClearLastError();
+        return clearLastError();
       }
       assert(
           objAccessor->getFlags().lazyObject &&
@@ -2481,7 +2481,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // If we have no index-like names, we are done.
     if (LLVM_LIKELY(indexNames.empty())) {
       *result = addStackValue(array.getHermesValue());
-      return ClearLastError();
+      return clearLastError();
     }
 
     // In the unlikely event that we encountered index-like names, we need to
@@ -2536,7 +2536,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     }
 
     *result = addStackValue(array.getHermesValue());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2558,7 +2558,7 @@ napi_status NodeApiEnvironment::setProperty(
                          toHandle(value),
                          vm::PropOpFlags().plusThrowOnError())
                      .getStatus());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2574,7 +2574,7 @@ napi_status NodeApiEnvironment::hasProperty(
     auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = *res;
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2591,7 +2591,7 @@ napi_status NodeApiEnvironment::getProperty(
         objHandle->getComputed_RJS(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->get());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2611,7 +2611,7 @@ napi_status NodeApiEnvironment::deleteProperty(
         vm::PropOpFlags().plusThrowOnError());
     CHECK_STATUS(res.getStatus());
     *result = *res;
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2627,7 +2627,7 @@ napi_status NodeApiEnvironment::hasOwnProperty(
     auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
     CHECK_STATUS(res.getStatus());
     *result = *res;
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2650,7 +2650,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
                          toHandle(value),
                          vm::PropOpFlags().plusThrowOnError())
                      .getStatus());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2668,7 +2668,7 @@ napi_status NodeApiEnvironment::hasNamedProperty(
 
     ASSIGN_CHECKED(
         *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2688,7 +2688,7 @@ napi_status NodeApiEnvironment::getNamedProperty(
         const auto &res,
         objHandle->getComputed_RJS(objHandle, &runtime_, toHandle(name)));
     *result = addStackValue(res.get());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2714,7 +2714,7 @@ napi_status NodeApiEnvironment::setElement(
     auto h = arrayHandle(arr);
     h->setElementAt(h, &runtime_, index, toHandle(value));
 
-    return ClearLastError();
+    return clearLastError();
   });
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, value);
@@ -2801,7 +2801,7 @@ napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   if (p->utf8name != nullptr) {
     napi_value nameValue{};
-    STATUS_CALL(CreateStringUtf8(p->utf8name, NAPI_AUTO_LENGTH, &nameValue));
+    STATUS_CALL(createStringUtf8(p->utf8name, NAPI_AUTO_LENGTH, &nameValue));
     ASSIGN_CHECKED(
         *result,
         vm::stringToSymbolID(
@@ -2816,7 +2816,7 @@ napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
     } else if (namePHV.isSymbol()) {
       *result = namePHV.getSymbol();
     } else {
-      return SetLastError(napi_name_expected);
+      return setLastError(napi_name_expected);
     }
   }
 
@@ -2902,7 +2902,7 @@ napi_status NodeApiEnvironment::defineProperties(
       }
     }
 
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2911,7 +2911,7 @@ napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
     CHECK_OBJECT_ARG(object);
 
     CHECK_STATUS(vm::JSObject::freeze(toObjectHandle(object), &runtime_));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2920,7 +2920,7 @@ napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
     CHECK_OBJECT_ARG(object);
 
     CHECK_STATUS(vm::JSObject::seal(toObjectHandle(object), &runtime_));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2932,7 +2932,7 @@ napi_status NodeApiEnvironment::isArray(
   CHECK_ARG(result);
 
   *result = vm::vmisa<vm::JSArray>(phv(value));
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getArrayLength(
@@ -2945,10 +2945,10 @@ napi_status NodeApiEnvironment::getArrayLength(
         vm::Predefined::getSymbolID(vm::Predefined::length));
     CHECK_STATUS(res.getStatus());
     if (!(*res)->isNumber()) {
-      return SetLastError(napi_number_expected);
+      return setLastError(napi_number_expected);
     }
     *result = static_cast<uint32_t>((*res)->getDouble());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2981,7 +2981,7 @@ napi_status NodeApiEnvironment::getPrototype(
         vm::PseudoHandle<vm::JSObject>(toObjectHandle(object)), &runtime_);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->getHermesValue());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2989,7 +2989,7 @@ napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     *result = addStackValue(vm::JSObject::create(&runtime_).getHermesValue());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -2999,7 +2999,7 @@ napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
     auto res = vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->getHermesValue());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3011,11 +3011,11 @@ napi_status NodeApiEnvironment::createArray(
     auto res = vm::JSArray::create(&runtime_, length, length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(res->getHermesValue());
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateStringLatin1(
+napi_status NodeApiEnvironment::createStringLatin1(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
@@ -3030,11 +3030,11 @@ napi_status NodeApiEnvironment::CreateStringLatin1(
     auto res = stringHVFromLatin1(str, length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateStringUtf8(
+napi_status NodeApiEnvironment::createStringUtf8(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
@@ -3049,11 +3049,11 @@ napi_status NodeApiEnvironment::CreateStringUtf8(
     auto res = stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length);
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateStringUtf16(
+napi_status NodeApiEnvironment::createStringUtf16(
     const char16_t *str,
     size_t length,
     napi_value *result) noexcept {
@@ -3069,56 +3069,56 @@ napi_status NodeApiEnvironment::CreateStringUtf16(
         &runtime_, llvh::makeArrayRef(str, length));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateNumber(
+napi_status NodeApiEnvironment::createNumber(
     double value,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     *result = addStackValue(vm::HermesValue::encodeUntrustedDoubleValue(value));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateNumber(
+napi_status NodeApiEnvironment::createNumber(
     int32_t value,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateNumber(
+napi_status NodeApiEnvironment::createNumber(
     uint32_t value,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateNumber(
+napi_status NodeApiEnvironment::createNumber(
     int64_t value,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
     *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::GetBoolean(
+napi_status NodeApiEnvironment::getBoolean(
     bool value,
     napi_value *result) noexcept {
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getBoolValue(value).getHermesValue());
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createSymbol(
@@ -3139,11 +3139,11 @@ napi_status NodeApiEnvironment::createSymbol(
         &runtime_, descString);
     CHECK_STATUS(symbolRes.getStatus());
     *result = addStackValue(vm::HermesValue::encodeSymbolValue(*symbolRes));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateError(
+napi_status NodeApiEnvironment::createError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
@@ -3162,11 +3162,11 @@ napi_status NodeApiEnvironment::CreateError(
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
     *result = addStackValue(err_phv);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateTypeError(
+napi_status NodeApiEnvironment::createTypeError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
@@ -3186,11 +3186,11 @@ napi_status NodeApiEnvironment::CreateTypeError(
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
     *result = addStackValue(err_phv);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
-napi_status NodeApiEnvironment::CreateRangeError(
+napi_status NodeApiEnvironment::createRangeError(
     napi_value code,
     napi_value msg,
     napi_value *result) noexcept {
@@ -3210,7 +3210,7 @@ napi_status NodeApiEnvironment::CreateRangeError(
     // STATUS_CALL(set_error_code(env, error_obj, code, nullptr));
 
     *result = addStackValue(err_phv);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3248,24 +3248,24 @@ napi_status NodeApiEnvironment::typeOf(
     *result = napi_null;
   } else {
     // Should not get here unless Hermes has added some new kind of value.
-    return SetLastError(napi_invalid_arg);
+    return setLastError(napi_invalid_arg);
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getUndefinedValue().getHermesValue());
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getNullValue().getHermesValue());
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getCallbackInfo(
@@ -3294,7 +3294,7 @@ napi_status NodeApiEnvironment::getCallbackInfo(
     *data = callbackInfo->Data();
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getNewTarget(
@@ -3306,7 +3306,7 @@ napi_status NodeApiEnvironment::getNewTarget(
 
   *result = callbackInfo->GetNewTarget();
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::callFunction(
@@ -3330,7 +3330,7 @@ napi_status NodeApiEnvironment::callFunction(
       // throw jsi::JSINativeException(
       //    "NodeApiEnvironment::CallFunction: Unable to call function: stack
       //    overflow");
-      return SetLastError(napi_generic_failure);
+      return setLastError(napi_generic_failure);
     }
 
     auto &stats = runtime_.getRuntimeStats();
@@ -3354,7 +3354,7 @@ napi_status NodeApiEnvironment::callFunction(
     CHECK_STATUS(callRes.getStatus());
 
     *result = addStackValue(callRes->get());
-    return ClearLastError();
+    return clearLastError();
   });
 
   // v8::Local<v8::Value> v8recv = v8impl::V8LocalValueFromJsValue(recv);
@@ -3384,10 +3384,10 @@ napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
   *result = addStackValue(runtime_.getGlobal().getHermesValue());
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::Throw(napi_value error) noexcept {
+napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, error);
 
@@ -3400,7 +3400,7 @@ napi_status NodeApiEnvironment::Throw(napi_value error) noexcept {
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ThrowError(
+napi_status NodeApiEnvironment::throwError(
     const char *code,
     const char *msg) noexcept {
   // NAPI_PREAMBLE(env);
@@ -3419,7 +3419,7 @@ napi_status NodeApiEnvironment::ThrowError(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ThrowTypeError(
+napi_status NodeApiEnvironment::throwTypeError(
     const char *code,
     const char *msg) noexcept {
   // NAPI_PREAMBLE(env);
@@ -3438,7 +3438,7 @@ napi_status NodeApiEnvironment::ThrowTypeError(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ThrowRangeError(
+napi_status NodeApiEnvironment::throwRangeError(
     const char *code,
     const char *msg) noexcept {
   // NAPI_PREAMBLE(env);
@@ -3457,12 +3457,10 @@ napi_status NodeApiEnvironment::ThrowRangeError(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsError(
+napi_status NodeApiEnvironment::isError(
     napi_value value,
     bool *result) noexcept {
-  // // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because V8 calls here cannot
-  // // throw JS exceptions.
-  // CHECK_ENV(env);
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, result);
 
@@ -3473,7 +3471,7 @@ napi_status NodeApiEnvironment::IsError(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetNumberValue(
+napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
     double *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3481,10 +3479,10 @@ napi_status NodeApiEnvironment::GetNumberValue(
   CHECK_ARG(result);
 
   *result = phv(value).getNumberAs<double>();
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::GetNumberValue(
+napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
     int32_t *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3492,10 +3490,10 @@ napi_status NodeApiEnvironment::GetNumberValue(
   CHECK_ARG(result);
 
   *result = phv(value).getNumberAs<int32_t>();
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::GetNumberValue(
+napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
     uint32_t *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3503,10 +3501,10 @@ napi_status NodeApiEnvironment::GetNumberValue(
   CHECK_ARG(result);
 
   *result = phv(value).getNumberAs<uint32_t>();
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::GetNumberValue(
+napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
     int64_t *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3514,10 +3512,10 @@ napi_status NodeApiEnvironment::GetNumberValue(
   CHECK_ARG(result);
 
   *result = phv(value).getNumberAs<int64_t>();
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::GetBoolValue(
+napi_status NodeApiEnvironment::getBoolValue(
     napi_value value,
     bool *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
@@ -3525,7 +3523,7 @@ napi_status NodeApiEnvironment::GetBoolValue(
   CHECK_ARG(result);
 
   *result = phv(value).getBool();
-  return ClearLastError();
+  return clearLastError();
 }
 
 // Copies a JavaScript string into a LATIN-1 string buffer. The result is the
@@ -3536,7 +3534,7 @@ napi_status NodeApiEnvironment::GetBoolValue(
 // If buf is NULL, this method returns the length of the string (in bytes)
 // via the result parameter.
 // The result argument is optional unless buf is NULL.
-napi_status NodeApiEnvironment::GetValueStringLatin1(
+napi_status NodeApiEnvironment::getValueStringLatin1(
     napi_value value,
     char *buf,
     size_t bufsize,
@@ -3564,7 +3562,7 @@ napi_status NodeApiEnvironment::GetValueStringLatin1(
       *result = 0;
     }
 
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3687,7 +3685,7 @@ static char *convertUTF16ToUTF8WithReplacements(
 // If buf is NULL, this method returns the length of the string (in bytes)
 // via the result parameter.
 // The result argument is optional unless buf is NULL.
-napi_status NodeApiEnvironment::GetValueStringUtf8(
+napi_status NodeApiEnvironment::getValueStringUtf8(
     napi_value value,
     char *buf,
     size_t bufsize,
@@ -3722,7 +3720,7 @@ napi_status NodeApiEnvironment::GetValueStringUtf8(
       *result = 0;
     }
 
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3734,7 +3732,7 @@ napi_status NodeApiEnvironment::GetValueStringUtf8(
 // If buf is NULL, this method returns the length of the string (in 2-byte
 // code units) via the result parameter.
 // The result argument is optional unless buf is NULL.
-napi_status NodeApiEnvironment::GetValueStringUtf16(
+napi_status NodeApiEnvironment::getValueStringUtf16(
     napi_value value,
     char16_t *buf,
     size_t bufsize,
@@ -3759,7 +3757,7 @@ napi_status NodeApiEnvironment::GetValueStringUtf16(
       *result = 0;
     }
 
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3770,8 +3768,8 @@ napi_status NodeApiEnvironment::coerceToBool(
     CHECK_ARG(value);
     CHECK_ARG(result);
     bool res = vm::toBoolean(phv(value));
-    STATUS_CALL(GetBoolean(res, result));
-    return ClearLastError();
+    STATUS_CALL(getBoolean(res, result));
+    return clearLastError();
   });
 }
 
@@ -3784,7 +3782,7 @@ napi_status NodeApiEnvironment::coerceToNumber(
     auto res = vm::toNumber_RJS(&runtime_, toHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3797,7 +3795,7 @@ napi_status NodeApiEnvironment::coerceToObject(
     auto res = vm::toObject(&runtime_, toHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3810,7 +3808,7 @@ napi_status NodeApiEnvironment::coerceToString(
     auto res = vm::toString_RJS(&runtime_, toHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(vm::HermesValue::encodeStringValue(res->get()));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3849,7 +3847,7 @@ napi_status NodeApiEnvironment::createExternal(
             *this, data, finalizeCallback, finalizeHint));
     CHECK_STATUS(objRes.getStatus());
     *result = addStackValue(*objRes);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3925,7 +3923,7 @@ napi_status NodeApiEnvironment::getValueExternal(
     CHECK_ARG(result);
     auto proxy = vm::vmcast<vm::HostObject>(phv(value))->getProxy();
     *result = static_cast<NapiHostObjectProxy *>(proxy)->data();
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -3942,7 +3940,7 @@ napi_status NodeApiEnvironment::createReference(
       this, phv(value), initialRefCount, /*deleteSelf:*/ false);
 
   *result = reinterpret_cast<napi_ref>(reference);
-  return ClearLastError();
+  return clearLastError();
 }
 
 // Deletes a reference. The referenced value is released, and may be GC'd unless
@@ -3953,7 +3951,7 @@ napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
 
   Reference::destroy(reinterpret_cast<Reference *>(ref));
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 // Increments the reference count, optionally returning the resulting count.
@@ -3974,7 +3972,7 @@ napi_status NodeApiEnvironment::referenceRef(
     *result = count;
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 // Decrements the reference count, optionally returning the resulting count. If
@@ -3990,7 +3988,7 @@ napi_status NodeApiEnvironment::referenceUnref(
   Reference *reference = reinterpret_cast<Reference *>(ref);
 
   if (reference->refCount() == 0) {
-    return SetLastError(napi_generic_failure);
+    return setLastError(napi_generic_failure);
   }
 
   uint32_t count = reference->unref();
@@ -3999,7 +3997,7 @@ napi_status NodeApiEnvironment::referenceUnref(
     *result = count;
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 // Attempts to get a referenced value. If the reference is weak, the value might
@@ -4015,69 +4013,67 @@ napi_status NodeApiEnvironment::getReferenceValue(
   Reference *reference = reinterpret_cast<Reference *>(ref);
   *result = addStackValue(reference->get());
 
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::OpenHandleScope(
+napi_status NodeApiEnvironment::openHandleScope(
     napi_handle_scope *result) noexcept {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
-  // throw JS exceptions.
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
 
-  Marker stackMarker = m_stackValues.create_marker();
-  m_stackMarkers.emplace_back(std::move(stackMarker));
-  *result = reinterpret_cast<napi_handle_scope>(&m_stackMarkers.back());
-  return ClearLastError();
+  Marker stackMarker = stackValues_.createMarker();
+  stackMarkers_.emplaceBack(std::move(stackMarker));
+  *result = reinterpret_cast<napi_handle_scope>(&stackMarkers_.back());
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::CloseHandleScope(
+napi_status NodeApiEnvironment::closeHandleScope(
     napi_handle_scope scope) noexcept {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
-  // throw JS exceptions.
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(scope);
-  if (m_stackMarkers.empty()) {
+  if (stackMarkers_.empty()) {
     return napi_handle_scope_mismatch;
   }
 
-  Marker &lastMarker = m_stackMarkers.back();
+  Marker &lastMarker = stackMarkers_.back();
   if (reinterpret_cast<Marker *>(scope) != &lastMarker) {
     return napi_handle_scope_mismatch;
   }
 
-  if (!m_stackValues.pop_marker(lastMarker)) {
+  if (!stackValues_.popMarker(lastMarker)) {
     return napi_invalid_arg;
   }
 
-  m_stackMarkers.pop_back();
-  return ClearLastError();
+  stackMarkers_.popBack();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::OpenEscapableHandleScope(
+napi_status NodeApiEnvironment::openEscapableHandleScope(
     napi_escapable_handle_scope *result) noexcept {
   CHECK_ARG(result);
 
-  if (m_stackMarkers.empty()) {
+  if (stackMarkers_.empty()) {
     return napi_invalid_arg;
   }
 
-  m_stackValues.emplace_back(); // value to escape to parent scope
-  m_stackValues.emplace_back(
+  stackValues_.emplaceBack(); // value to escape to parent scope
+  stackValues_.emplaceBack(
       vm::HermesValue::encodeNativeUInt32(kEscapeableSentinelNativeValue));
 
-  return OpenHandleScope(reinterpret_cast<napi_handle_scope *>(result));
+  return openHandleScope(reinterpret_cast<napi_handle_scope *>(result));
 }
 
-napi_status NodeApiEnvironment::CloseEscapableHandleScope(
+napi_status NodeApiEnvironment::closeEscapableHandleScope(
     napi_escapable_handle_scope scope) noexcept {
-  auto status = CloseHandleScope(reinterpret_cast<napi_handle_scope>(scope));
+  auto status = closeHandleScope(reinterpret_cast<napi_handle_scope>(scope));
 
   if (status == napi_status::napi_ok) {
-    auto &sentinelValue = m_stackValues.back();
+    auto &sentinelValue = stackValues_.back();
     if (sentinelValue.isNativeValue()) {
       auto nativeValue = sentinelValue.getNativeUInt32();
       if (nativeValue == kEscapeableSentinelNativeValue ||
           nativeValue == kUsedEscapeableSentinelNativeValue) {
-        m_stackValues.pop_back();
+        stackValues_.popBack();
       } else {
         status = napi_handle_scope_mismatch;
       }
@@ -4087,51 +4083,50 @@ napi_status NodeApiEnvironment::CloseEscapableHandleScope(
   return status;
 }
 
-napi_status NodeApiEnvironment::EscapeHandle(
+napi_status NodeApiEnvironment::escapeHandle(
     napi_escapable_handle_scope scope,
     napi_value escapee,
     napi_value *result) noexcept {
-  // Omit NAPI_PREAMBLE and GET_RETURN_STATUS because Hermes calls here cannot
-  // throw JS exceptions.
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(scope);
   CHECK_ARG(escapee);
   CHECK_ARG(result);
 
   Marker *marker = reinterpret_cast<Marker *>(scope);
   bool isValidMarker{false};
-  m_stackMarkers.for_each(
+  stackMarkers_.forEach(
       [&](const Marker &m) { isValidMarker |= &m == marker; });
   if (!isValidMarker) {
     return napi_invalid_arg;
   }
 
-  Marker sentinelMarker = m_stackValues.get_previous_marker(*marker);
-  if (!sentinelMarker.IsValid()) {
+  Marker sentinelMarker = stackValues_.getPreviousMarker(*marker);
+  if (!sentinelMarker.isValid()) {
     return napi_invalid_arg;
   }
-  Marker escapedValueMarker = m_stackValues.get_previous_marker(sentinelMarker);
-  if (!escapedValueMarker.IsValid()) {
+  Marker escapedValueMarker = stackValues_.getPreviousMarker(sentinelMarker);
+  if (!escapedValueMarker.isValid()) {
     return napi_invalid_arg;
   }
 
-  vm::PinnedHermesValue *sentinelTag = m_stackValues.at(sentinelMarker);
+  vm::PinnedHermesValue *sentinelTag = stackValues_.at(sentinelMarker);
   if (!sentinelTag || !sentinelTag->isNativeValue()) {
     return napi_invalid_arg;
   }
   if (sentinelTag->getNativeUInt32() != kUsedEscapeableSentinelNativeValue) {
-    return SetLastError(napi_escape_called_twice);
+    return setLastError(napi_escape_called_twice);
   }
   if (sentinelTag->getNativeUInt32() != kEscapeableSentinelNativeValue) {
     return napi_invalid_arg;
   }
 
-  vm::PinnedHermesValue *escapedValue = m_stackValues.at(escapedValueMarker);
+  vm::PinnedHermesValue *escapedValue = stackValues_.at(escapedValueMarker);
   *escapedValue = *reinterpret_cast<vm::PinnedHermesValue *>(escapee);
 
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::NewInstance(
+napi_status NodeApiEnvironment::newInstance(
     napi_value constructor,
     size_t argc,
     const napi_value *argv,
@@ -4208,7 +4203,7 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   }
 }
 
-napi_status NodeApiEnvironment::InstanceOf(
+napi_status NodeApiEnvironment::instanceOf(
     napi_value object,
     napi_value constructor,
     bool *result) noexcept {
@@ -4222,7 +4217,7 @@ napi_status NodeApiEnvironment::InstanceOf(
         runtime_.makeHandle(phv(constructor)));
     CHECK_STATUS(res.getStatus());
     *result = *res;
-    return ClearLastError();
+    return clearLastError();
   });
 
   // v8::Local<v8::Object> ctor;
@@ -4248,15 +4243,15 @@ napi_status NodeApiEnvironment::InstanceOf(
 }
 
 // Methods to support catching exceptions
-napi_status NodeApiEnvironment::IsExceptionPending(bool *result) noexcept {
+napi_status NodeApiEnvironment::isExceptionPending(bool *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
 
   *result = !lastException_.isEmpty();
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::GetAndClearLastException(
+napi_status NodeApiEnvironment::getAndClearLastException(
     napi_value *result) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(result);
@@ -4268,7 +4263,7 @@ napi_status NodeApiEnvironment::GetAndClearLastException(
     lastException_ = EmptyHermesValue;
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::isArrayBuffer(
@@ -4279,10 +4274,10 @@ napi_status NodeApiEnvironment::isArrayBuffer(
   CHECK_ARG(result);
 
   *result = vm::vmisa<vm::JSArrayBuffer>(phv(value));
-  return ClearLastError();
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::CreateArrayBuffer(
+napi_status NodeApiEnvironment::createArrayBuffer(
     size_t byte_length,
     void **data,
     napi_value *result) noexcept {
@@ -4314,7 +4309,7 @@ napi_status NodeApiEnvironment::CreateArrayBuffer(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreateExternalArrayBuffer(
+napi_status NodeApiEnvironment::createExternalArrayBuffer(
     void *external_data,
     size_t byte_length,
     napi_finalize finalize_cb,
@@ -4334,7 +4329,7 @@ napi_status NodeApiEnvironment::CreateExternalArrayBuffer(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetArrayBufferInfo(
+napi_status NodeApiEnvironment::getArrayBufferInfo(
     napi_value arraybuffer,
     void **data,
     size_t *byte_length) noexcept {
@@ -4360,7 +4355,7 @@ napi_status NodeApiEnvironment::GetArrayBufferInfo(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsTypedArray(
+napi_status NodeApiEnvironment::isTypedArray(
     napi_value value,
     bool *result) noexcept {
   // CHECK_ENV(env);
@@ -4374,7 +4369,7 @@ napi_status NodeApiEnvironment::IsTypedArray(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreateTypedArray(
+napi_status NodeApiEnvironment::createTypedArray(
     napi_typedarray_type type,
     size_t length,
     napi_value arraybuffer,
@@ -4446,7 +4441,7 @@ napi_status NodeApiEnvironment::CreateTypedArray(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetTypedArrayInfo(
+napi_status NodeApiEnvironment::getTypedArrayInfo(
     napi_value typedarray,
     napi_typedarray_type *type,
     size_t *length,
@@ -4515,7 +4510,7 @@ napi_status NodeApiEnvironment::GetTypedArrayInfo(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreateDataView(
+napi_status NodeApiEnvironment::createDataView(
     size_t byte_length,
     napi_value arraybuffer,
     size_t byte_offset,
@@ -4545,7 +4540,7 @@ napi_status NodeApiEnvironment::CreateDataView(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsDataView(
+napi_status NodeApiEnvironment::isDataView(
     napi_value value,
     bool *result) noexcept {
   // CHECK_ENV(env);
@@ -4559,7 +4554,7 @@ napi_status NodeApiEnvironment::IsDataView(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetDataViewInfo(
+napi_status NodeApiEnvironment::getDataViewInfo(
     napi_value dataview,
     size_t *byte_length,
     void **data,
@@ -4601,7 +4596,7 @@ napi_status NodeApiEnvironment::GetDataViewInfo(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetVersion(uint32_t *result) noexcept {
+napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
   // CHECK_ENV(env);
   // CHECK_ARG(env, result);
   // *result = NAPI_VERSION;
@@ -4609,7 +4604,7 @@ napi_status NodeApiEnvironment::GetVersion(uint32_t *result) noexcept {
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreatePromise(
+napi_status NodeApiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *promise) noexcept {
   // NAPI_PREAMBLE(env);
@@ -4629,21 +4624,21 @@ napi_status NodeApiEnvironment::CreatePromise(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::ResolveDeferred(
+napi_status NodeApiEnvironment::resolveDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
   // return v8impl::ConcludeDeferred(env, deferred, resolution, true);
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::RejectDeferred(
+napi_status NodeApiEnvironment::rejectDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
   // return v8impl::ConcludeDeferred(env, deferred, resolution, false);
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsPromise(
+napi_status NodeApiEnvironment::isPromise(
     napi_value value,
     bool *is_promise) noexcept {
   // CHECK_ENV(env);
@@ -4656,7 +4651,7 @@ napi_status NodeApiEnvironment::IsPromise(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::CreateDate(
+napi_status NodeApiEnvironment::createDate(
     double time,
     napi_value *result) noexcept {
   // NAPI_PREAMBLE(env);
@@ -4671,7 +4666,7 @@ napi_status NodeApiEnvironment::CreateDate(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsDate(
+napi_status NodeApiEnvironment::isDate(
     napi_value value,
     bool *is_date) noexcept {
   // CHECK_ENV(env);
@@ -4684,7 +4679,7 @@ napi_status NodeApiEnvironment::IsDate(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetDateValue(
+napi_status NodeApiEnvironment::getDateValue(
     napi_value value,
     double *result) noexcept {
   // NAPI_PREAMBLE(env);
@@ -4711,7 +4706,7 @@ napi_status NodeApiEnvironment::addFinalizer(
       object, nativeObject, finalizeCallback, finalizeHint, result);
 }
 
-napi_status NodeApiEnvironment::AdjustExternalMemory(
+napi_status NodeApiEnvironment::adjustExternalMemory(
     int64_t change_in_bytes,
     int64_t *adjusted_value) noexcept {
   // CHECK_ENV(env);
@@ -4724,7 +4719,7 @@ napi_status NodeApiEnvironment::AdjustExternalMemory(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::SetInstanceData(
+napi_status NodeApiEnvironment::setInstanceData(
     void *data,
     napi_finalize finalize_cb,
     void *finalize_hint) noexcept {
@@ -4746,7 +4741,7 @@ napi_status NodeApiEnvironment::SetInstanceData(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::GetInstanceData(void **data) noexcept {
+napi_status NodeApiEnvironment::getInstanceData(void **data) noexcept {
   // CHECK_ENV(env);
   // CHECK_ARG(env, data);
 
@@ -4759,7 +4754,7 @@ napi_status NodeApiEnvironment::GetInstanceData(void **data) noexcept {
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::DetachArrayBuffer(
+napi_status NodeApiEnvironment::detachArrayBuffer(
     napi_value arraybuffer) noexcept {
   // CHECK_ENV(env);
   // CHECK_ARG(env, arraybuffer);
@@ -4778,7 +4773,7 @@ napi_status NodeApiEnvironment::DetachArrayBuffer(
   return napi_ok;
 }
 
-napi_status NodeApiEnvironment::IsDetachedArrayBuffer(
+napi_status NodeApiEnvironment::isDetachedArrayBuffer(
     napi_value arraybuffer,
     bool *result) noexcept {
   // CHECK_ENV(env);
@@ -4800,10 +4795,10 @@ napi_status NodeApiEnvironment::runScript(
     const char *sourceURL,
     napi_value *result) noexcept {
   size_t sourceSize{};
-  STATUS_CALL(GetValueStringUtf8(source, nullptr, 0, &sourceSize));
+  STATUS_CALL(getValueStringUtf8(source, nullptr, 0, &sourceSize));
   auto buffer = std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
-  STATUS_CALL(GetValueStringUtf8(
+  STATUS_CALL(getValueStringUtf8(
       source,
       reinterpret_cast<char *>(buffer->data()),
       sourceSize + 1,
@@ -4827,7 +4822,7 @@ napi_status NodeApiEnvironment::runScript(
       nullptr,
       sourceURL,
       result));
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::runSerializedScript(
@@ -4858,7 +4853,7 @@ napi_status NodeApiEnvironment::runSerializedScript(
       nullptr,
       sourceURL,
       result));
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::serializeScript(
@@ -4867,10 +4862,10 @@ napi_status NodeApiEnvironment::serializeScript(
     napi_ext_buffer_callback bufferCallback,
     void *bufferHint) noexcept {
   size_t sourceSize{};
-  STATUS_CALL(GetValueStringUtf8(source, nullptr, 0, &sourceSize));
+  STATUS_CALL(getValueStringUtf8(source, nullptr, 0, &sourceSize));
   auto buffer = std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
-  STATUS_CALL(GetValueStringUtf8(
+  STATUS_CALL(getValueStringUtf8(
       source,
       reinterpret_cast<char *>(buffer->data()),
       sourceSize + 1,
@@ -4897,9 +4892,7 @@ napi_status NodeApiEnvironment::serializeScript(
       &preparedScript));
   STATUS_CALL(
       serializePreparedScript(preparedScript, bufferCallback, bufferHint));
-  return ClearLastError();
-
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::runScriptWithSourceMap(
@@ -4912,7 +4905,7 @@ napi_status NodeApiEnvironment::runScriptWithSourceMap(
     STATUS_CALL(prepareScriptWithSourceMap(
         std::move(script), std::move(sourceMap), sourceURL, &preparedScript));
     STATUS_CALL(runPreparedScript(preparedScript, result));
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -4946,7 +4939,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
   // Construct the BC provider either from buffer or source.
   if (isBytecode) {
     if (sourceMapBuf) {
-      return SetLastError(
+      return setLastError(
           napi_generic_failure,
           0,
           "Source map cannot be specified with bytecode");
@@ -4971,7 +4964,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       if (!sourceMap) {
         auto errorStr = diag.getErrorString();
         LOG_EXCEPTION_CAUSE("Error parsing source map: %s", errorStr.c_str());
-        return SetLastError(napi_generic_failure);
+        return setLastError(napi_generic_failure);
         // TODO: throw std::runtime_error("Error parsing source map:" +
         // errorStr);
       }
@@ -4993,7 +4986,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
         "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
     // throw jsi::JSINativeException(
     //    "Compiling JS failed: " + std::move(bcErr.second) + os.str());
-    return SetLastError(napi_generic_failure);
+    return setLastError(napi_generic_failure);
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
@@ -5001,7 +4994,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
           runtimeFlags,
           sourceURL ? sourceURL : "",
           isBytecode));
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::runPreparedScript(
@@ -5022,7 +5015,7 @@ napi_status NodeApiEnvironment::runPreparedScript(
         vm::Runtime::makeNullHandle<vm::Environment>());
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
-    return ClearLastError();
+    return clearLastError();
   });
 }
 
@@ -5030,7 +5023,7 @@ napi_status NodeApiEnvironment::deletePreparedScript(
     napi_ext_prepared_script preparedScript) noexcept {
   CHECK_ARG(preparedScript);
   delete reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
-  return ClearLastError();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::serializePreparedScript(
@@ -5082,7 +5075,7 @@ napi_status NodeApiEnvironment::serializePreparedScript(
         bufferHint);
   }
 
-  return ClearLastError();
+  return clearLastError();
 }
 
 } // namespace napi
@@ -5095,7 +5088,7 @@ napi_status NodeApiEnvironment::serializePreparedScript(
 napi_status napi_get_last_error_info(
     napi_env env,
     const napi_extended_error_info **result) {
-  return CHECKED_ENV(env)->GetLastErrorInfo(result);
+  return CHECKED_ENV(env)->getLastErrorInfo(result);
 }
 
 napi_status napi_create_function(
@@ -5293,7 +5286,7 @@ napi_status napi_create_string_latin1(
     const char *str,
     size_t length,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateStringLatin1(str, length, result);
+  return CHECKED_ENV(env)->createStringLatin1(str, length, result);
 }
 
 napi_status napi_create_string_utf8(
@@ -5301,7 +5294,7 @@ napi_status napi_create_string_utf8(
     const char *str,
     size_t length,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateStringUtf8(str, length, result);
+  return CHECKED_ENV(env)->createStringUtf8(str, length, result);
 }
 
 napi_status napi_create_string_utf16(
@@ -5309,36 +5302,36 @@ napi_status napi_create_string_utf16(
     const char16_t *str,
     size_t length,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateStringUtf16(str, length, result);
+  return CHECKED_ENV(env)->createStringUtf16(str, length, result);
 }
 
 napi_status napi_create_double(napi_env env, double value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateNumber(value, result);
+  return CHECKED_ENV(env)->createNumber(value, result);
 }
 
 napi_status napi_create_int32(napi_env env, int32_t value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateNumber(value, result);
+  return CHECKED_ENV(env)->createNumber(value, result);
 }
 
 napi_status
 napi_create_uint32(napi_env env, uint32_t value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateNumber(value, result);
+  return CHECKED_ENV(env)->createNumber(value, result);
 }
 
 napi_status napi_create_int64(napi_env env, int64_t value, napi_value *result) {
-  return CHECKED_ENV(env)->CreateNumber(value, result);
+  return CHECKED_ENV(env)->createNumber(value, result);
 }
 
 napi_status
 napi_create_bigint_int64(napi_env env, int64_t value, napi_value *result) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status
 napi_create_bigint_uint64(napi_env env, uint64_t value, napi_value *result) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status napi_create_bigint_words(
@@ -5348,11 +5341,11 @@ napi_status napi_create_bigint_words(
     const uint64_t *words,
     napi_value *result) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status napi_get_boolean(napi_env env, bool value, napi_value *result) {
-  return CHECKED_ENV(env)->GetBoolean(value, result);
+  return CHECKED_ENV(env)->getBoolean(value, result);
 }
 
 napi_status
@@ -5365,7 +5358,7 @@ napi_status napi_create_error(
     napi_value code,
     napi_value msg,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateError(code, msg, result);
+  return CHECKED_ENV(env)->createError(code, msg, result);
 }
 
 napi_status napi_create_type_error(
@@ -5373,7 +5366,7 @@ napi_status napi_create_type_error(
     napi_value code,
     napi_value msg,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateTypeError(code, msg, result);
+  return CHECKED_ENV(env)->createTypeError(code, msg, result);
 }
 
 napi_status napi_create_range_error(
@@ -5381,7 +5374,7 @@ napi_status napi_create_range_error(
     napi_value code,
     napi_value msg,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateRangeError(code, msg, result);
+  return CHECKED_ENV(env)->createRangeError(code, msg, result);
 }
 
 napi_status
@@ -5435,45 +5428,45 @@ napi_status napi_get_global(napi_env env, napi_value *result) {
 }
 
 napi_status napi_throw(napi_env env, napi_value error) {
-  return CHECKED_ENV(env)->Throw(error);
+  return CHECKED_ENV(env)->throwError(error);
 }
 
 napi_status napi_throw_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->ThrowError(code, msg);
+  return CHECKED_ENV(env)->throwError(code, msg);
 }
 
 napi_status
 napi_throw_type_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->ThrowTypeError(code, msg);
+  return CHECKED_ENV(env)->throwTypeError(code, msg);
 }
 
 napi_status
 napi_throw_range_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->ThrowRangeError(code, msg);
+  return CHECKED_ENV(env)->throwRangeError(code, msg);
 }
 
 napi_status napi_is_error(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->IsError(value, result);
+  return CHECKED_ENV(env)->isError(value, result);
 }
 
 napi_status
 napi_get_value_double(napi_env env, napi_value value, double *result) {
-  return CHECKED_ENV(env)->GetNumberValue(value, result);
+  return CHECKED_ENV(env)->getNumberValue(value, result);
 }
 
 napi_status
 napi_get_value_int32(napi_env env, napi_value value, int32_t *result) {
-  return CHECKED_ENV(env)->GetNumberValue(value, result);
+  return CHECKED_ENV(env)->getNumberValue(value, result);
 }
 
 napi_status
 napi_get_value_uint32(napi_env env, napi_value value, uint32_t *result) {
-  return CHECKED_ENV(env)->GetNumberValue(value, result);
+  return CHECKED_ENV(env)->getNumberValue(value, result);
 }
 
 napi_status
 napi_get_value_int64(napi_env env, napi_value value, int64_t *result) {
-  return CHECKED_ENV(env)->GetNumberValue(value, result);
+  return CHECKED_ENV(env)->getNumberValue(value, result);
 }
 
 napi_status napi_get_value_bigint_int64(
@@ -5482,7 +5475,7 @@ napi_status napi_get_value_bigint_int64(
     int64_t *result,
     bool *lossless) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bigint_uint64(
@@ -5491,7 +5484,7 @@ napi_status napi_get_value_bigint_uint64(
     uint64_t *result,
     bool *lossless) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bigint_words(
@@ -5501,11 +5494,11 @@ napi_status napi_get_value_bigint_words(
     size_t *word_count,
     uint64_t *words) {
   // Not implemented in Hermes
-  return CHECKED_ENV(env)->SetLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
 napi_status napi_get_value_bool(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->GetBoolValue(value, result);
+  return CHECKED_ENV(env)->getBoolValue(value, result);
 }
 
 // Copies a JavaScript string into a LATIN-1 string buffer. The result is the
@@ -5522,7 +5515,7 @@ napi_status napi_get_value_string_latin1(
     char *buf,
     size_t bufsize,
     size_t *result) {
-  return CHECKED_ENV(env)->GetValueStringLatin1(value, buf, bufsize, result);
+  return CHECKED_ENV(env)->getValueStringLatin1(value, buf, bufsize, result);
 }
 
 // Copies a JavaScript string into a UTF-8 string buffer. The result is the
@@ -5539,7 +5532,7 @@ napi_status napi_get_value_string_utf8(
     char *buf,
     size_t bufsize,
     size_t *result) {
-  return CHECKED_ENV(env)->GetValueStringUtf8(value, buf, bufsize, result);
+  return CHECKED_ENV(env)->getValueStringUtf8(value, buf, bufsize, result);
 }
 
 // Copies a JavaScript string into a UTF-16 string buffer. The result is the
@@ -5556,7 +5549,7 @@ napi_status napi_get_value_string_utf16(
     char16_t *buf,
     size_t bufsize,
     size_t *result) {
-  return CHECKED_ENV(env)->GetValueStringUtf16(value, buf, bufsize, result);
+  return CHECKED_ENV(env)->getValueStringUtf16(value, buf, bufsize, result);
 }
 
 napi_status
@@ -5666,23 +5659,23 @@ napi_get_reference_value(napi_env env, napi_ref ref, napi_value *result) {
 }
 
 napi_status napi_open_handle_scope(napi_env env, napi_handle_scope *result) {
-  return CHECKED_ENV(env)->OpenHandleScope(result);
+  return CHECKED_ENV(env)->openHandleScope(result);
 }
 
 napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
-  return CHECKED_ENV(env)->CloseHandleScope(scope);
+  return CHECKED_ENV(env)->closeHandleScope(scope);
 }
 
 napi_status napi_open_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope *result) {
-  return CHECKED_ENV(env)->OpenEscapableHandleScope(result);
+  return CHECKED_ENV(env)->openEscapableHandleScope(result);
 }
 
 napi_status napi_close_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope scope) {
-  return CHECKED_ENV(env)->CloseEscapableHandleScope(scope);
+  return CHECKED_ENV(env)->closeEscapableHandleScope(scope);
 }
 
 napi_status napi_escape_handle(
@@ -5690,7 +5683,7 @@ napi_status napi_escape_handle(
     napi_escapable_handle_scope scope,
     napi_value escapee,
     napi_value *result) {
-  return CHECKED_ENV(env)->EscapeHandle(scope, escapee, result);
+  return CHECKED_ENV(env)->escapeHandle(scope, escapee, result);
 }
 
 napi_status napi_new_instance(
@@ -5699,7 +5692,7 @@ napi_status napi_new_instance(
     size_t argc,
     const napi_value *argv,
     napi_value *result) {
-  return CHECKED_ENV(env)->NewInstance(constructor, argc, argv, result);
+  return CHECKED_ENV(env)->newInstance(constructor, argc, argv, result);
 }
 
 napi_status napi_instanceof(
@@ -5707,18 +5700,18 @@ napi_status napi_instanceof(
     napi_value object,
     napi_value constructor,
     bool *result) {
-  return CHECKED_ENV(env)->InstanceOf(object, constructor, result);
+  return CHECKED_ENV(env)->instanceOf(object, constructor, result);
 }
 
 // Methods to support catching exceptions
 napi_status napi_is_exception_pending(napi_env env, bool *result) {
-  return CHECKED_ENV(env)->IsExceptionPending(result);
+  return CHECKED_ENV(env)->isExceptionPending(result);
 }
 
 napi_status napi_get_and_clear_last_exception(
     napi_env env,
     napi_value *result) {
-  return CHECKED_ENV(env)->GetAndClearLastException(result);
+  return CHECKED_ENV(env)->getAndClearLastException(result);
 }
 
 napi_status napi_is_arraybuffer(napi_env env, napi_value value, bool *result) {
@@ -5730,7 +5723,7 @@ napi_status napi_create_arraybuffer(
     size_t byte_length,
     void **data,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateArrayBuffer(byte_length, data, result);
+  return CHECKED_ENV(env)->createArrayBuffer(byte_length, data, result);
 }
 
 napi_status napi_create_external_arraybuffer(
@@ -5740,7 +5733,7 @@ napi_status napi_create_external_arraybuffer(
     napi_finalize finalize_cb,
     void *finalize_hint,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateExternalArrayBuffer(
+  return CHECKED_ENV(env)->createExternalArrayBuffer(
       external_data, byte_length, finalize_cb, finalize_hint, result);
 }
 
@@ -5749,11 +5742,11 @@ napi_status napi_get_arraybuffer_info(
     napi_value arraybuffer,
     void **data,
     size_t *byte_length) {
-  return CHECKED_ENV(env)->GetArrayBufferInfo(arraybuffer, data, byte_length);
+  return CHECKED_ENV(env)->getArrayBufferInfo(arraybuffer, data, byte_length);
 }
 
 napi_status napi_is_typedarray(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->IsTypedArray(value, result);
+  return CHECKED_ENV(env)->isTypedArray(value, result);
 }
 
 napi_status napi_create_typedarray(
@@ -5763,7 +5756,7 @@ napi_status napi_create_typedarray(
     napi_value arraybuffer,
     size_t byte_offset,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateTypedArray(
+  return CHECKED_ENV(env)->createTypedArray(
       type, length, arraybuffer, byte_offset, result);
 }
 
@@ -5775,7 +5768,7 @@ napi_status napi_get_typedarray_info(
     void **data,
     napi_value *arraybuffer,
     size_t *byte_offset) {
-  return CHECKED_ENV(env)->GetTypedArrayInfo(
+  return CHECKED_ENV(env)->getTypedArrayInfo(
       typedarray, type, length, data, arraybuffer, byte_offset);
 }
 
@@ -5785,12 +5778,12 @@ napi_status napi_create_dataview(
     napi_value arraybuffer,
     size_t byte_offset,
     napi_value *result) {
-  return CHECKED_ENV(env)->CreateDataView(
+  return CHECKED_ENV(env)->createDataView(
       byte_length, arraybuffer, byte_offset, result);
 }
 
 napi_status napi_is_dataview(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->IsDataView(value, result);
+  return CHECKED_ENV(env)->isDataView(value, result);
 }
 
 napi_status napi_get_dataview_info(
@@ -5800,50 +5793,50 @@ napi_status napi_get_dataview_info(
     void **data,
     napi_value *arraybuffer,
     size_t *byte_offset) {
-  return CHECKED_ENV(env)->GetDataViewInfo(
+  return CHECKED_ENV(env)->getDataViewInfo(
       dataview, byte_length, data, arraybuffer, byte_offset);
 }
 
 napi_status napi_get_version(napi_env env, uint32_t *result) {
-  return CHECKED_ENV(env)->GetVersion(result);
+  return CHECKED_ENV(env)->getVersion(result);
 }
 
 napi_status napi_create_promise(
     napi_env env,
     napi_deferred *deferred,
     napi_value *promise) {
-  return CHECKED_ENV(env)->CreatePromise(deferred, promise);
+  return CHECKED_ENV(env)->createPromise(deferred, promise);
 }
 
 napi_status napi_resolve_deferred(
     napi_env env,
     napi_deferred deferred,
     napi_value resolution) {
-  return CHECKED_ENV(env)->ResolveDeferred(deferred, resolution);
+  return CHECKED_ENV(env)->resolveDeferred(deferred, resolution);
 }
 
 napi_status napi_reject_deferred(
     napi_env env,
     napi_deferred deferred,
     napi_value resolution) {
-  return CHECKED_ENV(env)->RejectDeferred(deferred, resolution);
+  return CHECKED_ENV(env)->rejectDeferred(deferred, resolution);
 }
 
 napi_status napi_is_promise(napi_env env, napi_value value, bool *is_promise) {
-  return CHECKED_ENV(env)->IsPromise(value, is_promise);
+  return CHECKED_ENV(env)->isPromise(value, is_promise);
 }
 
 napi_status napi_create_date(napi_env env, double time, napi_value *result) {
-  return CHECKED_ENV(env)->CreateDate(time, result);
+  return CHECKED_ENV(env)->createDate(time, result);
 }
 
 napi_status napi_is_date(napi_env env, napi_value value, bool *is_date) {
-  return CHECKED_ENV(env)->IsDate(value, is_date);
+  return CHECKED_ENV(env)->isDate(value, is_date);
 }
 
 napi_status
 napi_get_date_value(napi_env env, napi_value value, double *result) {
-  return CHECKED_ENV(env)->GetDateValue(value, result);
+  return CHECKED_ENV(env)->getDateValue(value, result);
 }
 
 napi_status
@@ -5866,7 +5859,7 @@ napi_status napi_adjust_external_memory(
     napi_env env,
     int64_t change_in_bytes,
     int64_t *adjusted_value) {
-  return CHECKED_ENV(env)->AdjustExternalMemory(
+  return CHECKED_ENV(env)->adjustExternalMemory(
       change_in_bytes, adjusted_value);
 }
 
@@ -5875,22 +5868,22 @@ napi_status napi_set_instance_data(
     void *data,
     napi_finalize finalize_cb,
     void *finalize_hint) {
-  return CHECKED_ENV(env)->SetInstanceData(data, finalize_cb, finalize_hint);
+  return CHECKED_ENV(env)->setInstanceData(data, finalize_cb, finalize_hint);
 }
 
 napi_status napi_get_instance_data(napi_env env, void **data) {
-  return CHECKED_ENV(env)->GetInstanceData(data);
+  return CHECKED_ENV(env)->getInstanceData(data);
 }
 
 napi_status napi_detach_arraybuffer(napi_env env, napi_value arraybuffer) {
-  return CHECKED_ENV(env)->DetachArrayBuffer(arraybuffer);
+  return CHECKED_ENV(env)->detachArrayBuffer(arraybuffer);
 }
 
 napi_status napi_is_detached_arraybuffer(
     napi_env env,
     napi_value arraybuffer,
     bool *result) {
-  return CHECKED_ENV(env)->IsDetachedArrayBuffer(arraybuffer, result);
+  return CHECKED_ENV(env)->isDetachedArrayBuffer(arraybuffer, result);
 }
 
 //=============================================================================
@@ -5906,11 +5899,11 @@ napi_status napi_create_hermes_env(napi_env *env) {
 }
 
 napi_status napi_ext_env_ref(napi_env env) {
-  return CHECKED_ENV(env)->Ref();
+  return CHECKED_ENV(env)->ref();
 }
 
 napi_status napi_ext_env_unref(napi_env env) {
-  return CHECKED_ENV(env)->Unref();
+  return CHECKED_ENV(env)->unref();
 }
 
 // Runs script with the provided source_url origin.
