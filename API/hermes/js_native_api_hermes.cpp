@@ -61,6 +61,14 @@ using ::hermes::hermesLog;
     }                                             \
   } while (false)
 
+#define CRASH_IF_FALSE(condition)  \
+  do {                             \
+    if (!(condition)) {            \
+      assert(false && #condition); \
+      std::terminate();            \
+    }                              \
+  } while (false)
+
 #define CHECK_ENV(env)         \
   do {                         \
     if ((env) == nullptr) {    \
@@ -196,8 +204,7 @@ struct NonMovableObjStack {
 
     if (marker.chunkIndex < storage_.size() - 1) {
       // Delete the whole chunks
-      storage_.erase(
-          storage_.begin() + marker.chunkIndex + 1, storage_.end());
+      storage_.erase(storage_.begin() + marker.chunkIndex + 1, storage_.end());
     }
 
     if (marker.chunkIndex > 0 && marker.itemIndex == 0) {
@@ -305,6 +312,154 @@ struct RefTracker {
  private:
   RefList *next_{nullptr};
   RefList *prev_{nullptr};
+};
+
+struct RefCountedBase : protected RefTracker {
+ protected:
+  RefCountedBase(
+      NodeApiEnvironment *env,
+      uint32_t initialRefCount,
+      bool deleteSelf) noexcept
+      : refCount_(initialRefCount), deleteSelf_(deleteSelf) {}
+
+ public:
+  ~RefCountedBase() override {
+    unlink();
+  }
+
+  // Destroy is called in 2 ways. Either from the finalizer or
+  // from one of Unwrap or napi_delete_reference.
+  //
+  // When it is called from Unwrap or napi_delete_reference we only
+  // want to do the delete if the finalizer has already run or
+  // cannot have been queued to run (ie the reference count is > 0),
+  // otherwise we may crash when the finalizer does run.
+  // If the finalizer may have been queued and has not already run
+  // delay the delete until the finalizer runs by not doing the delete
+  // and setting _delete_self to true so that the finalizer will
+  // delete it when it runs.
+  //
+  // The second way this is called is from
+  // the finalizer and _delete_self is set. In this case we
+  // know we need to do the deletion so just do it.
+  static void destroy(RefCountedBase *reference) noexcept {
+    // if ((reference->refCount() != 0) || (reference->deleteSelf_) ||
+    //     (reference->finalizeRan_)) {
+    //   delete reference;
+    // } else {
+    //   // defer until finalizer runs as
+    //   // it may already be queued
+    //   reference->deleteSelf_ = true;
+    // }
+  }
+
+  uint32_t incRefCount() noexcept {
+    uint32_t refCount = ++refCount_;
+    if (refCount == 1) {
+      onResumeRefCount();
+    }
+    return refCount;
+  }
+
+  uint32_t decRefCount() noexcept {
+    if (refCount_ == 0) {
+      return 0;
+    }
+    uint32_t refCount = ++refCount_;
+    if (refCount == 0) {
+      onFinalRefCount();
+    }
+    return refCount;
+  }
+
+  uint32_t getRefCount() noexcept {
+    return refCount_;
+  }
+
+  virtual void onResumeRefCount() noexcept {}
+  virtual void onFinalRefCount() noexcept {}
+
+ protected:
+  void finalize(FinalizeReason reason) noexcept override {
+    // In addition to being called during environment teardown, this method is
+    // also the entry point for the garbage collector. During environment
+    // teardown we have to remove the garbage collector's reference to this
+    // method so that, if, as part of the user's callback, JS gets executed,
+    // resulting in a garbage collection pass, this method is not re-entered as
+    // part of that pass, because that'll cause a double free (as seen in
+    // https://github.com/nodejs/node/issues/37236).
+    //
+    // Since this class does not have access to the V8 persistent reference,
+    // this method is overridden in the `Reference` class below. Therein the
+    // weak callback is removed, ensuring that the garbage collector does not
+    // re-enter this method, and the method chains up to continue the process of
+    // environment-teardown-induced finalization.
+
+    // During environment teardown we have to convert a strong reference to
+    // a weak reference to force the deferring behavior if the user's finalizer
+    // happens to delete this reference so that the code in this function that
+    // follows the call to the user's finalizer may safely access variables from
+    // this instance.
+    if (reason == FinalizeReason::EnvTeardown && refCount_ > 0) {
+      refCount_ = 0;
+    }
+
+    // if (finalizeCallback_ != nullptr) {
+    //   // This ensures that we never call the finalizer twice.
+    //   napi_finalize fini = finalizeCallback_;
+    //   finalizeCallback_ = nullptr;
+    //   // TODO: [vmoroz] Implement
+    //   //_env->CallFinalizer(fini, _finalize_data, _finalize_hint);
+    // }
+
+    // this is safe because if a request to delete the reference
+    // is made in the finalize_callback it will defer deletion
+    // to this block and set _delete_self to true
+    // if (deleteSelf_ || reason == FinalizeReason::EnvTeardown) {
+    //   destroy(this);
+    // } else {
+    //   finalizeRan_ = true;
+    // }
+  }
+
+ private:
+  uint32_t refCount_;
+  bool deleteSelf_;
+};
+
+struct Reference2 : RefCountedBase {
+  Reference2(
+      NodeApiEnvironment *env,
+      vm::PinnedHermesValue value,
+      uint32_t initialRefCount,
+      bool deleteSelf) noexcept;
+
+  void onResumeRefCount() noexcept override;
+
+  void onFinalRefCount() noexcept override;
+
+  vm::PinnedHermesValue *get() noexcept {
+    return &value_;
+  }
+
+  void finalize(FinalizeReason reason) noexcept override;
+
+  void addWeakRef(Reference2 *ref) noexcept;
+
+  Reference2 *removeWeakRef(Reference2 *ref) noexcept;
+
+ private:
+  // TODO: Allow running finalizers when the GC in a good state - add a second
+  // GC pass.
+  // static void finalizeCallback(void *data) noexcept {
+  //   // Reference *reference = static_cast<Reference *>(data);
+  //   // reference->finalize();
+  // }
+
+ private:
+  NodeApiEnvironment *env_{};
+  vm::PinnedHermesValue value_{};
+  Reference2 *nextWeakRef_{};
 };
 
 napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
@@ -445,6 +600,8 @@ struct NodeApiEnvironment {
 
   static vm::PinnedHermesValue &phv(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
+  static vm::Handle<vm::JSObject> toObjectHandle(
+      vm::PinnedHermesValue *value) noexcept;
   static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
@@ -900,26 +1057,25 @@ struct NodeApiEnvironment {
       NapiPredefined predefinedKey) noexcept;
 
   vm::CallResult<vm::PseudoHandle<>> getPrivate(
-      vm::Handle<vm::JSObject> obj,
+      vm::Handle<vm::JSObject> objHandle,
       NapiPredefined key) noexcept;
 
   vm::CallResult<bool> setPrivate(
-      vm::Handle<vm::JSObject> obj,
-      vm::SymbolID propID,
-      vm::HermesValue value) noexcept;
+      vm::Handle<vm::JSObject> objHandle,
+      NapiPredefined key,
+      const vm::HermesValue &value) noexcept;
 
   vm::CallResult<bool> deletePrivate(
-      vm::Handle<vm::JSObject> obj,
+      vm::Handle<vm::JSObject> objHandle,
       NapiPredefined key) noexcept;
 
-  // TODO:
-  // vm::CallResult<bool> addWeakFinalizer(
-  //     vm::Handle<vm::JSObject> object,
-  //     IWeakFinalizer *weakFinalizer) noexcept;
+  napi_status addWeakFinalizer(
+      vm::PinnedHermesValue *value,
+      Reference2 *ref) noexcept;
 
-  // vm::CallResult<bool> removeWeakFinalizer(
-  //     vm::Handle<vm::JSObject> object,
-  //     IWeakFinalizer *weakFinalizer) noexcept;
+  napi_status removeWeakFinalizer(
+      vm::PinnedHermesValue *value,
+      Reference2 *ref) noexcept;
 
  public:
 #ifdef HERMESJSI_ON_STACK
@@ -1056,6 +1212,71 @@ struct ExtRefCounter : RefTracker {
  private:
   uint32_t refCount_{1};
 };
+
+Reference2::Reference2(
+    NodeApiEnvironment *env,
+    vm::PinnedHermesValue value,
+    uint32_t initialRefCount,
+    bool deleteSelf) noexcept
+    : RefCountedBase(env, initialRefCount, deleteSelf),
+      env_(env),
+      value_(value) {
+  if (getRefCount() == 0) {
+    env_->addWeakFinalizer(&value, this);
+  }
+}
+
+void Reference2::onResumeRefCount() noexcept {
+  env_->removeWeakFinalizer(&value_, this);
+}
+
+void Reference2::onFinalRefCount() noexcept {
+  env_->addWeakFinalizer(&value_, this);
+}
+
+void Reference2::finalize(FinalizeReason reason) noexcept {
+  // During env teardown, `~napi_env()` alone is responsible for finalizing.
+  // Thus, we don't want any stray gc passes to trigger a second call to
+  // `finalize()`, so let's reset the persistent here if nothing is
+  // keeping it alive.
+  // TODO:
+  if (reason == FinalizeReason::EnvTeardown && nextWeakRef_) {
+    // env_->removeWeakRef(weakRef_);
+    // weakRef_ = nullptr;
+  }
+
+  // Chain up to perform the rest of the finalization.
+  RefCountedBase::finalize(reason);
+}
+
+void Reference2::addWeakRef(Reference2 *ref) noexcept {
+  if (nextWeakRef_ == nullptr) {
+    CRASH_IF_FALSE(ref == this);
+    nextWeakRef_ = this;
+  }
+
+  ref->nextWeakRef_ = nextWeakRef_;
+  nextWeakRef_ = ref;
+}
+
+Reference2 *Reference2::removeWeakRef(Reference2 *ref) noexcept {
+  if (this == nextWeakRef_) {
+    CRASH_IF_FALSE(ref == this);
+    nextWeakRef_ = nullptr;
+    return nullptr;
+  }
+
+  Reference2 *prev = this;
+  while (prev->nextWeakRef_ != ref) {
+    prev = prev->nextWeakRef_;
+    CRASH_IF_FALSE(prev != this);
+  }
+
+  prev->nextWeakRef_ = ref->nextWeakRef_;
+  ref->nextWeakRef_ = nullptr;
+  return ref != this ? this : prev;
+}
+
 #if 0
 // Wrapper around vm::PinnedHermesValue that implements reference counting.
 struct ExtReference : ExtRefCounter {
@@ -1211,7 +1432,9 @@ struct RefBase : protected Finalizer, RefTracker {
         refCount_(initialRefCount),
         deleteSelf_(deleteSelf) {
     // TODO: it must be called from NodeApiEnvironment
-    link(finalizeCallback == nullptr ? &env->refList_ : &env->finalizingRefList_);
+    link(
+        finalizeCallback == nullptr ? &env->refList_
+                                    : &env->finalizingRefList_);
   }
 
  public:
@@ -1505,6 +1728,70 @@ struct NapiHostObjectProxy final : vm::HostObjectProxy {
   void *data_;
   napi_finalize finalizeCallback_;
   void *finalizeHint_;
+};
+
+struct NapiHostObjectFinalizer final : vm::HostObjectProxy {
+  NapiHostObjectFinalizer(NodeApiEnvironment *env, Reference2 *ref) noexcept
+      : env_(env), ref_(ref) {}
+
+  ~NapiHostObjectFinalizer() override {
+    ref_->finalize(FinalizeReason::Destruction);
+  }
+
+  Reference2 *getRef() noexcept {
+    return ref_;
+  }
+
+  void setRef(Reference2 *ref) noexcept {
+    ref_ = ref;
+  }
+
+  vm::CallResult<vm::HermesValue> get(vm::SymbolID /*id*/) override {
+    return env_->runtime_.setThrownValue(vm::HermesValue::encodeNullValue());
+    // TODO: create the error object
+    //    hvFromValue(
+    // rt_.global()
+    //     .getPropertyAsFunction(rt_, "Error")
+    //     .call(
+    //         rt_,
+    //         "Exception in HostObject::get: for prop '" +
+    //             rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
+    //                 id) +
+    //             "': <unknown exception>")));
+  }
+
+  vm::CallResult<bool> set(vm::SymbolID /*id*/, vm::HermesValue /*value*/)
+      override {
+    return env_->runtime_.setThrownValue(vm::HermesValue::encodeNullValue());
+    // TODO: create the error object
+    //    hvFromValue(
+    // rt_.global()
+    //     .getPropertyAsFunction(rt_, "Error")
+    //     .call(
+    //         rt_,
+    //         "Exception in HostObject::get: for prop '" +
+    //             rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
+    //                 id) +
+    //             "': <unknown exception>")));
+  }
+
+  vm::CallResult<vm::Handle<vm::JSArray>> getHostPropertyNames() override {
+    return env_->runtime_.setThrownValue(vm::HermesValue::encodeNullValue());
+    // TODO: create the error object
+    //    hvFromValue(
+    // rt_.global()
+    //     .getPropertyAsFunction(rt_, "Error")
+    //     .call(
+    //         rt_,
+    //         "Exception in HostObject::get: for prop '" +
+    //             rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
+    //                 id) +
+    //             "': <unknown exception>")));
+  }
+
+ private:
+  NodeApiEnvironment *env_;
+  Reference2 *ref_;
 };
 
 //=============================================================================
@@ -1816,47 +2103,86 @@ napi_status NodeApiEnvironment::unwrapObject(
 }
 
 vm::CallResult<vm::PseudoHandle<>> NodeApiEnvironment::getPrivate(
-    vm::Handle<vm::JSObject> obj,
+    vm::Handle<vm::JSObject> objHandle,
     NapiPredefined key) noexcept {
   vm::SymbolID name = getPredefined(key).getSymbol();
   return vm::JSObject::getNamed_RJS(
-      obj, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
+      objHandle, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
 }
 
 vm::CallResult<bool> NodeApiEnvironment::setPrivate(
-    vm::Handle<vm::JSObject> obj,
-    vm::SymbolID propID,
-    vm::HermesValue value) noexcept {
-  // TODO:
-  return false;
+    vm::Handle<vm::JSObject> objHandle,
+    NapiPredefined key,
+    const vm::HermesValue &value) noexcept {
+  vm::SymbolID name = getPredefined(key).getSymbol();
+  return vm::JSObject::putNamed_RJS(
+      objHandle,
+      &runtime_,
+      name,
+      toHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
 }
 
 vm::CallResult<bool> NodeApiEnvironment::deletePrivate(
-    vm::Handle<vm::JSObject> obj,
+    vm::Handle<vm::JSObject> objHandle,
     NapiPredefined key) noexcept {
   vm::SymbolID name = getPredefined(key).getSymbol();
   return vm::JSObject::deleteNamed(
-      obj, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
+      objHandle, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
 }
 
-#if 0
-vm::CallResult<bool> NodeApiEnvironment::addWeakFinalizer(
-    vm::Handle<vm::JSObject> object,
-    IWeakFinalizer *weakFinalizer) noexcept {
-  auto privRes = getPrivate(object, NapiPredefined::WeakFinalizerSymbol);
-  if (privRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
-    auto objRes = vm::HostObject::createWithoutPrototype(
-        &runtime_, std::make_unique<NapiWeakFinalizer>(weakFinalizer));
-    CHECK_STATUS(objRes.getStatus());
-  } else {
-    privRes->
-  }
+napi_status NodeApiEnvironment::addWeakFinalizer(
+    vm::PinnedHermesValue *value,
+    Reference2 *ref) noexcept {
+  return handleExceptions([&] {
+    auto objHandle = toObjectHandle(value);
+    auto finalizerHost =
+        getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
+    if (finalizerHost.getStatus() == vm::ExecutionStatus::RETURNED) {
+      if (vm::vmisa<vm::HostObject>(finalizerHost->getHermesValue())) {
+        auto proxy = vm::vmcast<vm::HostObject>(finalizerHost->getHermesValue())
+                         ->getProxy();
+        Reference2 *ref2 =
+            static_cast<NapiHostObjectFinalizer *>(proxy)->getRef();
+        ref2->addWeakRef(ref);
+      }
+    } else {
+      auto objRes = vm::HostObject::createWithoutPrototype(
+          &runtime_, std::make_unique<NapiHostObjectFinalizer>(this, ref));
+      CHECK_STATUS(objRes.getStatus());
+      ref->addWeakRef(ref);
+    }
+    return clearLastError();
+  });
 }
 
-vm::CallResult<bool> NodeApiEnvironment::removeWeakFinalizer(
-    vm::Handle<vm::JSObject> object,
-    IWeakFinalizer *weakFinalizer) noexcept {}
-#endif
+napi_status NodeApiEnvironment::removeWeakFinalizer(
+    vm::PinnedHermesValue *value,
+    Reference2 *ref) noexcept {
+  return handleExceptions([&] {
+    auto objHandle = toObjectHandle(value);
+    auto finalizerHost =
+        getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
+    if (finalizerHost.getStatus() == vm::ExecutionStatus::RETURNED) {
+      if (vm::vmisa<vm::HostObject>(finalizerHost->getHermesValue())) {
+        auto proxy = vm::vmcast<vm::HostObject>(finalizerHost->getHermesValue())
+                         ->getProxy();
+        auto finalizer = static_cast<NapiHostObjectFinalizer *>(proxy);
+        Reference2 *ref2 = finalizer->getRef();
+        Reference2 *newRef = ref2->removeWeakRef(ref);
+        if (newRef) {
+          if (newRef != ref2) {
+            finalizer->setRef(newRef);
+          }
+        } else {
+          finalizer->setRef(nullptr);
+          deletePrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
+        }
+      }
+    }
+    return clearLastError();
+  });
+}
 
 vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromAscii(
     const char *str,
@@ -4163,6 +4489,11 @@ vm::PinnedHermesValue &NodeApiEnvironment::phv(napi_value value) noexcept {
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::JSObject>::vmcast(&phv(value));
+}
+
+vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
+    vm::PinnedHermesValue *value) noexcept {
+  return vm::Handle<vm::JSObject>::vmcast(value);
 }
 
 vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
