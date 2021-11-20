@@ -266,11 +266,11 @@ struct NodeApiEnvironment;
 struct Reference;
 
 enum class FinalizeReason {
-  Destruction,
+  GCFinalize,
   EnvTeardown,
 };
 
-template <typename TDerived, typename TLinkTag = void>
+template <typename TDerived, typename TLinkKind>
 struct LinkedItem {
   void linkNext(LinkedItem *item) noexcept {
     item->prev_ = this;
@@ -305,7 +305,8 @@ struct LinkedItem {
   LinkedItem *prev_{};
 };
 
-struct FinalizerLinkTag {};
+struct GCRootLinkKind {};
+struct FinalizerLinkKind {};
 
 napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
   return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
@@ -439,8 +440,8 @@ struct NodeApiEnvironment {
   // We store references in two different lists, depending on whether they
   // have `napi_finalizer` callbacks, because we must first finalize the ones
   // that have such a callback. See `~NodeApiEnvironment()` above for details.
-  LinkedItem<Reference> refList_{};
-  LinkedItem<Reference> finalizingRefList_{};
+  LinkedItem<Reference, GCRootLinkKind> refList_{};
+  LinkedItem<Reference, GCRootLinkKind> finalizingRefList_{};
   napi_extended_error_info lastError_{};
   int openCallbackScopeCount_{};
   void *instanceData_{};
@@ -951,7 +952,7 @@ struct NodeApiEnvironment {
   static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
   static constexpr uint32_t kUsedEscapeableSentinelNativeValue =
       kEscapeableSentinelNativeValue + 1;
-  static constexpr uint32_t kExternalValue = 0x00353637;
+  static constexpr uint32_t kExternalValueTag = 0x00353637;
   static constexpr int32_t kExternalTagSlot = 0;
   static constexpr vm::HermesValue EmptyHermesValue{
       vm::HermesValue::encodeEmptyValue()};
@@ -1038,7 +1039,7 @@ struct ExtRefCounter : RefTracker {
 
   void decRefCount() noexcept {
     if (--refCount_ == 0) {
-      finalize(FinalizeReason::Destruction);
+      finalize(FinalizeReason::GCFinalize);
     }
   }
 
@@ -1280,7 +1281,8 @@ struct RefBase : protected Finalizer, RefTracker {
 };
 #endif
 
-struct Reference : LinkedItem<Reference>, LinkedItem<Reference, FinalizerLinkTag> {
+struct Reference : LinkedItem<Reference, GCRootLinkKind>,
+                   LinkedItem<Reference, FinalizerLinkKind> {
   Reference(
       NodeApiEnvironment &env,
       vm::PinnedHermesValue value,
@@ -1298,13 +1300,13 @@ struct Reference : LinkedItem<Reference>, LinkedItem<Reference, FinalizerLinkTag
   }
 
   virtual ~Reference() {
-    LinkedItem<Reference>::unlink();
-    LinkedItem<Reference, FinalizerLinkTag>::unlink();
+    LinkedItem<Reference, GCRootLinkKind>::unlink();
+    LinkedItem<Reference, FinalizerLinkKind>::unlink();
   }
 
   uint32_t incRefCount() noexcept {
     if (++refCount_ == 1) {
-      LinkedItem<Reference, FinalizerLinkTag>::unlink();
+      LinkedItem<Reference, FinalizerLinkKind>::unlink();
     }
     return refCount_;
   }
@@ -1336,8 +1338,10 @@ struct Reference : LinkedItem<Reference>, LinkedItem<Reference, FinalizerLinkTag
     //}
   }
 
-  template <class TLinkTag = void>
-  static void finalizeAll(LinkedItem<Reference, TLinkTag> *head, FinalizeReason reason) noexcept {
+  template <typename TLinkKind>
+  static void finalizeAll(
+      LinkedItem<Reference, TLinkKind> *head,
+      FinalizeReason reason) noexcept {
     while (auto next = head->next()) {
       next->finalize(reason);
     }
@@ -1545,7 +1549,7 @@ struct NapiHostObjectFinalizer final : vm::HostObjectProxy {
       : env_(env), ref_(ref) {}
 
   ~NapiHostObjectFinalizer() override {
-    ref_->finalize(FinalizeReason::Destruction);
+    ref_->finalize(FinalizeReason::GCFinalize);
   }
 
   Reference *getRef() noexcept {
@@ -1943,7 +1947,7 @@ vm::CallResult<bool> NodeApiEnvironment::deletePrivate(
 
 struct ExternalValue : vm::DecoratedObject::Decoration {
   ~ExternalValue() override {
-    Reference::finalizeAll(&finalizers_, FinalizeReason::Destruction);
+    Reference::finalizeAll(&finalizers_, FinalizeReason::GCFinalize);
   }
 
   size_t getMallocSize() const override {
@@ -1955,51 +1959,60 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
   }
 
  private:
-  LinkedItem<Reference, FinalizerLinkTag> finalizers_;
+  LinkedItem<Reference, FinalizerLinkKind> finalizers_;
 };
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
     vm::PinnedHermesValue *value,
     Reference *ref) noexcept {
   return handleExceptions([&] {
-    if (auto decorated = vm::dyn_vmcast_or_null<vm::DecoratedObject>(*value)) {
-      auto tag = vm::DecoratedObject::getAdditionalSlotValue(
-          decorated, &runtime_, kExternalTagSlot);
-      if (tag.isNumber()) {
-        auto tagValue = tag.getNumber(&runtime_);
-        if (tagValue == kExternalValue) {
-          auto external =
-              static_cast<ExternalValue *>(decorated->getDecoration());
-          external->addFinalizer(ref);
-          // TODO: return
+    auto getExternal = [&](vm::HermesValue &hv) {
+      ExternalValue *external{};
+      if (auto decorated = vm::dyn_vmcast_or_null<vm::DecoratedObject>(hv)) {
+        auto tag = vm::DecoratedObject::getAdditionalSlotValue(
+            decorated, &runtime_, kExternalTagSlot);
+        if (tag.isNumber()) {
+          auto tagValue = tag.getNumber(&runtime_);
+          if (tagValue == kExternalValueTag) {
+            external = static_cast<ExternalValue *>(decorated->getDecoration());
+          }
         }
       }
-    }
+      return external;
+    };
 
-    if (vm::vmisa<vm::JSObject>(*value)) {
+    auto external = getExternal(*value);
+    if (!external && vm::vmisa<vm::JSObject>(*value)) {
       auto objHandle = toObjectHandle(value);
       auto decoratorRes =
           getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
+      if (decoratorRes.getStatus() == vm::ExecutionStatus::RETURNED) {
+        external = getExternal(decoratorRes->getHermesValue());
+      } else {
+        auto decorated = vm::DecoratedObject::create(
+            &runtime_,
+            vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
+            std::unique_ptr<vm::DecoratedObject::Decoration>(
+                external = new ExternalValue()),
+            /*additionalSlotCount:*/ 1);
+        vm::DecoratedObject::setAdditionalSlotValue(
+            decorated.get(),
+            &runtime_,
+            kExternalTagSlot,
+            vm::SmallHermesValue::encodeNumberValue(
+                kExternalValueTag, &runtime_));
+        // TODO: handle errors
+        setPrivate(
+            objHandle,
+            NapiPredefined::WeakFinalizerSymbol,
+            decorated.getHermesValue());
+      }
     }
-    // auto objHandle = toObjectHandle(value);
-    // auto decoratorRes =
-    //     getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
-    // if (decoratorRes.getStatus() == vm::ExecutionStatus::RETURNED) {
-    //   if (isObjectFinalizer)
-    //   if (vm::vmisa<vm::HostObject>(finalizerHost->getHermesValue())) {
-    //     auto proxy =
-    //     vm::vmcast<vm::HostObject>(finalizerHost->getHermesValue())
-    //                      ->getProxy();
-    //     Reference *ref2 =
-    //         static_cast<NapiHostObjectFinalizer *>(proxy)->getRef();
-    //     ref2->addWeakRef(ref);
-    //   }
-    // } else {
-    //   auto objRes = vm::HostObject::createWithoutPrototype(
-    //       &runtime_, std::make_unique<NapiHostObjectFinalizer>(this, ref));
-    //   CHECK_STATUS(objRes.getStatus());
-    //   ref->addWeakRef(ref);
-    // }
+
+    if (external) {
+      external->addFinalizer(ref);
+    }
+
     return clearLastError();
   });
 }
