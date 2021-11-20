@@ -268,6 +268,7 @@ struct Reference;
 enum class FinalizeReason {
   GCFinalize,
   EnvTeardown,
+  FinalizerQueue,
 };
 
 template <typename TDerived, typename TLinkKind>
@@ -428,20 +429,17 @@ struct NodeApiEnvironment {
   //   }
   // }
 
-  // virtual void CallFinalizer(napi_finalize cb, void* data, void* hint) {
-  //   v8::HandleScope handle_scope(isolate);
-  //   CallIntoModule([&](napi_env env) {
-  //     cb(env, data, hint);
-  //   });
-  // }
+  void callFinalizer(napi_finalize callback, void *data, void *hint);
 
   // v8impl::Persistent<v8::Value> last_exception;
 
   // We store references in two different lists, depending on whether they
-  // have `napi_finalizer` callbacks, because we must first finalize the ones
-  // that have such a callback. See `~NodeApiEnvironment()` above for details.
+  // have `napi_finalizer` callbacks, because we must first finalize the
+  // ones that have such a callback. See `~NodeApiEnvironment()` above for
+  // details.
   LinkedItem<Reference, GCRootLinkKind> refList_{};
   LinkedItem<Reference, GCRootLinkKind> finalizingRefList_{};
+  LinkedItem<Reference, FinalizerLinkKind> finalizingQueue_{};
   napi_extended_error_info lastError_{};
   int openCallbackScopeCount_{};
   void *instanceData_{};
@@ -454,6 +452,7 @@ struct NodeApiEnvironment {
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
+  void addToFinalizingQueue(Reference *reference) noexcept;
 
   napi_status setLastError(
       napi_status error_code,
@@ -1304,6 +1303,18 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
     LinkedItem<Reference, FinalizerLinkKind>::unlink();
   }
 
+  vm::PinnedHermesValue &value() noexcept {
+    return value_;
+  }
+
+  NodeApiEnvironment &env() noexcept {
+    return env_;
+  }
+
+  void *nativeData() noexcept {
+    return nativeData_;
+  }
+
   uint32_t incRefCount() noexcept {
     if (++refCount_ == 1) {
       LinkedItem<Reference, FinalizerLinkKind>::unlink();
@@ -1322,20 +1333,82 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
     return refCount_;
   }
 
-  vm::PinnedHermesValue &value() noexcept {
-    return value_;
+  // Method destroy is called in 2 ways. Either from the finalizer or
+  // from one of Unwrap or napi_delete_reference.
+  //
+  // When it is called from Unwrap or napi_delete_reference we only
+  // want to do the delete if the finalizer has already run or
+  // cannot have been queued to run (i.e. the reference count is > 0),
+  // otherwise we may crash when the finalizer does run.
+  // If the finalizer may have been queued and has not already run
+  // delay the delete until the finalizer runs by not doing the delete
+  // and setting deleteSelf_ to true so that the finalizer will
+  // delete it when it runs.
+  //
+  // The second way this is called is from
+  // the finalizer and deleteSelf_ is set. In this case we
+  // know we need to do the deletion so just do it.
+  static inline void destroy(Reference *reference) {
+    if (reference->refCount_ != 0 || reference->deleteSelf_ ||
+        reference->finalizeRan_) {
+      delete reference;
+    } else {
+      // Defer until finalizer runs as it may already be queued.
+      reference->deleteSelf_ = true;
+    }
   }
 
   virtual void finalize(FinalizeReason reason) noexcept {
-    // During env teardown, `~napi_env()` alone is responsible for finalizing.
-    // Thus, we don't want any stray gc passes to trigger a second call to
-    // `finalize()`, so let's reset the persistent here if nothing is
-    // keeping it alive.
+    // In addition to being called during environment teardown, this method is
+    // also the entry point for the garbage collector. During environment
+    // teardown we have to remove the garbage collector's reference to this
+    // method so that, if, as part of the user's callback, JS gets executed,
+    // resulting in a garbage collection pass, this method is not re-entered as
+    // part of that pass, because that'll cause a double free (as seen in
+    // https://github.com/nodejs/node/issues/37236).
+    //
     // TODO:
-    // if (isEnvTeardown && weakRef_) {
-    // env_->removeWeakRef(weakRef_);
-    // weakRef_ = nullptr;
-    //}
+    // Since this class does not have access to the V8 persistent reference,
+    // this method is overridden in the `Reference` class below. Therein the
+    // weak callback is removed, ensuring that the garbage collector does not
+    // re-enter this method, and the method chains up to continue the process of
+    // environment-teardown-induced finalization.
+
+    if (reason == FinalizeReason::GCFinalize) {
+      // The reference must be reset during the GC finalize pass.
+      value_ = env_.EmptyHermesValue;
+      LinkedItem<Reference, FinalizerLinkKind>::unlink();
+      if (hasCustomFinalizer()) {
+        // It is not safe to call custom finalizer as a part of the GC finalize
+        // pass since it may access JS engine methods.
+        env_.addToFinalizingQueue(this);
+        return;
+      }
+    } else if (reason == FinalizeReason::EnvTeardown) {
+      // During env teardown, `~NodeApiEnvironment()` alone is responsible for
+      // finalizing. Thus, we don't want any stray gc passes to trigger a second
+      // call to `finalize()`, so let's reset the Hermes value here if nothing
+      // is keeping it alive.
+      LinkedItem<Reference, FinalizerLinkKind>::unlink();
+
+      // During environment teardown we have to convert a strong reference to
+      // a weak reference to force the deferring behavior if the user's
+      // finalizer happens to delete this reference so that the code in this
+      // function that follows the call to the user's finalizer may safely
+      // access variables from this instance.
+      refCount_ = 0;
+    }
+
+    callCustomFinalizer();
+
+    // this is safe because if a request to delete the reference
+    // is made in the finalize_callback it will defer deletion
+    // to this block and set _delete_self to true
+    if (deleteSelf_ || reason == FinalizeReason::EnvTeardown) {
+      destroy(this);
+    } else {
+      finalizeRan_ = true;
+    }
   }
 
   template <typename TLinkKind>
@@ -1347,48 +1420,20 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
     }
   }
 
- private:
-  // TODO: Allow running finalizers when the GC in a good state - add a second
-  // GC pass.
-  static void finalizeCallback(void *data) noexcept {
-    // Reference *reference = static_cast<Reference *>(data);
-    // reference->finalize();
+ protected:
+  virtual bool hasCustomFinalizer() {
+    return false;
   }
 
-  // void addWeakRef() noexcept {
-  //   if (nextWeakRef_ == nullptr) {
-  //     CRASH_IF_FALSE(ref == this);
-  //     nextWeakRef_ = this;
-  //   }
-
-  //   ref->nextWeakRef_ = nextWeakRef_;
-  //   nextWeakRef_ = ref;
-  // }
-
-  // void removeWeakRef() noexcept {
-  //   if (this == nextWeakRef_) {
-  //     CRASH_IF_FALSE(ref == this);
-  //     nextWeakRef_ = nullptr;
-  //     return nullptr;
-  //   }
-
-  //   Reference *prev = this;
-  //   while (prev->nextWeakRef_ != ref) {
-  //     prev = prev->nextWeakRef_;
-  //     CRASH_IF_FALSE(prev != this);
-  //   }
-
-  //   prev->nextWeakRef_ = ref->nextWeakRef_;
-  //   ref->nextWeakRef_ = nullptr;
-  //   return ref != this ? this : prev;
-  // }
+  virtual void callCustomFinalizer() {}
 
  private:
-  NodeApiEnvironment &env_;
   vm::PinnedHermesValue value_{};
+  NodeApiEnvironment &env_;
+  void *nativeData_{};
   uint32_t refCount_{};
   bool deleteSelf_{};
-  void *nativeData_{};
+  bool finalizeRan_{};
 };
 
 struct FinalizingReference final : Reference {
@@ -1404,13 +1449,17 @@ struct FinalizingReference final : Reference {
         finalizeCallback_(finalizeCallback),
         finalizeHint_(finalizeHint) {}
 
+ protected:
+  bool hasCustomFinalizer() override {
+    return finalizeCallback_ != nullptr;
+  }
+
   // TODO: allow returning errors
-  void callFinalizer() /*override*/ {
-    // TODO:
-    // if (finalizeCallback_) {
-    //   auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-    //   env().callFinalizer(finalizeCallback, nativeData(), finalizeHint_);
-    // }
+  void callCustomFinalizer() override {
+    if (finalizeCallback_) {
+      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      env().callFinalizer(finalizeCallback, nativeData(), finalizeHint_);
+    }
   }
 
  private:
@@ -4420,6 +4469,21 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   } else {
     llvm_unreachable("unknown value kind");
   }
+}
+
+void NodeApiEnvironment::addToFinalizingQueue(Reference *reference) noexcept {
+  finalizingQueue_.linkNext(reference);
+}
+
+void NodeApiEnvironment::callFinalizer(
+    napi_finalize callback,
+    void *data,
+    void *hint) {
+  // TODO:
+  //   v8::HandleScope handle_scope(isolate);
+  //   CallIntoModule([&](napi_env env) {
+  //     cb(env, data, hint);
+  //   });
 }
 
 napi_status NodeApiEnvironment::instanceOf(
