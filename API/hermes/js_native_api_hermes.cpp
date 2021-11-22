@@ -389,6 +389,12 @@ enum class IfNotFound {
 };
 
 struct ExternalValue : vm::DecoratedObject::Decoration {
+  ExternalValue() = default;
+  ExternalValue(void *nativeData) noexcept : nativeData_(nativeData) {}
+
+  ExternalValue(const ExternalValue &other) = delete;
+  ExternalValue &operator=(const ExternalValue &other) = delete;
+
   ~ExternalValue() override;
 
   size_t getMallocSize() const override {
@@ -406,7 +412,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
   }
 
  private:
-  void *nativeData_;
+  void *nativeData_{};
   LinkedItem<Reference, FinalizerLinkKind> finalizers_;
 };
 
@@ -689,7 +695,7 @@ struct NodeApiEnvironment {
   napi_status coerceToString(napi_value value, napi_value *result) noexcept;
 
   napi_status createExternal(
-      void *data,
+      void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_value *result) noexcept;
@@ -940,6 +946,10 @@ struct NodeApiEnvironment {
   napi_status addObjectFinalizer(
       vm::PinnedHermesValue *value,
       Reference *ref) noexcept;
+
+  vm::PseudoHandle<vm::DecoratedObject> createExternal(
+      void *nativeData,
+      ExternalValue **externalValue) noexcept;
 
   napi_status getExternalValue(
       vm::Handle<vm::JSObject> objHandle,
@@ -1785,6 +1795,30 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
 
     return clearLastError();
   });
+}
+
+vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
+    void *nativeData,
+    ExternalValue **externalValue) noexcept {
+  auto decoratedObj = vm::DecoratedObject::create(
+      &runtime_,
+      vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
+      std::make_unique<ExternalValue>(nativeData),
+      /*additionalSlotCount:*/ 1);
+
+  // Add a special tag to differentiate from other decorated objects.
+  vm::DecoratedObject::setAdditionalSlotValue(
+      decoratedObj.get(),
+      &runtime_,
+      kExternalTagSlot,
+      vm::SmallHermesValue::encodeNumberValue(kExternalValueTag, &runtime_));
+
+  if (externalValue) {
+    *externalValue =
+        static_cast<ExternalValue *>(decoratedObj->getDecoration());
+  }
+
+  return decoratedObj;
 }
 
 napi_status NodeApiEnvironment::getExternalValue(
@@ -3789,30 +3823,26 @@ napi_status NodeApiEnvironment::coerceToString(
 }
 
 napi_status NodeApiEnvironment::createExternal(
-    void *data,
+    void *nativeData,
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    std::unique_ptr<vm::DecoratedObject::Decoration> decoration;
-    if (finalizeCallback || data) {
-      // TODO:
-      // decoration = ExternalDecoration::create(
-      //    *this, data, finalizeCallback, finalizeHint);
+
+    auto decoratedObj = createExternal(nativeData, nullptr);
+    *result = addStackValue(decoratedObj.getHermesValue());
+
+    if (finalizeCallback) {
+      createReference(
+          phv(*result),
+          /*initialRefCount:*/ 0,
+          /*deleteSelf:*/ true,
+          finalizeCallback,
+          nativeData,
+          finalizeHint);
     }
-    // TODO:
-    // auto externalHandle = vm::DecoratedObject::create(
-    //     &runtime_,
-    //     Handle<JSObject>::vmcast(&runtime->objectPrototype),
-    //     std::move(externalDecoration),
-    //     1);
-    // vm::DecoratedObject::setAdditionalSlotValue(
-    //     externalHandle.get(),
-    //     &runtime_,
-    //     0,
-    //     vm::HermesValue::encodeNativeUInt32(kExternalDecorationValue));
-    // *result = addStackValue(externalHandle.getHermesValue());
+
     return clearLastError();
   });
 }
