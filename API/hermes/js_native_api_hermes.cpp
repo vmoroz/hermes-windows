@@ -917,6 +917,14 @@ struct NodeApiEnvironment {
       vm::PinnedHermesValue *value,
       Reference *ref) noexcept;
 
+  Reference *createReference(
+      vm::PinnedHermesValue &value,
+      uint32_t initialRefCount,
+      bool deleteSelf,
+      napi_finalize finalizeCallback,
+      void *nativeObject,
+      void *finalizeHint);
+
  public:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
@@ -1889,23 +1897,23 @@ napi_status NodeApiEnvironment::wrapObject(
       // before then, then the finalize callback will never be invoked.)
       // Therefore a finalize callback is required when returning a reference.
       CHECK_ARG(finalizeCallback);
-      // reference = createReference(
-      //     phv(object),
-      //     0,
-      //     /*deleteSelf:*/ false,
-      //     finalizeCallback,
-      //     nativeObject,
-      //     finalizeHint);
+      reference = createReference(
+          phv(object),
+          0,
+          /*deleteSelf:*/ false,
+          finalizeCallback,
+          nativeObject,
+          finalizeHint);
       *result = reinterpret_cast<napi_ref>(reference);
     } else {
       // Create a self-deleting reference.
-      // reference = createReference(
-      //     phv(object),
-      //     0,
-      //     /*deleteSelf:*/ true,
-      //     finalizeCallback,
-      //     nativeObject,
-      //     finalizeCallback == nullptr ? nullptr : finalizeHint);
+      reference = createReference(
+          phv(object),
+          0,
+          /*deleteSelf:*/ true,
+          finalizeCallback,
+          nativeObject,
+          finalizeCallback ? finalizeHint : nullptr);
     }
 
     if (wrapType == WrapType::Retrievable) {
@@ -2010,6 +2018,21 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
  private:
   LinkedItem<Reference, FinalizerLinkKind> finalizers_;
 };
+
+  Reference *NodeApiEnvironment::createReference(
+      vm::PinnedHermesValue &value,
+      uint32_t initialRefCount,
+      bool deleteSelf,
+      napi_finalize finalizeCallback,
+      void *nativeObject,
+      void *finalizeHint) {
+        if (finalizeCallback) {
+          return new FinalizingReference(*this, value, initialRefCount, deleteSelf, nativeObject, finalizeCallback, finalizeHint);
+        } else {
+          return new Reference(*this, value, initialRefCount, deleteSelf, nativeObject);
+        }
+      }
+
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
     vm::PinnedHermesValue *value,
