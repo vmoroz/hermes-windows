@@ -1654,36 +1654,31 @@ napi_status NodeApiEnvironment::unwrapObject(
     napi_value object,
     UnwrapAction action,
     void **result) noexcept {
-#if 0
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
     if (action == UnwrapAction::KeepWrap) {
       CHECK_ARG(result);
     }
 
-    auto objHandle = toObjectHandle(object);
-    auto valRes = getPrivate(objHandle, NapiPredefined::WrapSymbol);
-    CHECK_STATUS(valRes.getStatus());
-    RETURN_STATUS_IF_FALSE(
-        vm::vmisa<vm::HostObject>(valRes->getHermesValue()), napi_invalid_arg);
+    auto externalValue = getExternalValue(phv(object));
+    if (!externalValue) {
+      STATUS_CALL(getExternalValue(
+          toObjectHandle(object), IfNotFound::ThenReturnNull, &externalValue));
+      RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
+    }
 
+    auto reference = static_cast<Reference*>(externalValue->nativeData());
     if (result) {
-      auto proxy =
-          vm::vmcast<vm::HostObject>(valRes->getHermesValue())->getProxy();
-      *result = static_cast<NapiHostObjectProxy *>(proxy)->data();
+      *result = reference->nativeData();
     }
 
     if (action == UnwrapAction::RemoveWrap) {
-      ASSIGN_CHECKED(
-          bool res, deletePrivate(objHandle, NapiPredefined::WrapSymbol));
-      RETURN_STATUS_IF_FALSE(res, napi_generic_failure);
-      // TODO: Reference::Delete(reference);
+      externalValue->setNativeData(nullptr);
+      Reference::destroyFromNative(reference);
     }
 
     return clearLastError();
   });
-#endif
-  return napi_ok;
 }
 
 vm::CallResult<bool> NodeApiEnvironment::hasPrivate(
