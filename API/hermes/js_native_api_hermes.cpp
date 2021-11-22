@@ -86,7 +86,7 @@ using ::hermes::hermesLog;
 
 #define CHECK_EXTERNAL_ARG(arg) \
   CHECK_ARG(arg);               \
-  RETURN_STATUS_IF_FALSE(vm::vmisa<vm::HostObject>(phv(arg)), napi_invalid_arg)
+  RETURN_STATUS_IF_FALSE(getExternalValue(phv(arg)), napi_invalid_arg)
 
 //   napi_throw_type_error(
 //       env, "ERR_NAPI_CONS_FUNCTION", "Constructor must be a function");
@@ -950,6 +950,8 @@ struct NodeApiEnvironment {
   vm::PseudoHandle<vm::DecoratedObject> createExternal(
       void *nativeData,
       ExternalValue **externalValue) noexcept;
+
+  ExternalValue *getExternalValue(const vm::HermesValue &value) noexcept;
 
   napi_status getExternalValue(
       vm::Handle<vm::JSObject> objHandle,
@@ -1821,6 +1823,19 @@ vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
   return decoratedObj;
 }
 
+ExternalValue *NodeApiEnvironment::getExternalValue(
+    const vm::HermesValue &value) noexcept {
+  if (auto decoratedObj = vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
+    auto tag = vm::DecoratedObject::getAdditionalSlotValue(
+        decoratedObj, &runtime_, kExternalTagSlot);
+    if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
+      return static_cast<ExternalValue *>(decoratedObj->getDecoration());
+    }
+  }
+
+  return nullptr;
+}
+
 napi_status NodeApiEnvironment::getExternalValue(
     vm::Handle<vm::JSObject> objHandle,
     IfNotFound ifNotFound,
@@ -1830,36 +1845,15 @@ napi_status NodeApiEnvironment::getExternalValue(
     auto decoratorRes =
         getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
     if (decoratorRes.getStatus() == vm::ExecutionStatus::RETURNED) {
-      if (auto decorated = vm::dyn_vmcast_or_null<vm::DecoratedObject>(
-              decoratorRes->getHermesValue())) {
-        auto tag = vm::DecoratedObject::getAdditionalSlotValue(
-            decorated, &runtime_, kExternalTagSlot);
-        if (tag.isNumber()) {
-          auto tagValue = tag.getNumber(&runtime_);
-          if (tagValue == kExternalValueTag) {
-            external = static_cast<ExternalValue *>(decorated->getDecoration());
-          }
-        }
-      }
+      external = getExternalValue(decoratorRes->getHermesValue());
       RETURN_STATUS_IF_FALSE(external, napi_generic_failure);
     } else if (ifNotFound == IfNotFound::ThenCreate) {
-      auto decorated = vm::DecoratedObject::create(
-          &runtime_,
-          vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
-          std::unique_ptr<vm::DecoratedObject::Decoration>(
-              external = new ExternalValue()),
-          /*additionalSlotCount:*/ 1);
-      vm::DecoratedObject::setAdditionalSlotValue(
-          decorated.get(),
-          &runtime_,
-          kExternalTagSlot,
-          vm::SmallHermesValue::encodeNumberValue(
-              kExternalValueTag, &runtime_));
+      auto decoratedObj = createExternal(nullptr, &external);
       // TODO: handle errors
       setPrivate(
           objHandle,
           NapiPredefined::WeakFinalizerSymbol,
-          decorated.getHermesValue());
+          runtime_.makeHandle(std::move(decoratedObj)).getHermesValue());
     }
 
     *result = external;
@@ -3243,7 +3237,7 @@ napi_status NodeApiEnvironment::typeOf(
   } else if (hv.isObject()) {
     if (vm::vmisa<vm::Callable>(hv)) {
       *result = napi_function;
-    } else if (vm::vmisa<vm::HostObject>(hv)) {
+    } else if (getExternalValue(hv)) {
       *result = napi_external;
     } else {
       *result = napi_object;
@@ -3915,11 +3909,10 @@ napi_status NodeApiEnvironment::getValueExternal(
     napi_value value,
     void **result) noexcept {
   return handleExceptions([&] {
-    CHECK_EXTERNAL_ARG(value);
     CHECK_ARG(result);
-    auto proxy = vm::vmcast<vm::HostObject>(phv(value))->getProxy();
-    // TODO:
-    //*result = static_cast<NapiHostObjectProxy *>(proxy)->data();
+    auto externalValue = getExternalValue(phv(value));
+    RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
+    *result = externalValue->nativeData();
     return clearLastError();
   });
 }
