@@ -378,8 +378,7 @@ enum class NapiPredefined {
   NullValue,
   TrueValue,
   FalseValue,
-  WrapSymbol,
-  WeakFinalizerSymbol,
+  ExternalValueSymbol,
   PredefinedCount // a special value that must be last in the enum
 };
 
@@ -1506,15 +1505,10 @@ NodeApiEnvironment::NodeApiEnvironment(
   setPredefined(
       NapiPredefined::FalseValue, vm::HermesValue::encodeBoolValue(false));
   setPredefined(
-      NapiPredefined::WrapSymbol,
+      NapiPredefined::ExternalValueSymbol,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
-              "napi.wrap.12556f9a-9053-4cb0-a70d-b6e54f8b9875")));
-  setPredefined(
-      NapiPredefined::WeakFinalizerSymbol,
-      vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().createNotUniquedLazySymbol(
-              "napi.weakFinalizer.735e14c9-354f-489b-9f27-02acbc090975")));
+              "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
 }
 
 NodeApiEnvironment::~NodeApiEnvironment() {
@@ -1667,7 +1661,7 @@ napi_status NodeApiEnvironment::unwrapObject(
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
-    auto reference = static_cast<Reference*>(externalValue->nativeData());
+    auto reference = static_cast<Reference *>(externalValue->nativeData());
     if (result) {
       *result = reference->nativeData();
     }
@@ -1743,52 +1737,13 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
     vm::PinnedHermesValue *value,
     Reference *ref) noexcept {
   return handleExceptions([&] {
-    auto getExternal = [&](vm::HermesValue &hv) {
-      ExternalValue *external{};
-      if (auto decorated = vm::dyn_vmcast_or_null<vm::DecoratedObject>(hv)) {
-        auto tag = vm::DecoratedObject::getAdditionalSlotValue(
-            decorated, &runtime_, kExternalTagSlot);
-        if (tag.isNumber()) {
-          auto tagValue = tag.getNumber(&runtime_);
-          if (tagValue == kExternalValueTag) {
-            external = static_cast<ExternalValue *>(decorated->getDecoration());
-          }
-        }
-      }
-      return external;
-    };
-
-    auto external = getExternal(*value);
-    if (!external && vm::vmisa<vm::JSObject>(*value)) {
-      auto objHandle = toObjectHandle(value);
-      auto decoratorRes =
-          getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
-      if (decoratorRes.getStatus() == vm::ExecutionStatus::RETURNED) {
-        external = getExternal(decoratorRes->getHermesValue());
-      } else {
-        auto decorated = vm::DecoratedObject::create(
-            &runtime_,
-            vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
-            std::unique_ptr<vm::DecoratedObject::Decoration>(
-                external = new ExternalValue()),
-            /*additionalSlotCount:*/ 1);
-        vm::DecoratedObject::setAdditionalSlotValue(
-            decorated.get(),
-            &runtime_,
-            kExternalTagSlot,
-            vm::SmallHermesValue::encodeNumberValue(
-                kExternalValueTag, &runtime_));
-        // TODO: handle errors
-        setPrivate(
-            objHandle,
-            NapiPredefined::WeakFinalizerSymbol,
-            decorated.getHermesValue());
-      }
+    auto externalValue = getExternalValue(*value);
+    if (!externalValue) {
+      STATUS_CALL(getExternalValue(
+          toObjectHandle(value), IfNotFound::ThenCreate, &externalValue));
     }
 
-    if (external) {
-      external->addFinalizer(ref);
-    }
+    externalValue->addFinalizer(ref);
 
     return clearLastError();
   });
@@ -1836,22 +1791,23 @@ napi_status NodeApiEnvironment::getExternalValue(
     IfNotFound ifNotFound,
     ExternalValue **result) noexcept {
   return handleExceptions([&] {
-    ExternalValue *external{};
+    ExternalValue *externalValue{};
     auto decoratorRes =
-        getPrivate(objHandle, NapiPredefined::WeakFinalizerSymbol);
+        getPrivate(objHandle, NapiPredefined::ExternalValueSymbol);
     if (decoratorRes.getStatus() == vm::ExecutionStatus::RETURNED) {
-      external = getExternalValue(decoratorRes->getHermesValue());
-      RETURN_STATUS_IF_FALSE(external, napi_generic_failure);
+      externalValue = getExternalValue(decoratorRes->getHermesValue());
+      RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
     } else if (ifNotFound == IfNotFound::ThenCreate) {
-      auto decoratedObj = createExternal(nullptr, &external);
-      // TODO: handle errors
-      setPrivate(
-          objHandle,
-          NapiPredefined::WeakFinalizerSymbol,
-          runtime_.makeHandle(std::move(decoratedObj)).getHermesValue());
+      auto decoratedObj = createExternal(nullptr, &externalValue);
+      CHECK_STATUS(
+          setPrivate(
+              objHandle,
+              NapiPredefined::ExternalValueSymbol,
+              runtime_.makeHandle(std::move(decoratedObj)).getHermesValue())
+              .getStatus());
     }
 
-    *result = external;
+    *result = externalValue;
 
     return clearLastError();
   });
