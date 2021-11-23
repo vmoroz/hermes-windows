@@ -446,22 +446,13 @@ struct NodeApiEnvironment {
   //   env->isolate->ThrowException(value);
   // }
 
-  // template <typename T, typename U = decltype(HandleThrow)>
-  // inline void CallIntoModule(T&& call, U&& handle_exception = HandleThrow)
-  // {
-  //   int open_handle_scopes_before = open_handle_scopes;
-  //   int open_callback_scopes_before = open_callback_scopes;
-  //   napi_clear_last_error(this);
-  //   call(this);
-  //   CHECK_EQ(open_handle_scopes, open_handle_scopes_before);
-  //   CHECK_EQ(open_callback_scopes, open_callback_scopes_before);
-  //   if (!last_exception.IsEmpty()) {
-  //     handle_exception(this, last_exception.Get(this->isolate));
-  //     last_exception.Reset();
-  //   }
-  // }
+  template <typename TLambda>
+  void callIntoModule(TLambda &&call) noexcept;
 
-  void callFinalizer(napi_finalize callback, void *data, void *hint);
+  void callFinalizer(
+      napi_finalize finalizeCallback,
+      void *nativeData,
+      void *finalizeHint) noexcept;
 
   // v8impl::Persistent<v8::Value> last_exception;
 
@@ -1003,6 +994,9 @@ struct NodeApiEnvironment {
   static constexpr int32_t kExternalTagSlot = 0;
   static constexpr vm::HermesValue EmptyHermesValue{
       vm::HermesValue::encodeEmptyValue()};
+
+  int openHandleScopes_{};
+  int openCallbackScopes_{};
 };
 
 struct HermesBuffer : Buffer {
@@ -1718,8 +1712,9 @@ Reference *NodeApiEnvironment::createReference(
     napi_finalize finalizeCallback,
     void *nativeObject,
     void *finalizeHint) {
+  Reference *reference{};
   if (finalizeCallback) {
-    return new FinalizingReference(
+    reference = new FinalizingReference(
         *this,
         value,
         initialRefCount,
@@ -1727,10 +1722,14 @@ Reference *NodeApiEnvironment::createReference(
         nativeObject,
         finalizeCallback,
         finalizeHint);
+    finalizingRefList_.linkNext(reference);
   } else {
-    return new Reference(
-        *this, value, initialRefCount, deleteSelf, nativeObject);
+    reference =
+        new Reference(*this, value, initialRefCount, deleteSelf, nativeObject);
+    refList_.linkNext(reference);
   }
+
+  return reference;
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
@@ -4161,15 +4160,31 @@ void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
   danglingRefList_.linkNext(reference);
 }
 
+template <typename TLambda>
+void NodeApiEnvironment::callIntoModule(TLambda &&call) noexcept {
+  int openHandleScopesBefore = openHandleScopes_;
+  int openCallbackScopesBefore = openCallbackScopes_;
+  clearLastError();
+  call(this);
+  CRASH_IF_FALSE(openHandleScopesBefore == openHandleScopes_);
+  CRASH_IF_FALSE(openCallbackScopesBefore == openCallbackScopes_);
+  if (!lastException_.isEmpty()) {
+    // TODO:
+    // handle_exception(this, last_exception.Get(this->isolate));
+    // last_exception.Reset();
+  }
+}
+
 void NodeApiEnvironment::callFinalizer(
-    napi_finalize callback,
-    void *data,
-    void *hint) {
-  // TODO:
-  //   v8::HandleScope handle_scope(isolate);
-  //   CallIntoModule([&](napi_env env) {
-  //     cb(env, data, hint);
-  //   });
+    napi_finalize finalizeCallback,
+    void *nativeData,
+    void *finalizeHint) noexcept {
+  handleExceptions([&] {
+    callIntoModule([&](NodeApiEnvironment *env) {
+      finalizeCallback(reinterpret_cast<napi_env>(env), nativeData, finalizeHint);
+    });
+    return napi_ok;
+  });
 }
 
 napi_status NodeApiEnvironment::instanceOf(
