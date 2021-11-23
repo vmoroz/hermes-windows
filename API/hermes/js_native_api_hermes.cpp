@@ -1299,6 +1299,16 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
     }
   }
 
+  template <typename TLinkKind, typename TLambda>
+  static void forEach(
+      LinkedItem<Reference, TLinkKind> *head,
+      TLambda lambda) noexcept {
+    for (auto ref = head->next(); ref != nullptr;
+         ref = static_cast<LinkedItem<Reference, TLinkKind> *>(ref)->next()) {
+      lambda(*ref);
+    }
+  }
+
  protected:
   virtual bool hasCustomFinalizer() noexcept {
     return false;
@@ -1434,6 +1444,12 @@ NodeApiEnvironment::NodeApiEnvironment(
     stackValues_.forEach([&](const vm::PinnedHermesValue &phv) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
     });
+    Reference::forEach(&finalizingRefList_, [&](Reference &ref) {
+      acceptor.accept(ref.value());
+    });
+    Reference::forEach(
+        &refList_, [&](Reference &ref) { acceptor.accept(ref.value()); });
+    // TODO: add predefined values + last error
     // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
     //   if (it->get() == 0) {
     //     it = hermesValues_->erase(it);
