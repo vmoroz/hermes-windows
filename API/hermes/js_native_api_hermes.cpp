@@ -191,7 +191,7 @@ struct NonMovableObjStack {
     }
 
     auto &markerChunk = storage_[marker.chunkIndex];
-    if (marker.itemIndex >= markerChunk.size()) {
+    if (marker.itemIndex > markerChunk.size()) {
       return false; // Invalid ItemIndex
     }
 
@@ -203,7 +203,7 @@ struct NonMovableObjStack {
     if (marker.chunkIndex > 0 && marker.itemIndex == 0) {
       // Delete the last chunk
       storage_.erase(storage_.begin() + marker.chunkIndex, storage_.end());
-    } else {
+    } else if (marker.itemIndex < markerChunk.size()) {
       // Delete items in the marker chunk
       markerChunk.erase(
           markerChunk.begin() + marker.itemIndex, markerChunk.end());
@@ -464,6 +464,7 @@ struct NodeApiEnvironment {
   LinkedItem<Reference, GCRootLinkKind> finalizingRefList_{};
   LinkedItem<Reference, FinalizerLinkKind> finalizingQueue_{};
   LinkedItem<Reference, GCRootLinkKind> danglingRefList_{};
+  bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
   int openCallbackScopeCount_{};
@@ -872,7 +873,11 @@ struct NodeApiEnvironment {
       napi_ext_buffer_callback bufferCallback,
       void *bufferHint) noexcept;
 
+  napi_status collectGarbage() noexcept;
+
   // Utility
+  napi_status runReferenceFinalizers() noexcept;
+
   vm::CallResult<vm::HermesValue> stringHVFromAscii(
       const char *str,
       size_t length) noexcept;
@@ -1525,18 +1530,25 @@ NodeApiEnvironment::~NodeApiEnvironment() {
 
 template <typename F>
 napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
+  napi_status status{};
   RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
   clearLastError();
-  vm::GCScope gcScope(&runtime_);
+  {
+    vm::GCScope gcScope(&runtime_);
 #ifdef HERMESVM_EXCEPTION_ON_OOM
-  try {
-    return f();
-  } catch (const vm::JSOutOfMemoryError &ex) {
-    return SetLastError(napi_generic_failure);
-  }
+    try {
+      status = f();
+    } catch (const vm::JSOutOfMemoryError &ex) {
+      return SetLastError(napi_generic_failure);
+    }
 #else // HERMESVM_EXCEPTION_ON_OOM
-  return f();
+    status = f();
 #endif
+  }
+  if (status == napi_ok) {
+    STATUS_CALL(runReferenceFinalizers());
+  }
+  return status;
 }
 
 napi_status NodeApiEnvironment::incRefCount() noexcept {
@@ -4181,7 +4193,8 @@ void NodeApiEnvironment::callFinalizer(
     void *finalizeHint) noexcept {
   handleExceptions([&] {
     callIntoModule([&](NodeApiEnvironment *env) {
-      finalizeCallback(reinterpret_cast<napi_env>(env), nativeData, finalizeHint);
+      finalizeCallback(
+          reinterpret_cast<napi_env>(env), nativeData, finalizeHint);
     });
     return napi_ok;
   });
@@ -5050,6 +5063,21 @@ napi_status NodeApiEnvironment::serializePreparedScript(
   }
 
   return clearLastError();
+}
+
+napi_status NodeApiEnvironment::collectGarbage() noexcept {
+  runtime_.collect("test");
+  STATUS_CALL(runReferenceFinalizers());
+  return clearLastError();
+}
+
+napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
+  if (!isRunningFinalizers_) {
+    isRunningFinalizers_ = true;
+    Reference::finalizeAll(&finalizingQueue_, FinalizeReason::FinalizerQueue);
+    isRunningFinalizers_ = false;
+  }
+  return napi_ok;
 }
 
 } // namespace napi
@@ -5977,4 +6005,8 @@ napi_status __cdecl napi_ext_serialize_prepared_script(
     void *buffer_hint) {
   return CHECKED_ENV(env)->serializePreparedScript(
       prepared_script, buffer_cb, buffer_hint);
+}
+
+napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
+  return CHECKED_ENV(env)->collectGarbage();
 }
