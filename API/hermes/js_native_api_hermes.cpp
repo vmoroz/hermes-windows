@@ -449,7 +449,7 @@ struct NodeApiEnvironment {
   template <typename TLambda>
   void callIntoModule(TLambda &&call) noexcept;
 
-  void callFinalizer(
+  napi_status callFinalizer(
       napi_finalize finalizeCallback,
       void *nativeData,
       void *finalizeHint) noexcept;
@@ -961,6 +961,10 @@ struct NodeApiEnvironment {
       void *nativeObject,
       void *finalizeHint);
 
+  napi_status incRefCount(uint32_t &refCount) noexcept;
+
+  napi_status decRefCount(uint32_t &refCount) noexcept;
+
  public:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
@@ -1071,128 +1075,6 @@ struct HermesPreparedJavaScript {
   bool isBytecode_{false};
 };
 
-// TODO:
-#if 0
-// Reference counter implementation.
-struct ExtRefCounter : RefTracker {
-  ~ExtRefCounter() override {
-    unlink();
-  }
-
-  void incRefCount() noexcept {
-    ++refCount_;
-  }
-
-  void decRefCount() noexcept {
-    if (--refCount_ == 0) {
-      finalize(FinalizeReason::GCFinalize);
-    }
-  }
-
-  virtual vm::PinnedHermesValue *get() = 0;
-
- protected:
-  ExtRefCounter(NodeApiEnvironment *env) noexcept {
-    link(&env->refList_);
-  }
-
-  void finalize(FinalizeReason reason) noexcept override {
-    delete this;
-  }
-
- private:
-  uint32_t refCount_{1};
-};
-#endif
-#if 0
-// Wrapper around vm::PinnedHermesValue that implements reference counting.
-struct ExtReference : ExtRefCounter {
-  static ExtReference *create(vm::PinnedHermesValue value) noexcept {
-    return new ExtReference(value);
-  }
-
-  vm::PinnedHermesValue *get() override {
-    return &value_;
-  }
-
- protected:
-  ExtReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
-
- private:
-  vm::PinnedHermesValue value_;
-};
-
-// Associates data with ExtReference.
-struct ExtReferenceWithData : ExtReference {
-  static ExtReferenceWithData *create(
-      NodeApiEnvironment *env,
-      vm::PinnedHermesValue value,
-      void *data,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) {
-    return new ExtReferenceWithData(
-        env, value, data, finalizeCallback, finalizeHint);
-  }
-
- protected:
-  ExtReferenceWithData(
-      NodeApiEnvironment *env,
-      vm::PinnedHermesValue value,
-      void *data,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ExtReference(value),
-        env_(env),
-        data_(data),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
-
-  void finalize(FinalizeReason reason) override {
-    if (finalizeCallback_) {
-      finalizeCallback_(reinterpret_cast<napi_env>(env_), data_, finalizeHint_);
-      finalizeCallback_ = nullptr;
-    }
-    ExtReference::Finalize(is_env_teardown);
-  }
-
- private:
-  NodeApiEnvironment *env_{};
-  void *data_{};
-  napi_finalize finalizeCallback_{};
-  void *finalizeHint_{};
-};
-
-// Wrapper around vm::WeakRef<vm::HermesValue> that implements reference
-// counting.
-struct ExtWeakReference : protected ExtRefCounter {
-  static ExtWeakReference *create(vm::WeakRef<vm::HermesValue> value) noexcept {
-    return new ExtWeakReference(value);
-  }
-
-  ~ExtWeakReference() override {
-    napi_delete_reference(env_, weakRef_);
-  }
-
-  v8::Local<v8::Value> Get(napi_env env) override {
-    napi_value result{};
-    napi_get_reference_value(env, weak_ref_, &result);
-    return result ? v8impl::V8LocalValueFromJsValue(result)
-                  : v8::Local<v8::Value>();
-  }
-
- protected:
-  ExtWeakReference(napi_env env, v8::Local<v8::Value> value)
-      : ExtRefCounter(env), env_{env} {
-    napi_create_reference(
-        env, v8impl::JsValueFromV8LocalValue(value), 0, &weak_ref_);
-  }
-
- private:
-  napi_env env_{nullptr};
-  napi_ref weakRef_{nullptr};
-};
-#endif
-
 struct Reference : LinkedItem<Reference, GCRootLinkKind>,
                    LinkedItem<Reference, FinalizerLinkKind> {
   Reference(
@@ -1253,7 +1135,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
   // The destroyFromNative method is run from native methods such as the
   // unwrapObject or deleteReference. In case if the reference is in the
   // finalizer queue, it defers deletion of the object to the finalizer.
-  static inline void destroyFromNative(Reference *reference) {
+  static void destroyFromNative(Reference *reference) noexcept {
     if (!reference->isInFinalizerQueue()) {
       delete reference;
     } else {
@@ -1353,6 +1235,106 @@ struct FinalizingReference final : Reference {
  private:
   napi_finalize finalizeCallback_{};
   void *finalizeHint_{};
+};
+
+using ReferenceHolder =
+    std::unique_ptr<Reference, decltype(&Reference::destroyFromNative)>;
+
+// Different types of references:
+// 1. Strong reference - it can wrap up object of any type
+//   a. Ref count maintains the reference lifetime. When it reaches zero it is
+//   removed.
+// 2. Weak reference - it can only wrap up objects
+//   a. Ref count maintains the lifetime of the reference. When it reaches zero
+//   it is removed.
+// 3. Combined reference -
+//   a. Ref count only for strong references. Zero converts it to a weak ref.
+//   Removal is explicit if external code holds a reference.
+
+// TODO: can we apply shared_ptr-like concept with two ref counts?
+// TODO: Can we utilize the Hermes weak roots?
+
+// Reference counter implementation.
+struct ExtRefCounter : LinkedItem<ExtRefCounter, GCRootLinkKind> {
+  virtual ~ExtRefCounter() {
+    unlink();
+  }
+
+  napi_status incRefCount(NodeApiEnvironment &env) noexcept {
+    return env.incRefCount(refCount_);
+  }
+
+  napi_status decRefCount(NodeApiEnvironment &env) noexcept {
+    STATUS_CALL(env.decRefCount(refCount_));
+    if (refCount_ == 0) {
+      STATUS_CALL(onLastRefCount(env));
+    }
+    return napi_ok;
+  }
+
+  virtual vm::PinnedHermesValue &value() = 0;
+
+ protected:
+  virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
+    delete this;
+    return napi_ok;
+  }
+
+ private:
+  uint32_t refCount_{1};
+};
+
+// Wrapper around vm::PinnedHermesValue that implements reference counting.
+struct ExtReference : ExtRefCounter {
+  ExtReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+
+  vm::PinnedHermesValue &value() override {
+    return value_;
+  }
+
+ private:
+  vm::PinnedHermesValue value_;
+};
+
+// Associates data with ExtReference.
+struct ExtReferenceWithData : ExtReference {
+  ExtReferenceWithData(
+      vm::PinnedHermesValue value,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : ExtReference(value),
+        nativeData_(nativeData),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+ protected:
+  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
+    if (finalizeCallback_) {
+      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      STATUS_CALL(
+          env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_));
+    }
+    return ExtReference::onLastRefCount(env);
+  }
+
+ private:
+  void *nativeData_{};
+  napi_finalize finalizeCallback_{};
+  void *finalizeHint_{};
+};
+
+// Ref-counted weak reference.
+struct ExtWeakReference final : ExtRefCounter {
+  ExtWeakReference(ReferenceHolder &&refHolder) noexcept
+      : refHolder_(std::move(refHolder)) {}
+
+  vm::PinnedHermesValue &value() override {
+    return refHolder_->value();
+  }
+
+ private:
+  ReferenceHolder refHolder_{nullptr, &Reference::destroyFromNative};
 };
 
 ExternalValue::~ExternalValue() {
@@ -1758,6 +1740,22 @@ Reference *NodeApiEnvironment::createReference(
   }
 
   return reference;
+}
+
+napi_status NodeApiEnvironment::incRefCount(uint32_t &refCount) noexcept {
+  RETURN_STATUS_IF_FALSE(
+      refCount > 0 && "The ref count must not bounce from zero.",
+      napi_generic_failure);
+  ++refCount;
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::decRefCount(uint32_t &refCount) noexcept {
+  RETURN_STATUS_IF_FALSE(
+      refCount > 0 && "The ref count must not be negative.",
+      napi_generic_failure);
+  --refCount;
+  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
@@ -4203,11 +4201,11 @@ void NodeApiEnvironment::callIntoModule(TLambda &&call) noexcept {
   }
 }
 
-void NodeApiEnvironment::callFinalizer(
+napi_status NodeApiEnvironment::callFinalizer(
     napi_finalize finalizeCallback,
     void *nativeData,
     void *finalizeHint) noexcept {
-  handleExceptions([&] {
+  return handleExceptions([&] {
     callIntoModule([&](NodeApiEnvironment *env) {
       finalizeCallback(
           reinterpret_cast<napi_env>(env), nativeData, finalizeHint);
