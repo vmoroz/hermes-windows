@@ -440,6 +440,11 @@ struct NodeApiEnvironment {
   napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
 
+ napi_status createWeakObject(
+    vm::PinnedHermesValue value, vm::WeakRef<vm::HermesValue>& result) noexcept;
+  const vm::PinnedHermesValue &lockWeakObject(
+      vm::WeakRef<vm::HermesValue> &weakRef) noexcept;
+
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
   //     v8::Local<v8::ArrayBuffer> ab) const {
@@ -1293,14 +1298,15 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
     return refCount_;
   }
 
-  virtual vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept = 0;
+  virtual const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept = 0;
 
  protected:
-  virtual napi_status onFirstRefCount(NodeApiEnvironment & /*env*/) noexcept {
-    return napi_ok;
+  virtual napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept {
+    return env.genericFailure("The ref count must not bounce from zero.");
   }
 
   virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
+    delete this;
     return napi_ok;
   }
 
@@ -1312,22 +1318,55 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
 struct StrongReference : Reference {
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
 
-  vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept override {
+  const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept override {
     return value_;
-  }
-
- protected:
-  napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
-    return env.genericFailure("The ref count must not bounce from zero.");
-  }
-
-  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    delete this;
-    return napi_ok;
   }
 
  private:
   vm::PinnedHermesValue value_;
+};
+
+// Associates data with StrongReference.
+struct StrongReferenceWithData final : StrongReference {
+  StrongReferenceWithData(
+      vm::PinnedHermesValue value,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : StrongReference(value),
+        nativeData_(nativeData),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+ protected:
+  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
+    if (finalizeCallback_) {
+      STATUS_CALL(env.callFinalizer(
+          std::exchange(finalizeCallback_, nullptr),
+          nativeData_,
+          finalizeHint_));
+    }
+    return StrongReference::onLastRefCount(env);
+  }
+
+ private:
+  void *nativeData_{};
+  napi_finalize finalizeCallback_{};
+  void *finalizeHint_{};
+};
+
+// Ref-counted weak reference.
+struct WeakReference final : Reference {
+  WeakReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
+      : weakRef_(weakRef) {}
+
+  const vm::PinnedHermesValue &value(
+      NodeApiEnvironment &env) noexcept override {
+    return env.lockWeakObject(weakRef_);
+  }
+
+ private:
+  vm::WeakRef<vm::HermesValue> weakRef_;
 };
 
 // Reference2 counter implementation.
@@ -1838,6 +1877,29 @@ napi_status NodeApiEnvironment::genericFailure(
     const char * /*message*/) noexcept {
   // TODO: set result message
   return napi_generic_failure;
+}
+
+ napi_status NodeApiEnvironment::createWeakObject(
+    vm::PinnedHermesValue value, vm::WeakRef<vm::HermesValue>& result) noexcept {
+  return handleExceptions([&] {
+    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
+    result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value);
+    return napi_ok;
+  });
+}
+
+const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
+    vm::WeakRef<vm::HermesValue> &weakRef) noexcept {
+  vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
+  const auto optValue = weakRef.unsafeGetOptional(&runtime_.getHeap());
+  if (!optValue) {
+    return getPredefined(NapiPredefined::UndefinedValue);
+  }
+  CRASH_IF_FALSE(
+      optValue.getValue().isObject() &&
+      "jsi::WeakObject referent is not an Object");
+  stackValues_.emplaceBack(optValue.getValue());
+  return stackValues_.back();
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
