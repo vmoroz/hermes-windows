@@ -1,3 +1,7 @@
+// TODO: change the stack references to use collection with chunks of equal 2^n
+// size.
+// TODO: unify different types of References
+
 #include <algorithm>
 #include <atomic>
 #include <climits> // INT_MAX
@@ -263,7 +267,7 @@ struct NonMovableObjStack {
 };
 
 struct NodeApiEnvironment;
-struct Reference;
+struct Reference2;
 
 enum class FinalizeReason {
   GCFinalize,
@@ -400,7 +404,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
     return sizeof(*this);
   }
 
-  void addFinalizer(Reference *ref) noexcept;
+  void addFinalizer(Reference2 *ref) noexcept;
 
   void *nativeData() noexcept {
     return nativeData_;
@@ -412,7 +416,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
 
  private:
   void *nativeData_{};
-  LinkedItem<Reference, FinalizerLinkKind> finalizers_;
+  LinkedItem<Reference2, FinalizerLinkKind> finalizers_;
 };
 
 struct NodeApiEnvironment {
@@ -460,10 +464,10 @@ struct NodeApiEnvironment {
   // have `napi_finalizer` callbacks, because we must first finalize the
   // ones that have such a callback. See `~NodeApiEnvironment()` above for
   // details.
-  LinkedItem<Reference, GCRootLinkKind> refList_{};
-  LinkedItem<Reference, GCRootLinkKind> finalizingRefList_{};
-  LinkedItem<Reference, FinalizerLinkKind> finalizingQueue_{};
-  LinkedItem<Reference, GCRootLinkKind> danglingRefList_{};
+  LinkedItem<Reference2, GCRootLinkKind> refList_{};
+  LinkedItem<Reference2, GCRootLinkKind> finalizingRefList_{};
+  LinkedItem<Reference2, FinalizerLinkKind> finalizingQueue_{};
+  LinkedItem<Reference2, GCRootLinkKind> danglingRefList_{};
   bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
@@ -478,8 +482,8 @@ struct NodeApiEnvironment {
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
-  void addToFinalizingQueue(Reference *reference) noexcept;
-  void addToDanglingRefList(Reference *reference) noexcept;
+  void addToFinalizingQueue(Reference2 *reference) noexcept;
+  void addToDanglingRefList(Reference2 *reference) noexcept;
 
   napi_status setLastError(
       napi_status error_code,
@@ -940,7 +944,7 @@ struct NodeApiEnvironment {
 
   napi_status addObjectFinalizer(
       vm::PinnedHermesValue *value,
-      Reference *ref) noexcept;
+      Reference2 *ref) noexcept;
 
   vm::PseudoHandle<vm::DecoratedObject> createExternal(
       void *nativeData,
@@ -953,7 +957,7 @@ struct NodeApiEnvironment {
       IfNotFound ifNotFound,
       ExternalValue **result) noexcept;
 
-  Reference *createReference(
+  Reference2 *createReference(
       vm::PinnedHermesValue &value,
       uint32_t initialRefCount,
       bool deleteSelf,
@@ -1075,9 +1079,9 @@ struct HermesPreparedJavaScript {
   bool isBytecode_{false};
 };
 
-struct Reference : LinkedItem<Reference, GCRootLinkKind>,
-                   LinkedItem<Reference, FinalizerLinkKind> {
-  Reference(
+struct Reference2 : LinkedItem<Reference2, GCRootLinkKind>,
+                   LinkedItem<Reference2, FinalizerLinkKind> {
+  Reference2(
       NodeApiEnvironment &env,
       vm::PinnedHermesValue value,
       uint32_t initialRefCount,
@@ -1093,9 +1097,9 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
     }
   }
 
-  virtual ~Reference() {
-    LinkedItem<Reference, GCRootLinkKind>::unlink();
-    LinkedItem<Reference, FinalizerLinkKind>::unlink();
+  virtual ~Reference2() {
+    LinkedItem<Reference2, GCRootLinkKind>::unlink();
+    LinkedItem<Reference2, FinalizerLinkKind>::unlink();
   }
 
   vm::PinnedHermesValue &value() noexcept {
@@ -1112,7 +1116,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
 
   uint32_t incRefCount() noexcept {
     if (++refCount_ == 1) {
-      LinkedItem<Reference, FinalizerLinkKind>::unlink();
+      LinkedItem<Reference2, FinalizerLinkKind>::unlink();
     }
     return refCount_;
   }
@@ -1129,13 +1133,13 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
   }
 
   bool isInFinalizerQueue() const noexcept {
-    return LinkedItem<Reference, FinalizerLinkKind>::isLinked();
+    return LinkedItem<Reference2, FinalizerLinkKind>::isLinked();
   }
 
   // The destroyFromNative method is run from native methods such as the
   // unwrapObject or deleteReference. In case if the reference is in the
   // finalizer queue, it defers deletion of the object to the finalizer.
-  static void destroyFromNative(Reference *reference) noexcept {
+  static void destroyFromNative(Reference2 *reference) noexcept {
     if (!reference->isInFinalizerQueue()) {
       delete reference;
     } else {
@@ -1150,13 +1154,13 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
   virtual void finalize(FinalizeReason reason) noexcept {
     // The value_ is invalid when the finalizer runs.
     value_ = env_.EmptyHermesValue;
-    LinkedItem<Reference, GCRootLinkKind>::unlink();
+    LinkedItem<Reference2, GCRootLinkKind>::unlink();
 
     if (reason == FinalizeReason::GCFinalize && hasCustomFinalizer()) {
       // Move reference with the custom finalizer to the finalizing queue
       // because the GC is in unstable state and the custom finalizer cannot
       // access other JS objects.
-      LinkedItem<Reference, FinalizerLinkKind>::unlink();
+      LinkedItem<Reference2, FinalizerLinkKind>::unlink();
       env_.addToFinalizingQueue(this);
     } else {
       // We must call custom finalizer before we remove the reference from a
@@ -1166,7 +1170,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
         delete this;
       } else {
         // Let the destroyFromNative method to delete the reference.
-        LinkedItem<Reference, FinalizerLinkKind>::unlink();
+        LinkedItem<Reference2, FinalizerLinkKind>::unlink();
         env_.addToDanglingRefList(this);
       }
     }
@@ -1174,7 +1178,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
 
   template <typename TLinkKind>
   static void finalizeAll(
-      LinkedItem<Reference, TLinkKind> *head,
+      LinkedItem<Reference2, TLinkKind> *head,
       FinalizeReason reason) noexcept {
     while (auto next = head->next()) {
       next->finalize(reason);
@@ -1183,10 +1187,10 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
 
   template <typename TLinkKind, typename TLambda>
   static void forEach(
-      LinkedItem<Reference, TLinkKind> *head,
+      LinkedItem<Reference2, TLinkKind> *head,
       TLambda lambda) noexcept {
     for (auto ref = head->next(); ref != nullptr;
-         ref = static_cast<LinkedItem<Reference, TLinkKind> *>(ref)->next()) {
+         ref = static_cast<LinkedItem<Reference2, TLinkKind> *>(ref)->next()) {
       lambda(*ref);
     }
   }
@@ -1206,7 +1210,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind>,
   bool deleteSelf_{};
 };
 
-struct FinalizingReference final : Reference {
+struct FinalizingReference final : Reference2 {
   FinalizingReference(
       NodeApiEnvironment &env,
       vm::PinnedHermesValue value,
@@ -1215,7 +1219,7 @@ struct FinalizingReference final : Reference {
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
-      : Reference(env, value, initialRefCount, deleteSelf, nativeData),
+      : Reference2(env, value, initialRefCount, deleteSelf, nativeData),
         finalizeCallback_(finalizeCallback),
         finalizeHint_(finalizeHint) {}
 
@@ -1238,7 +1242,7 @@ struct FinalizingReference final : Reference {
 };
 
 using ReferenceHolder =
-    std::unique_ptr<Reference, decltype(&Reference::destroyFromNative)>;
+    std::unique_ptr<Reference2, decltype(&Reference2::destroyFromNative)>;
 
 // Different types of references:
 // 1. Strong reference - it can wrap up object of any type
@@ -1254,7 +1258,49 @@ using ReferenceHolder =
 // TODO: can we apply shared_ptr-like concept with two ref counts?
 // TODO: Can we utilize the Hermes weak roots?
 
-// Reference counter implementation.
+struct IReference {
+  virtual ~IReference() {}
+  virtual napi_status incRefCount(NodeApiEnvironment &env) noexcept = 0;
+  virtual napi_status decRefCount(NodeApiEnvironment &env) noexcept = 0;
+  virtual vm::PinnedHermesValue &getValue(NodeApiEnvironment &env) noexcept = 0;
+};
+
+// Wrapper around vm::PinnedHermesValue that implements reference counting.
+struct StrongReference : LinkedItem<StrongReference, GCRootLinkKind> {
+    StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+
+  virtual ~StrongReference() noexcept {
+    unlink();
+  }
+
+  napi_status incRefCount(NodeApiEnvironment &env) noexcept {
+    return env.incRefCount(refCount_);
+  }
+
+  napi_status decRefCount(NodeApiEnvironment &env) noexcept {
+    STATUS_CALL(env.decRefCount(refCount_));
+    if (refCount_ == 0) {
+      STATUS_CALL(onLastRefCount(env));
+    }
+    return napi_ok;
+  }
+
+  virtual vm::PinnedHermesValue &value() = 0;
+
+ protected:
+  virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
+    delete this;
+    return napi_ok;
+  }
+
+ private:
+  uint32_t refCount_{1};
+  vm::PinnedHermesValue value_;
+};
+
+struct Reference2 : IReference {};
+
+// Reference2 counter implementation.
 struct ExtRefCounter : LinkedItem<ExtRefCounter, GCRootLinkKind> {
   virtual ~ExtRefCounter() {
     unlink();
@@ -1334,14 +1380,14 @@ struct ExtWeakReference final : ExtRefCounter {
   }
 
  private:
-  ReferenceHolder refHolder_{nullptr, &Reference::destroyFromNative};
+  ReferenceHolder refHolder_{nullptr, &Reference2::destroyFromNative};
 };
 
 ExternalValue::~ExternalValue() {
-  Reference::finalizeAll(&finalizers_, FinalizeReason::GCFinalize);
+  Reference2::finalizeAll(&finalizers_, FinalizeReason::GCFinalize);
 }
 
-void ExternalValue::addFinalizer(Reference *ref) noexcept {
+void ExternalValue::addFinalizer(Reference2 *ref) noexcept {
   finalizers_.linkNext(ref);
 }
 
@@ -1426,11 +1472,11 @@ NodeApiEnvironment::NodeApiEnvironment(
     stackValues_.forEach([&](const vm::PinnedHermesValue &phv) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
     });
-    Reference::forEach(&finalizingRefList_, [&](Reference &ref) {
+    Reference2::forEach(&finalizingRefList_, [&](Reference2 &ref) {
       acceptor.accept(ref.value());
     });
-    Reference::forEach(
-        &refList_, [&](Reference &ref) { acceptor.accept(ref.value()); });
+    Reference2::forEach(
+        &refList_, [&](Reference2 &ref) { acceptor.accept(ref.value()); });
     // TODO: add predefined values + last error
     // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
     //   if (it->get() == 0) {
@@ -1514,9 +1560,9 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   // they delete during their `napi_finalizer` callbacks. If we deleted such
   // references here first, they would be doubly deleted when the
   // `napi_finalizer` deleted them subsequently.
-  Reference::finalizeAll(&finalizingRefList_, FinalizeReason::EnvTeardown);
-  Reference::finalizeAll(&finalizingQueue_, FinalizeReason::EnvTeardown);
-  Reference::finalizeAll(&refList_, FinalizeReason::EnvTeardown);
+  Reference2::finalizeAll(&finalizingRefList_, FinalizeReason::EnvTeardown);
+  Reference2::finalizeAll(&finalizingQueue_, FinalizeReason::EnvTeardown);
+  Reference2::finalizeAll(&refList_, FinalizeReason::EnvTeardown);
 
   // We must not have any dangling references, but if we do, then delete them.
   while (auto next = danglingRefList_.next()) {
@@ -1593,7 +1639,7 @@ napi_status NodeApiEnvironment::addFinalizer(
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(finalizeCallback);
 
-    Reference *reference = createReference(
+    Reference2 *reference = createReference(
         phv(object),
         0,
         /*deleteSelf:*/ result == nullptr,
@@ -1631,7 +1677,7 @@ napi_status NodeApiEnvironment::wrapObject(
         toObjectHandle(object), IfNotFound::ThenCreate, &externalValue));
     RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
-    Reference *reference = createReference(
+    Reference2 *reference = createReference(
         phv(object),
         0,
         /*deleteSelf:*/ result == nullptr,
@@ -1665,14 +1711,14 @@ napi_status NodeApiEnvironment::unwrapObject(
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
-    auto reference = static_cast<Reference *>(externalValue->nativeData());
+    auto reference = static_cast<Reference2 *>(externalValue->nativeData());
     if (result) {
       *result = reference->nativeData();
     }
 
     if (action == UnwrapAction::RemoveWrap) {
       externalValue->setNativeData(nullptr);
-      Reference::destroyFromNative(reference);
+      Reference2::destroyFromNative(reference);
     }
 
     return clearLastError();
@@ -1715,14 +1761,14 @@ vm::CallResult<bool> NodeApiEnvironment::deletePrivate(
       objHandle, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
 }
 
-Reference *NodeApiEnvironment::createReference(
+Reference2 *NodeApiEnvironment::createReference(
     vm::PinnedHermesValue &value,
     uint32_t initialRefCount,
     bool deleteSelf,
     napi_finalize finalizeCallback,
     void *nativeObject,
     void *finalizeHint) {
-  Reference *reference{};
+  Reference2 *reference{};
   if (finalizeCallback) {
     reference = new FinalizingReference(
         *this,
@@ -1735,7 +1781,7 @@ Reference *NodeApiEnvironment::createReference(
     finalizingRefList_.linkNext(reference);
   } else {
     reference =
-        new Reference(*this, value, initialRefCount, deleteSelf, nativeObject);
+        new Reference2(*this, value, initialRefCount, deleteSelf, nativeObject);
     refList_.linkNext(reference);
   }
 
@@ -1760,7 +1806,7 @@ napi_status NodeApiEnvironment::decRefCount(uint32_t &refCount) noexcept {
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
     vm::PinnedHermesValue *value,
-    Reference *ref) noexcept {
+    Reference2 *ref) noexcept {
   return handleExceptions([&] {
     auto externalValue = getExternalValue(*value);
     if (!externalValue) {
@@ -3903,7 +3949,7 @@ napi_status NodeApiEnvironment::createReference(
   CHECK_ARG(result);
 
   // TODO:
-  // Reference *reference = Reference::create(
+  // Reference2 *reference = Reference2::create(
   //     this, phv(value), initialRefCount, /*deleteSelf:*/ false);
 
   // *result = reinterpret_cast<napi_ref>(reference);
@@ -3917,7 +3963,7 @@ napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
   CHECK_ARG(ref);
 
   // TODO:
-  // Reference::destroy(reinterpret_cast<Reference *>(ref));
+  // Reference2::destroy(reinterpret_cast<Reference2 *>(ref));
 
   return clearLastError();
 }
@@ -3933,7 +3979,7 @@ napi_status NodeApiEnvironment::incReference(
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(ref);
 
-  Reference *reference = reinterpret_cast<Reference *>(ref);
+  Reference2 *reference = reinterpret_cast<Reference2 *>(ref);
   uint32_t count = reference->incRefCount();
 
   if (result != nullptr) {
@@ -3954,7 +4000,7 @@ napi_status NodeApiEnvironment::decReference(
   // TODO:
   // CHECK_ARG(ref);
 
-  // Reference *reference = reinterpret_cast<Reference *>(ref);
+  // Reference2 *reference = reinterpret_cast<Reference2 *>(ref);
 
   // if (reference->refCount() == 0) {
   //   return setLastError(napi_generic_failure);
@@ -3980,7 +4026,7 @@ napi_status NodeApiEnvironment::getReferenceValue(
   // CHECK_ARG(ref);
   // CHECK_ARG(result);
 
-  // Reference *reference = reinterpret_cast<Reference *>(ref);
+  // Reference2 *reference = reinterpret_cast<Reference2 *>(ref);
   // *result = addStackValue(reference->get());
 
   return clearLastError();
@@ -4178,11 +4224,11 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   }
 }
 
-void NodeApiEnvironment::addToFinalizingQueue(Reference *reference) noexcept {
+void NodeApiEnvironment::addToFinalizingQueue(Reference2 *reference) noexcept {
   finalizingQueue_.linkNext(reference);
 }
 
-void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
+void NodeApiEnvironment::addToDanglingRefList(Reference2 *reference) noexcept {
   danglingRefList_.linkNext(reference);
 }
 
@@ -5088,7 +5134,7 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
 napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
   if (!isRunningFinalizers_) {
     isRunningFinalizers_ = true;
-    Reference::finalizeAll(&finalizingQueue_, FinalizeReason::FinalizerQueue);
+    Reference2::finalizeAll(&finalizingQueue_, FinalizeReason::FinalizerQueue);
     isRunningFinalizers_ = false;
   }
   return napi_ok;
