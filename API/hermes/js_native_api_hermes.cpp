@@ -440,9 +440,6 @@ struct NodeApiEnvironment {
   napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
 
-  napi_status createWeakObject(
-      vm::PinnedHermesValue value,
-      vm::WeakRef<vm::HermesValue> &result) noexcept;
   const vm::PinnedHermesValue &lockWeakObject(
       vm::WeakRef<vm::HermesValue> &weakRef) noexcept;
 
@@ -900,6 +897,7 @@ struct NodeApiEnvironment {
       size_t length) noexcept;
   vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
   napi_value addStackValue(vm::HermesValue value) noexcept;
+  napi_value toNapiValue(const vm::PinnedHermesValue &value) noexcept;
   napi_status checkStatus(vm::ExecutionStatus status) noexcept;
 
   napi_status newFunction(
@@ -972,9 +970,26 @@ struct NodeApiEnvironment {
       void *nativeObject,
       void *finalizeHint);
 
-  napi_status incRefCount(uint32_t &refCount) noexcept;
+  napi_status createStrongReference(
+      napi_value value,
+      napi_ext_ref *result) noexcept;
 
-  napi_status decRefCount(uint32_t &refCount) noexcept;
+  napi_status createStrongReferenceWithData(
+      napi_value value,
+      void *nativeObject,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_ext_ref *result) noexcept;
+
+  napi_status createWeakReference(
+      napi_value value,
+      napi_ext_ref *result) noexcept;
+
+  napi_status incReference(napi_ext_ref ref) noexcept;
+
+  napi_status decReference(napi_ext_ref ref) noexcept;
+
+  napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
 
  public:
 #ifdef HERMESJSI_ON_STACK
@@ -1561,6 +1576,18 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   // TODO: assert/delete the finalizingQueue_, finalizingRefList_, and refList_
 }
 
+napi_status NodeApiEnvironment::incRefCount() noexcept {
+  refCount++;
+  return napi_status::napi_ok;
+}
+
+napi_status NodeApiEnvironment::decRefCount() noexcept {
+  if (--refCount == 0) {
+    delete this;
+  }
+  return napi_status::napi_ok;
+}
+
 template <typename F>
 napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
   napi_status status{};
@@ -1584,16 +1611,55 @@ napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
   return status;
 }
 
-napi_status NodeApiEnvironment::incRefCount() noexcept {
-  refCount++;
-  return napi_status::napi_ok;
+napi_status NodeApiEnvironment::createStrongReference(
+    napi_value value,
+    napi_ext_ref *result) noexcept {
+  CHECK_ARG(result);
+  *result = reinterpret_cast<napi_ext_ref>(new StrongReference(phv(value)));
+  return clearLastError();
 }
 
-napi_status NodeApiEnvironment::decRefCount() noexcept {
-  if (--refCount == 0) {
-    delete this;
-  }
-  return napi_status::napi_ok;
+napi_status NodeApiEnvironment::createStrongReferenceWithData(
+    napi_value value,
+    void *nativeObject,
+    napi_finalize finalizeCallback,
+    void *finalizeHint,
+    napi_ext_ref *result) noexcept {
+  CHECK_ARG(result);
+  *result = reinterpret_cast<napi_ext_ref>(new StrongReferenceWithData(
+      phv(value), nativeObject, finalizeCallback, finalizeHint));
+  return clearLastError();
+}
+
+napi_status NodeApiEnvironment::createWeakReference(
+    napi_value value,
+    napi_ext_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(value);
+    CHECK_ARG(result);
+    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
+    *result = reinterpret_cast<napi_ext_ref>(new WeakReference(
+        vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), phv(value))));
+    return clearLastError();
+  });
+}
+
+napi_status NodeApiEnvironment::incReference(napi_ext_ref ref) noexcept {
+  CHECK_ARG(ref);
+  return reinterpret_cast<Reference *>(ref)->incRefCount(*this);
+}
+
+napi_status NodeApiEnvironment::decReference(napi_ext_ref ref) noexcept {
+  CHECK_ARG(ref);
+  return reinterpret_cast<Reference *>(ref)->decRefCount(*this);
+}
+
+napi_status NodeApiEnvironment::getReferenceValue(
+    napi_ext_ref ref,
+    napi_value *result) noexcept {
+  CHECK_ARG(ref);
+  *result = toNapiValue(reinterpret_cast<Reference *>(ref)->value(*this));
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::setLastError(
@@ -1777,36 +1843,10 @@ Reference2 *NodeApiEnvironment::createReference(
   return reference;
 }
 
-napi_status NodeApiEnvironment::incRefCount(uint32_t &refCount) noexcept {
-  RETURN_STATUS_IF_FALSE(
-      refCount > 0 && "The ref count must not bounce from zero.",
-      napi_generic_failure);
-  ++refCount;
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::decRefCount(uint32_t &refCount) noexcept {
-  RETURN_STATUS_IF_FALSE(
-      refCount > 0 && "The ref count must not be negative.",
-      napi_generic_failure);
-  --refCount;
-  return napi_ok;
-}
-
 napi_status NodeApiEnvironment::genericFailure(
     const char * /*message*/) noexcept {
   // TODO: set result message
   return napi_generic_failure;
-}
-
-napi_status NodeApiEnvironment::createWeakObject(
-    vm::PinnedHermesValue value,
-    vm::WeakRef<vm::HermesValue> &result) noexcept {
-  return handleExceptions([&] {
-    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-    result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value);
-    return napi_ok;
-  });
 }
 
 const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
@@ -1970,6 +2010,12 @@ vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   stackValues_.emplaceBack(value);
   return reinterpret_cast<napi_value>(&stackValues_.back());
+}
+
+napi_value NodeApiEnvironment::toNapiValue(
+    const vm::PinnedHermesValue &value) noexcept {
+  return reinterpret_cast<napi_value>(
+      const_cast<vm::PinnedHermesValue *>(&value));
 }
 
 napi_status NodeApiEnvironment::checkStatus(
@@ -6088,4 +6134,44 @@ napi_status __cdecl napi_ext_serialize_prepared_script(
 
 napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
   return CHECKED_ENV(env)->collectGarbage();
+}
+
+napi_status __cdecl napi_ext_create_reference(
+    napi_env env,
+    napi_value value,
+    napi_ext_ref *result) {
+  return CHECKED_ENV(env)->createStrongReference(value, result);
+}
+
+napi_status __cdecl napi_ext_create_reference_with_data(
+    napi_env env,
+    napi_value value,
+    void *native_object,
+    napi_finalize finalize_cb,
+    void *finalize_hint,
+    napi_ext_ref *result) {
+  return CHECKED_ENV(env)->createStrongReferenceWithData(
+      value, native_object, finalize_cb, finalize_hint, result);
+}
+
+napi_status __cdecl napi_ext_create_weak_reference(
+    napi_env env,
+    napi_value value,
+    napi_ext_ref *result) {
+  return CHECKED_ENV(env)->createWeakReference(value, result);
+}
+
+napi_status __cdecl napi_ext_reference_ref(napi_env env, napi_ext_ref ref) {
+  return CHECKED_ENV(env)->incReference(ref);
+}
+
+napi_status __cdecl napi_ext_reference_unref(napi_env env, napi_ext_ref ref) {
+  return CHECKED_ENV(env)->decReference(ref);
+}
+
+napi_status __cdecl napi_ext_get_reference_value(
+    napi_env env,
+    napi_ext_ref ref,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getReferenceValue(ref, result);
 }
