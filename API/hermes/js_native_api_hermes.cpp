@@ -438,6 +438,7 @@ struct NodeApiEnvironment {
 
   napi_status incRefCount() noexcept;
   napi_status decRefCount() noexcept;
+  napi_status genericFailure(const char *message) noexcept;
 
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
@@ -1080,7 +1081,7 @@ struct HermesPreparedJavaScript {
 };
 
 struct Reference2 : LinkedItem<Reference2, GCRootLinkKind>,
-                   LinkedItem<Reference2, FinalizerLinkKind> {
+                    LinkedItem<Reference2, FinalizerLinkKind> {
   Reference2(
       NodeApiEnvironment &env,
       vm::PinnedHermesValue value,
@@ -1258,47 +1259,76 @@ using ReferenceHolder =
 // TODO: can we apply shared_ptr-like concept with two ref counts?
 // TODO: Can we utilize the Hermes weak roots?
 
-struct IReference {
-  virtual ~IReference() {}
-  virtual napi_status incRefCount(NodeApiEnvironment &env) noexcept = 0;
-  virtual napi_status decRefCount(NodeApiEnvironment &env) noexcept = 0;
-  virtual vm::PinnedHermesValue &getValue(NodeApiEnvironment &env) noexcept = 0;
-};
+// A base class for all references.
+struct Reference : LinkedItem<Reference, GCRootLinkKind> {
+  Reference() = default;
 
-// Wrapper around vm::PinnedHermesValue that implements reference counting.
-struct StrongReference : LinkedItem<StrongReference, GCRootLinkKind> {
-    StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+  Reference(uint32_t initialRefCount) noexcept : refCount_(initialRefCount) {}
 
-  virtual ~StrongReference() noexcept {
+  virtual ~Reference() noexcept {
     unlink();
   }
 
   napi_status incRefCount(NodeApiEnvironment &env) noexcept {
-    return env.incRefCount(refCount_);
+    if (refCount_ == 0) {
+      STATUS_CALL(onFirstRefCount(env));
+    }
+    if (++refCount_ > std::numeric_limits<decltype(refCount_)>::max()) {
+      return env.genericFailure("The ref count overflow.");
+    }
+    return napi_ok;
   }
 
   napi_status decRefCount(NodeApiEnvironment &env) noexcept {
-    STATUS_CALL(env.decRefCount(refCount_));
     if (refCount_ == 0) {
+      return env.genericFailure("The ref count must not be negative.");
+    }
+    if (--refCount_ == 0) {
       STATUS_CALL(onLastRefCount(env));
     }
     return napi_ok;
   }
 
-  virtual vm::PinnedHermesValue &value() = 0;
+  uint32_t refCount() const noexcept {
+    return refCount_;
+  }
+
+  virtual vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept = 0;
 
  protected:
+  virtual napi_status onFirstRefCount(NodeApiEnvironment & /*env*/) noexcept {
+    return napi_ok;
+  }
+
   virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
-    delete this;
     return napi_ok;
   }
 
  private:
   uint32_t refCount_{1};
-  vm::PinnedHermesValue value_;
 };
 
-struct Reference2 : IReference {};
+// Wrapper around vm::PinnedHermesValue that implements reference counting.
+struct StrongReference : Reference {
+  StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+
+  vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept override {
+    return value_;
+  }
+
+ protected:
+  napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
+    return env.genericFailure("The ref count must not bounce from zero.");
+  }
+
+  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
+    delete this;
+    return napi_ok;
+  }
+
+ private:
+  vm::PinnedHermesValue value_;
+};
 
 // Reference2 counter implementation.
 struct ExtRefCounter : LinkedItem<ExtRefCounter, GCRootLinkKind> {
@@ -1802,6 +1832,12 @@ napi_status NodeApiEnvironment::decRefCount(uint32_t &refCount) noexcept {
       napi_generic_failure);
   --refCount;
   return napi_ok;
+}
+
+napi_status NodeApiEnvironment::genericFailure(
+    const char * /*message*/) noexcept {
+  // TODO: set result message
+  return napi_generic_failure;
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
