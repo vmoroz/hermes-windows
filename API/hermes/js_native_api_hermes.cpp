@@ -440,8 +440,9 @@ struct NodeApiEnvironment {
   napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
 
- napi_status createWeakObject(
-    vm::PinnedHermesValue value, vm::WeakRef<vm::HermesValue>& result) noexcept;
+  napi_status createWeakObject(
+      vm::PinnedHermesValue value,
+      vm::WeakRef<vm::HermesValue> &result) noexcept;
   const vm::PinnedHermesValue &lockWeakObject(
       vm::WeakRef<vm::HermesValue> &weakRef) noexcept;
 
@@ -1298,7 +1299,8 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
     return refCount_;
   }
 
-  virtual const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept = 0;
+  virtual const vm::PinnedHermesValue &value(
+      NodeApiEnvironment &env) noexcept = 0;
 
  protected:
   virtual napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept {
@@ -1318,7 +1320,8 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
 struct StrongReference : Reference {
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
 
-  const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept override {
+  const vm::PinnedHermesValue &value(
+      NodeApiEnvironment &env) noexcept override {
     return value_;
   }
 
@@ -1367,89 +1370,6 @@ struct WeakReference final : Reference {
 
  private:
   vm::WeakRef<vm::HermesValue> weakRef_;
-};
-
-// Reference2 counter implementation.
-struct ExtRefCounter : LinkedItem<ExtRefCounter, GCRootLinkKind> {
-  virtual ~ExtRefCounter() {
-    unlink();
-  }
-
-  napi_status incRefCount(NodeApiEnvironment &env) noexcept {
-    return env.incRefCount(refCount_);
-  }
-
-  napi_status decRefCount(NodeApiEnvironment &env) noexcept {
-    STATUS_CALL(env.decRefCount(refCount_));
-    if (refCount_ == 0) {
-      STATUS_CALL(onLastRefCount(env));
-    }
-    return napi_ok;
-  }
-
-  virtual vm::PinnedHermesValue &value() = 0;
-
- protected:
-  virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
-    delete this;
-    return napi_ok;
-  }
-
- private:
-  uint32_t refCount_{1};
-};
-
-// Wrapper around vm::PinnedHermesValue that implements reference counting.
-struct ExtReference : ExtRefCounter {
-  ExtReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
-
-  vm::PinnedHermesValue &value() override {
-    return value_;
-  }
-
- private:
-  vm::PinnedHermesValue value_;
-};
-
-// Associates data with ExtReference.
-struct ExtReferenceWithData : ExtReference {
-  ExtReferenceWithData(
-      vm::PinnedHermesValue value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ExtReference(value),
-        nativeData_(nativeData),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
-
- protected:
-  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    if (finalizeCallback_) {
-      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-      STATUS_CALL(
-          env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_));
-    }
-    return ExtReference::onLastRefCount(env);
-  }
-
- private:
-  void *nativeData_{};
-  napi_finalize finalizeCallback_{};
-  void *finalizeHint_{};
-};
-
-// Ref-counted weak reference.
-struct ExtWeakReference final : ExtRefCounter {
-  ExtWeakReference(ReferenceHolder &&refHolder) noexcept
-      : refHolder_(std::move(refHolder)) {}
-
-  vm::PinnedHermesValue &value() override {
-    return refHolder_->value();
-  }
-
- private:
-  ReferenceHolder refHolder_{nullptr, &Reference2::destroyFromNative};
 };
 
 ExternalValue::~ExternalValue() {
@@ -1879,8 +1799,9 @@ napi_status NodeApiEnvironment::genericFailure(
   return napi_generic_failure;
 }
 
- napi_status NodeApiEnvironment::createWeakObject(
-    vm::PinnedHermesValue value, vm::WeakRef<vm::HermesValue>& result) noexcept {
+napi_status NodeApiEnvironment::createWeakObject(
+    vm::PinnedHermesValue value,
+    vm::WeakRef<vm::HermesValue> &result) noexcept {
   return handleExceptions([&] {
     vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
     result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value);
