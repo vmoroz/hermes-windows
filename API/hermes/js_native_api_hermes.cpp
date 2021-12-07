@@ -1172,8 +1172,8 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
 };
 
 //
-struct ReferenceFinalizer : LinkedItem<ReferenceFinalizer, GCRootLinkKind> {
-  ReferenceFinalizer(
+struct Finalizer : LinkedItem<Finalizer, FinalizerLinkKind> {
+  Finalizer(
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
@@ -1181,18 +1181,19 @@ struct ReferenceFinalizer : LinkedItem<ReferenceFinalizer, GCRootLinkKind> {
         finalizeCallback_(finalizeCallback),
         finalizeHint_(finalizeHint) {}
 
-  ReferenceFinalizer(const ReferenceFinalizer & /*other*/) = delete;
-  ReferenceFinalizer &operator=(const ReferenceFinalizer & /*other*/) = delete;
+  Finalizer(const Finalizer & /*other*/) = delete;
+  Finalizer &operator=(const Finalizer & /*other*/) = delete;
 
-  virtual ~ReferenceFinalizer() noexcept {
+  virtual ~Finalizer() noexcept {
     unlink();
   }
 
-  void callCustomFinalizer(NodeApiEnvironment &env) noexcept {
+  napi_status callCustomFinalizer(NodeApiEnvironment &env) noexcept {
     if (finalizeCallback_) {
       auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-      env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
+      return env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
     }
+    return napi_ok;
   }
 
  private:
@@ -1215,32 +1216,21 @@ struct StrongReference : Reference {
 };
 
 // Associates data with StrongReference.
-struct StrongReferenceWithData final : StrongReference {
-  StrongReferenceWithData(
+struct FinalizingStrongReference final : StrongReference, Finalizer {
+  FinalizingStrongReference(
       vm::PinnedHermesValue value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
-      : StrongReference(value),
-        nativeData_(nativeData),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
+      : StrongReference(value),Finalizer(nativeData,
+      finalizeCallback,
+      finalizeHint) {}
 
  protected:
   napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    if (finalizeCallback_) {
-      STATUS_CALL(env.callFinalizer(
-          std::exchange(finalizeCallback_, nullptr),
-          nativeData_,
-          finalizeHint_));
-    }
+    STATUS_CALL(callCustomFinalizer(env));
     return StrongReference::onLastRefCount(env);
   }
-
- private:
-  void *nativeData_{};
-  napi_finalize finalizeCallback_{};
-  void *finalizeHint_{};
 };
 
 // Ref-counted weak reference.
@@ -1531,7 +1521,7 @@ napi_status NodeApiEnvironment::createStrongReferenceWithData(
     void *finalizeHint,
     napi_ext_ref *result) noexcept {
   CHECK_ARG(result);
-  *result = reinterpret_cast<napi_ext_ref>(new StrongReferenceWithData(
+  *result = reinterpret_cast<napi_ext_ref>(new FinalizingStrongReference(
       phv(value), nativeObject, finalizeCallback, finalizeHint));
   return clearLastError();
 }
