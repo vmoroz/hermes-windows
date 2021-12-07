@@ -1228,22 +1228,11 @@ struct WeakReference final : Reference {
 };
 
 struct ComplexReference : Reference {
-  static napi_status create(
-      NodeApiEnvironment &env,
-      vm::PinnedHermesValue value,
+  ComplexReference(
       uint32_t initialRefCount,
-      ComplexReference **result) noexcept {
-    // std::unique_ptr<ComplexReference> ref;
-    // if (initialRefCount == 0) {
-    // }
-    //  = std::make_unique<ComplexReference>(
-    //     env, value, initialRefCount, deleteSelf);
-    // if (initialRefCount == 0) {
-    //   STATUS_CALL(env_.addObjectFinalizer(&ref->value_, ref.get()));
-    // }
-    // *result = ref.release();
-    return napi_ok;
-  }
+      vm::PinnedHermesValue value,
+      vm::WeakRef<vm::HermesValue> weakRef) noexcept
+      : Reference(initialRefCount), value_(value), weakRef_(weakRef) {}
 
   const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept override {
@@ -1313,21 +1302,6 @@ struct ComplexReference : Reference {
   // }
 
  protected:
-  ComplexReference(
-      vm::PinnedHermesValue value,
-      uint32_t initialRefCount) noexcept
-      : Reference(initialRefCount), value_(value) {
-    CRASH_IF_FALSE(initialRefCount > 0);
-  }
-
-  ComplexReference(
-      NodeApiEnvironment &env,
-      vm::WeakRef<vm::HermesValue> weakRef,
-      uint32_t initialRefCount) noexcept
-      : Reference(initialRefCount), weakRef_(weakRef) {
-    CRASH_IF_FALSE(initialRefCount == 0);
-  }
-
   napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
     value_ = env.lockWeakObject(weakRef_);
     return napi_ok;
@@ -1338,10 +1312,8 @@ struct ComplexReference : Reference {
   }
 
  private:
-  union {
-    vm::PinnedHermesValue value_;
-    vm::WeakRef<vm::HermesValue> weakRef_;
-  };
+  vm::PinnedHermesValue value_;
+  vm::WeakRef<vm::HermesValue> weakRef_;
 };
 
 // struct FinalizingReference final : Reference2 {
@@ -4301,13 +4273,13 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
 }
 
 void NodeApiEnvironment::addToFinalizingQueue(Reference *reference) noexcept {
-  //TODO:
-  //finalizingQueue_.linkNext(reference);
+  // TODO:
+  // finalizingQueue_.linkNext(reference);
 }
 
 void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
-  //TODO:
-  //danglingRefList_.linkNext(reference);
+  // TODO:
+  // danglingRefList_.linkNext(reference);
 }
 
 template <typename TLambda>
