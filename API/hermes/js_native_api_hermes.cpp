@@ -1171,6 +1171,36 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
   uint32_t refCount_{1};
 };
 
+//
+struct ReferenceFinalizer : LinkedItem<ReferenceFinalizer, GCRootLinkKind> {
+  ReferenceFinalizer(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : nativeData_(nativeData),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+  ReferenceFinalizer(const ReferenceFinalizer & /*other*/) = delete;
+  ReferenceFinalizer &operator=(const ReferenceFinalizer & /*other*/) = delete;
+
+  virtual ~ReferenceFinalizer() noexcept {
+    unlink();
+  }
+
+  void callCustomFinalizer(NodeApiEnvironment &env) noexcept {
+    if (finalizeCallback_) {
+      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
+    }
+  }
+
+ private:
+  void *nativeData_{};
+  napi_finalize finalizeCallback_{};
+  void *finalizeHint_{};
+};
+
 // Wrapper around vm::PinnedHermesValue that implements reference counting.
 struct StrongReference : Reference {
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
@@ -1243,64 +1273,6 @@ struct ComplexReference : Reference {
     }
   }
 
-  // The destroyFromNative method is run from native methods such as the
-  // unwrapObject or deleteReference. In case if the reference is in the
-  // finalizer queue, it defers deletion of the object to the finalizer.
-  static void destroyFromNative(ComplexReference *reference) noexcept {
-    delete reference;
-  }
-
-  // TODO:
-  // // There are three scenarios when the finalize is called:
-  // // - when an object is collected by GC;
-  // // - when a micro task runs the finalizing queue.
-  // // - on the environment teardown;
-  // virtual void finalize(FinalizeReason reason) noexcept {
-  //   // The value_ is invalid when the finalizer runs.
-  //   value_ = env_.EmptyHermesValue;
-  //   LinkedItem<Reference, GCRootLinkKind>::unlink();
-
-  //   if (reason == FinalizeReason::GCFinalize && hasCustomFinalizer()) {
-  //     // Move reference with the custom finalizer to the finalizing queue
-  //     // because the GC is in unstable state and the custom finalizer cannot
-  //     // access other JS objects.
-  //     LinkedItem<ComplexReference, FinalizerLinkKind>::unlink();
-  //     env_.addToFinalizingQueue(this);
-  //   } else {
-  //     // We must call custom finalizer before we remove the reference from a
-  //     // finalizer queue.
-  //     callCustomFinalizer();
-  //     if (deleteSelf_) {
-  //       delete this;
-  //     } else {
-  //       // Let the destroyFromNative method to delete the reference.
-  //       LinkedItem<ComplexReference, FinalizerLinkKind>::unlink();
-  //       env_.addToDanglingRefList(this);
-  //     }
-  //   }
-  // }
-
-  // TODO:
-  // template <typename TLinkKind>
-  // static void finalizeAll(
-  //     LinkedItem<ComplexReference, TLinkKind> *head,
-  //     FinalizeReason reason) noexcept {
-  //   while (auto next = head->next()) {
-  //     next->finalize(reason);
-  //   }
-  // }
-
-  // template <typename TLinkKind, typename TLambda>
-  // static void forEach(
-  //     LinkedItem<Reference, TLinkKind> *head,
-  //     TLambda lambda) noexcept {
-  //   for (auto ref = head->next(); ref != nullptr;
-  //        ref = static_cast<LinkedItem<Reference, TLinkKind> *>(ref)->next())
-  //        {
-  //     lambda(*ref);
-  //   }
-  // }
-
  protected:
   napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
     value_ = env.lockWeakObject(weakRef_);
@@ -1315,37 +1287,6 @@ struct ComplexReference : Reference {
   vm::PinnedHermesValue value_;
   vm::WeakRef<vm::HermesValue> weakRef_;
 };
-
-// struct FinalizingReference final : Reference2 {
-//   FinalizingReference(
-//       NodeApiEnvironment &env,
-//       vm::PinnedHermesValue value,
-//       uint32_t initialRefCount,
-//       bool deleteSelf,
-//       void *nativeData,
-//       napi_finalize finalizeCallback,
-//       void *finalizeHint) noexcept
-//       : Reference2(env, value, initialRefCount, deleteSelf, nativeData),
-//         finalizeCallback_(finalizeCallback),
-//         finalizeHint_(finalizeHint) {}
-
-//  protected:
-//   bool hasCustomFinalizer() noexcept override {
-//     return finalizeCallback_ != nullptr;
-//   }
-
-//   // TODO: allow returning errors
-//   void callCustomFinalizer() noexcept override {
-//     if (finalizeCallback_) {
-//       auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-//       env().callFinalizer(finalizeCallback, nativeData(), finalizeHint_);
-//     }
-//   }
-
-//  private:
-//   napi_finalize finalizeCallback_{};
-//   void *finalizeHint_{};
-// };
 
 ExternalValue::~ExternalValue() {
   // TODO:
