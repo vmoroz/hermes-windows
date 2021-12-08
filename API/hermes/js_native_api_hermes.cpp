@@ -1154,7 +1154,7 @@ struct Reference : LinkedItem<Reference> {
   virtual const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept = 0;
 
-  virtual vm::PinnedHermesValue *getGCRoot() noexcept = 0;
+  virtual vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& env) noexcept = 0;
 
   static void getGCRoots(
       NodeApiEnvironment &env,
@@ -1162,7 +1162,7 @@ struct Reference : LinkedItem<Reference> {
       vm::RootAcceptor &acceptor) noexcept {
     for (auto ref = list->next(); ref != nullptr;) {
       auto nextRef = ref->next();
-      if (vm::PinnedHermesValue *hv = ref->getGCRoot()) {
+      if (vm::PinnedHermesValue *hv = ref->getGCRoot(env)) {
         acceptor.accept(*hv);
       }
       ref = nextRef;
@@ -1224,7 +1224,7 @@ struct StrongReference : Reference {
     return value_;
   }
 
-  vm::PinnedHermesValue *getGCRoot() noexcept override {
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
     if (refCount() > 0) {
       return &value_;
     } else {
@@ -1247,6 +1247,16 @@ struct FinalizingStrongReference final : StrongReference, Finalizer {
       : StrongReference(value),
         Finalizer(nativeData, finalizeCallback, finalizeHint) {}
 
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& env) noexcept override {
+    if (refCount() > 0) {
+      return StrongReference::getGCRoot(env);
+    } else {
+      StrongReference::unlink();
+      env.addToFinalizingQueue(this);
+      return nullptr;
+    }
+  }
+
  protected:
   napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
     STATUS_CALL(callCustomFinalizer(env));
@@ -1264,7 +1274,7 @@ struct WeakReference final : Reference {
     return env.lockWeakObject(weakRef_);
   }
 
-  vm::PinnedHermesValue *getGCRoot() noexcept override {
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
     return nullptr;
   }
 
@@ -1288,7 +1298,7 @@ struct ComplexReference : Reference {
     }
   }
 
-  vm::PinnedHermesValue *getGCRoot() noexcept override {
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
     if (refCount() > 0) {
       return &value_;
     } else {
@@ -1503,15 +1513,6 @@ NodeApiEnvironment::NodeApiEnvironment(
     });
     Reference::getGCRoots(*this, &gcRoots_, acceptor);
     Reference::getGCRoots(*this, &finalizingGCRoots_, acceptor);
-    // TODO: add predefined values + last error
-    // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
-    //   if (it->get() == 0) {
-    //     it = hermesValues_->erase(it);
-    //   } else {
-    //     acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
-    //     ++it;
-    //   }
-    // }
   });
   // runtime_.addCustomWeakRootsFunction(
   //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
