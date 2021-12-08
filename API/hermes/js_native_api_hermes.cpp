@@ -1154,13 +1154,7 @@ struct Reference : LinkedItem<Reference> {
   virtual const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept = 0;
 
-  bool tryToDestroy() {
-    if (refCount_ == 0) {
-      delete this;
-      return true;
-    }
-    return false;
-  }
+  virtual vm::PinnedHermesValue *getGCRoot() noexcept = 0;
 
   static void getGCRoots(
       NodeApiEnvironment &env,
@@ -1168,8 +1162,8 @@ struct Reference : LinkedItem<Reference> {
       vm::RootAcceptor &acceptor) noexcept {
     for (auto ref = list->next(); ref != nullptr;) {
       auto nextRef = ref->next();
-      if (!ref->tryToDestroy()) {
-        acceptor.accept(const_cast<vm::PinnedHermesValue &>(ref->value(env)));
+      if (vm::PinnedHermesValue *hv = ref->getGCRoot()) {
+        acceptor.accept(*hv);
       }
       ref = nextRef;
     }
@@ -1230,6 +1224,15 @@ struct StrongReference : Reference {
     return value_;
   }
 
+  vm::PinnedHermesValue *getGCRoot() noexcept override {
+    if (refCount() > 0) {
+      return &value_;
+    } else {
+      delete this;
+      return nullptr;
+    }
+  }
+
  private:
   vm::PinnedHermesValue value_;
 };
@@ -1261,6 +1264,10 @@ struct WeakReference final : Reference {
     return env.lockWeakObject(weakRef_);
   }
 
+  vm::PinnedHermesValue *getGCRoot() noexcept override {
+    return nullptr;
+  }
+
  private:
   vm::WeakRef<vm::HermesValue> weakRef_;
 };
@@ -1278,6 +1285,14 @@ struct ComplexReference : Reference {
       return value_;
     } else {
       return env.lockWeakObject(weakRef_);
+    }
+  }
+
+  vm::PinnedHermesValue *getGCRoot() noexcept override {
+    if (refCount() > 0) {
+      return &value_;
+    } else {
+      return nullptr;
     }
   }
 
