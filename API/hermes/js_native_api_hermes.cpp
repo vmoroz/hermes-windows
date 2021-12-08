@@ -298,16 +298,8 @@ struct LinkedItem {
     next_ = nullptr;
   }
 
-  // TODO: remove next()
   // TODO: add linkLast()
   // TODO: add LinkedList
-  TDerived *next() noexcept {
-    return static_cast<TDerived *>(next_);
-  }
-
-  const TDerived *next() const noexcept {
-    return static_cast<const TDerived *>(next_);
-  }
 
   bool isLinked() const noexcept {
     return prev_ != nullptr;
@@ -315,10 +307,10 @@ struct LinkedItem {
 
   template <typename TLambda>
   static void forEach(LinkedItem<TDerived> *list, TLambda lambda) noexcept {
-    for (auto ref = list->next(); ref != nullptr;) {
+    for (auto ref = list->next_; ref != nullptr;) {
       // lambda can delete ref - get the next one before calling it.
-      auto nextRef = ref->next();
-      lambda(ref);
+      auto nextRef = ref->next_;
+      lambda(static_cast<TDerived*>(ref));
       ref = nextRef;
     }
   }
@@ -1250,9 +1242,8 @@ struct Finalizer : LinkedItem<Finalizer> {
   static void finalizeAll(
       NodeApiEnvironment &env,
       LinkedItem<Finalizer> *list) noexcept {
-    while (auto ref = list->next()) {
-      ref->finalize(env);
-    }
+    Finalizer::forEach(
+        list, [&](Finalizer *finalizer) { finalizer->finalize(env); });
   }
 
  private:
@@ -1647,9 +1638,10 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   // Reference2::finalizeAll(&refList_, FinalizeReason::EnvTeardown);
 
   // We must not have any dangling references, but if we do, then delete them.
-  while (auto next = danglingRefList_.next()) {
-    delete next;
-  }
+  // TODO:
+  // while (auto next = danglingRefList_.next()) {
+  //   delete next;
+  // }
 
   // TODO: assert/delete the finalizingQueue_, finalizingRefList_, and refList_
 }
