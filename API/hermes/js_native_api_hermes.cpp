@@ -1160,30 +1160,36 @@ struct Reference : LinkedItem<Reference> {
   virtual vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
       NodeApiEnvironment &env) noexcept = 0;
 
+  template <typename TLambda>
+  static void forEach(LinkedItem<Reference> *list, TLambda lambda) noexcept {
+    for (auto ref = list->next(); ref != nullptr;) {
+      // lambda can delete ref - get the next one before calling it.
+      auto nextRef = ref->next();
+      lambda(ref);
+      ref = nextRef;
+    }
+  }
+
   static void getGCRoots(
       NodeApiEnvironment &env,
       LinkedItem<Reference> *list,
       vm::RootAcceptor &acceptor) noexcept {
-    for (auto ref = list->next(); ref != nullptr;) {
-      auto nextRef = ref->next();
-      if (vm::PinnedHermesValue *hv = ref->getGCRoot(env)) {
-        acceptor.accept(*hv);
+    forEach(list, [&](Reference *ref) {
+      if (vm::PinnedHermesValue *value = ref->getGCRoot(env)) {
+        acceptor.accept(*value);
       }
-      ref = nextRef;
-    }
+    });
   }
 
   static void getGCWeakRoots(
       NodeApiEnvironment &env,
       LinkedItem<Reference> *list,
       vm::WeakRefAcceptor &acceptor) noexcept {
-    for (auto ref = list->next(); ref != nullptr;) {
-      auto nextRef = ref->next();
-      if (vm::WeakRef<vm::HermesValue> *wr = ref->getGCWeakRoot(env)) {
-        acceptor.accept(*wr);
+    forEach(list, [&](Reference *ref) {
+      if (vm::WeakRef<vm::HermesValue> *weakRef = ref->getGCWeakRoot(env)) {
+        acceptor.accept(*weakRef);
       }
-      ref = nextRef;
-    }
+    });
   }
 
  protected:
