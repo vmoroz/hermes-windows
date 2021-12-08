@@ -484,7 +484,7 @@ struct NodeApiEnvironment {
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
-  void addToFinalizingQueue(Reference *reference) noexcept;
+  void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addToDanglingRefList(Reference *reference) noexcept;
 
   napi_status setLastError(
@@ -1236,6 +1236,20 @@ struct Finalizer : LinkedItem<Finalizer> {
     return napi_ok;
   }
 
+  virtual void finalize(NodeApiEnvironment &env) noexcept {
+    //TODO: Handle finalizer error
+    callCustomFinalizer(env);
+    delete this;
+  }
+
+  static void finalizeAll(
+      NodeApiEnvironment &env,
+      LinkedItem<Finalizer> *list) noexcept {
+    while (auto ref = list->next()) {
+      ref->finalize(env);
+    }
+  }
+
  private:
   void *nativeData_{};
   napi_finalize finalizeCallback_{};
@@ -1280,7 +1294,7 @@ struct FinalizingStrongReference final : StrongReference, Finalizer {
       return StrongReference::getGCRoot(env);
     } else {
       StrongReference::unlink();
-      env.addToFinalizingQueue(this);
+      env.addToFinalizerQueue(this);
       return nullptr;
     }
   }
@@ -1428,7 +1442,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
       // because the GC is in unstable state and the custom finalizer cannot
       // access other JS objects.
       Finalizer::unlink();
-      env.addToFinalizingQueue(this);
+      env.addToFinalizerQueue(this);
     } else {
       // We must call custom finalizer before we remove the reference from a
       // finalizer queue.
@@ -1443,20 +1457,18 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
     }
   }
 
-  template <typename TLinkKind>
-  static void finalizeAll(
-      LinkedItem<Reference> *head,
-      FinalizeReason reason) noexcept {
-    while (auto next = head->next()) {
-      next->finalize(reason);
-    }
-  }
-
-  template <typename TLinkKind, typename TLambda>
-  static void forEach(LinkedItem<Reference> *head, TLambda lambda) noexcept {
-    for (auto ref = head->next(); ref != nullptr;
-         ref = static_cast<LinkedItem<Reference> *>(ref)->next()) {
-      lambda(*ref);
+  void finalize(NodeApiEnvironment &env) noexcept override {
+    Reference::unlink();
+    // We must call custom finalizer before we remove the reference from the
+    // finalizer queue. It prevents the destroyFromNative method to delete this
+    // instance.
+    callCustomFinalizer(env);
+    if (deleteSelf_) {
+      delete this;
+    } else {
+      // Let the destroyFromNative method to delete the reference.
+      Finalizer::unlink();
+      env.addToDanglingRefList(this);
     }
   }
 
@@ -4371,9 +4383,8 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
   }
 }
 
-void NodeApiEnvironment::addToFinalizingQueue(Reference *reference) noexcept {
-  // TODO:
-  // finalizingQueue_.linkNext(reference);
+void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
+  finalizerQueue_.linkNext(finalizer);
 }
 
 void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
@@ -5281,12 +5292,11 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
 }
 
 napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
-  // TODO:
-  // if (!isRunningFinalizers_) {
-  //   isRunningFinalizers_ = true;
-  //   Reference2::finalizeAll(&finalizingQueue_,
-  //   FinalizeReason::FinalizerQueue); isRunningFinalizers_ = false;
-  // }
+  if (!isRunningFinalizers_) {
+    isRunningFinalizers_ = true;
+    Finalizer::finalizeAll(*this, &finalizerQueue_);
+    isRunningFinalizers_ = false;
+  }
   return napi_ok;
 }
 
