@@ -1131,13 +1131,14 @@ struct Reference : LinkedItem<Reference> {
     if (refCount_ == 0) {
       STATUS_CALL(onFirstRefCount(env));
     }
-    if (++refCount_ > std::numeric_limits<decltype(refCount_)>::max()) {
+    if (++refCount_ > std::numeric_limits<uint32_t>::max()) {
       return env.genericFailure("The ref count overflow.");
     }
     return napi_ok;
   }
 
   napi_status decRefCount(NodeApiEnvironment &env) noexcept {
+    // TODO: make better use of atomic value
     if (refCount_ == 0) {
       return env.genericFailure("The ref count must not be negative.");
     }
@@ -1207,8 +1208,7 @@ struct Reference : LinkedItem<Reference> {
   }
 
  private:
-  // TODO: make it atomic to allow changing from multiple threads
-  uint32_t refCount_{1};
+  std::atomic<uint32_t> refCount_{1};
 };
 
 //
