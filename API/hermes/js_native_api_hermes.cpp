@@ -268,6 +268,7 @@ struct NonMovableObjStack {
 
 struct NodeApiEnvironment;
 struct Reference;
+struct Finalizer;
 
 enum class FinalizeReason {
   GCFinalize,
@@ -275,7 +276,7 @@ enum class FinalizeReason {
   FinalizerQueue,
 };
 
-template <typename TDerived, typename TLinkKind>
+template <typename TDerived>
 struct LinkedItem {
   void linkNext(LinkedItem *item) noexcept {
     item->prev_ = this;
@@ -313,9 +314,6 @@ struct LinkedItem {
   LinkedItem *next_{};
   LinkedItem *prev_{};
 };
-
-struct GCRootLinkKind {};
-struct FinalizerLinkKind {};
 
 napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
   return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
@@ -416,7 +414,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
 
  private:
   void *nativeData_{};
-  LinkedItem<Reference, FinalizerLinkKind> finalizers_;
+  LinkedItem<Finalizer> finalizers_;
 };
 
 struct NodeApiEnvironment {
@@ -468,10 +466,10 @@ struct NodeApiEnvironment {
   // have `napi_finalizer` callbacks, because we must first finalize the
   // ones that have such a callback. See `~NodeApiEnvironment()` above for
   // details.
-  LinkedItem<Reference, GCRootLinkKind> refList_{};
-  LinkedItem<Reference, GCRootLinkKind> finalizingRefList_{};
-  LinkedItem<Reference, FinalizerLinkKind> finalizingQueue_{};
-  LinkedItem<Reference, GCRootLinkKind> danglingRefList_{};
+  LinkedItem<Reference> gcRoots_{};
+  LinkedItem<Reference> finalizingGCRoots_{};
+  LinkedItem<Finalizer> finalizerQueue_{};
+  LinkedItem<Reference> danglingRefList_{};
   bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
@@ -987,7 +985,7 @@ struct NodeApiEnvironment {
 
   napi_status createWeakRef(
       vm::PinnedHermesValue value,
-      vm::WeakRef<vm::HermesValue> &result) noexcept;
+      vm::WeakRefSlot **result) noexcept;
 
   napi_status incReference(napi_ext_ref ref) noexcept;
 
@@ -1120,7 +1118,7 @@ struct HermesPreparedJavaScript {
 // TODO: Can we utilize the Hermes weak roots?
 
 // A base class for all references.
-struct Reference : LinkedItem<Reference, GCRootLinkKind> {
+struct Reference : LinkedItem<Reference> {
   Reference() = default;
 
   Reference(uint32_t initialRefCount) noexcept : refCount_(initialRefCount) {}
@@ -1156,6 +1154,27 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
   virtual const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept = 0;
 
+  bool tryToDestroy() {
+    if (refCount_ == 0) {
+      delete this;
+      return true;
+    }
+    return false;
+  }
+
+  static void getGCRoots(
+      NodeApiEnvironment &env,
+      LinkedItem<Reference> *list,
+      vm::RootAcceptor &acceptor) noexcept {
+    for (auto ref = list->next(); ref != nullptr;) {
+      auto nextRef = ref->next();
+      if (!ref->tryToDestroy()) {
+        acceptor.accept(const_cast<vm::PinnedHermesValue &>(ref->value(env)));
+      }
+      ref = nextRef;
+    }
+  }
+
  protected:
   virtual napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept {
     return env.genericFailure("The ref count must not bounce from zero.");
@@ -1172,7 +1191,7 @@ struct Reference : LinkedItem<Reference, GCRootLinkKind> {
 };
 
 //
-struct Finalizer : LinkedItem<Finalizer, FinalizerLinkKind> {
+struct Finalizer : LinkedItem<Finalizer> {
   Finalizer(
       void *nativeData,
       napi_finalize finalizeCallback,
@@ -1269,7 +1288,10 @@ struct ComplexReference : Reference {
   }
 
   napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    return env.createWeakRef(value_, /*ref*/ weakRef_);
+    vm::WeakRefSlot *weakRefSlot{};
+    STATUS_CALL(env.createWeakRef(value_, &weakRefSlot));
+    weakRef_ = vm::WeakRef<vm::HermesValue>{weakRefSlot};
+    return env.clearLastError();
   }
 
  private:
@@ -1298,7 +1320,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
  protected:
   napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
     STATUS_CALL(ComplexReference::onFirstRefCount(env));
-    LinkedItem<Finalizer, FinalizerLinkKind>::unlink();
+    LinkedItem<Finalizer>::unlink();
     return napi_ok;
   }
 
@@ -1309,7 +1331,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   }
 
   bool isInFinalizerQueue() const noexcept {
-    return LinkedItem<Finalizer, FinalizerLinkKind>::isLinked();
+    return LinkedItem<Finalizer>::isLinked();
   }
 
   // The destroyFromNative method is run from native methods such as the
@@ -1354,7 +1376,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
 
   template <typename TLinkKind>
   static void finalizeAll(
-      LinkedItem<Reference, TLinkKind> *head,
+      LinkedItem<Reference> *head,
       FinalizeReason reason) noexcept {
     while (auto next = head->next()) {
       next->finalize(reason);
@@ -1362,11 +1384,9 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   }
 
   template <typename TLinkKind, typename TLambda>
-  static void forEach(
-      LinkedItem<Reference, TLinkKind> *head,
-      TLambda lambda) noexcept {
+  static void forEach(LinkedItem<Reference> *head, TLambda lambda) noexcept {
     for (auto ref = head->next(); ref != nullptr;
-         ref = static_cast<LinkedItem<Reference, TLinkKind> *>(ref)->next()) {
+         ref = static_cast<LinkedItem<Reference> *>(ref)->next()) {
       lambda(*ref);
     }
   }
@@ -1466,12 +1486,8 @@ NodeApiEnvironment::NodeApiEnvironment(
     stackValues_.forEach([&](const vm::PinnedHermesValue &phv) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
     });
-    // TODO:
-    // Reference2::forEach(&finalizingRefList_, [&](Reference2 &ref) {
-    //   acceptor.accept(ref.value());
-    // });
-    // Reference2::forEach(
-    //     &refList_, [&](Reference2 &ref) { acceptor.accept(ref.value()); });
+    Reference::getGCRoots(*this, &gcRoots_, acceptor);
+    Reference::getGCRoots(*this, &finalizingGCRoots_, acceptor);
     // TODO: add predefined values + last error
     // for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
     //   if (it->get() == 0) {
@@ -1626,25 +1642,27 @@ napi_status NodeApiEnvironment::createStrongReferenceWithData(
 napi_status NodeApiEnvironment::createWeakReference(
     napi_value value,
     napi_ext_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(value);
-    CHECK_ARG(result);
-    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-    *result = reinterpret_cast<napi_ext_ref>(new WeakReference(
-        vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), phv(value))));
-    return clearLastError();
-  });
+  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(result);
+  vm::WeakRefSlot *weakRefSlot{};
+  STATUS_CALL(createWeakRef(phv(value), &weakRefSlot));
+  auto weakRef = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
+  gcRoots_.linkNext(weakRef);
+  *result = reinterpret_cast<napi_ext_ref>(weakRef);
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createWeakRef(
     vm::PinnedHermesValue value,
-    vm::WeakRef<vm::HermesValue> &result) noexcept {
+    vm::WeakRefSlot **result) noexcept {
   return handleExceptions([&] {
     if (value.isObject()) {
       vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-      result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value);
+      *result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value)
+                    .unsafeGetSlot();
     } else {
-      result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap());
+      *result =
+          vm::WeakRef<vm::HermesValue>(&runtime_.getHeap()).unsafeGetSlot();
     }
     return napi_ok;
   });
