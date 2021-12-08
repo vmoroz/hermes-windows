@@ -298,6 +298,9 @@ struct LinkedItem {
     next_ = nullptr;
   }
 
+  // TODO: remove next()
+  // TODO: add linkLast()
+  // TODO: add LinkedList
   TDerived *next() noexcept {
     return static_cast<TDerived *>(next_);
   }
@@ -308,6 +311,16 @@ struct LinkedItem {
 
   bool isLinked() const noexcept {
     return prev_ != nullptr;
+  }
+
+  template <typename TLambda>
+  static void forEach(LinkedItem<TDerived> *list, TLambda lambda) noexcept {
+    for (auto ref = list->next(); ref != nullptr;) {
+      // lambda can delete ref - get the next one before calling it.
+      auto nextRef = ref->next();
+      lambda(ref);
+      ref = nextRef;
+    }
   }
 
  private:
@@ -1165,16 +1178,6 @@ struct Reference : LinkedItem<Reference> {
     return nullptr;
   }
 
-  template <typename TLambda>
-  static void forEach(LinkedItem<Reference> *list, TLambda lambda) noexcept {
-    for (auto ref = list->next(); ref != nullptr;) {
-      // lambda can delete ref - get the next one before calling it.
-      auto nextRef = ref->next();
-      lambda(ref);
-      ref = nextRef;
-    }
-  }
-
   static void getGCRoots(
       NodeApiEnvironment &env,
       LinkedItem<Reference> *list,
@@ -1237,7 +1240,7 @@ struct Finalizer : LinkedItem<Finalizer> {
   }
 
   virtual void finalize(NodeApiEnvironment &env) noexcept {
-    //TODO: Handle finalizer error
+    // TODO: Handle finalizer error
     callCustomFinalizer(env);
     delete this;
   }
