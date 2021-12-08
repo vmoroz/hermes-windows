@@ -1155,10 +1155,14 @@ struct Reference : LinkedItem<Reference> {
       NodeApiEnvironment &env) noexcept = 0;
 
   virtual vm::PinnedHermesValue *getGCRoot(
-      NodeApiEnvironment &env) noexcept = 0;
+      NodeApiEnvironment & /*env*/) noexcept {
+    return nullptr;
+  }
 
   virtual vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
-      NodeApiEnvironment &env) noexcept = 0;
+      NodeApiEnvironment & /*env*/) noexcept {
+    return nullptr;
+  }
 
   template <typename TLambda>
   static void forEach(LinkedItem<Reference> *list, TLambda lambda) noexcept {
@@ -1257,11 +1261,6 @@ struct StrongReference : Reference {
     }
   }
 
-  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
-      NodeApiEnvironment & /*env*/) noexcept override {
-    return nullptr;
-  }
-
  private:
   vm::PinnedHermesValue value_;
 };
@@ -1301,11 +1300,6 @@ struct WeakReference final : Reference {
   const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept override {
     return env.lockWeakObject(weakRef_);
-  }
-
-  vm::PinnedHermesValue *getGCRoot(
-      NodeApiEnvironment & /*env*/) noexcept override {
-    return nullptr;
   }
 
   vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
