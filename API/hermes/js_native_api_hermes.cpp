@@ -1154,7 +1154,11 @@ struct Reference : LinkedItem<Reference> {
   virtual const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept = 0;
 
-  virtual vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& env) noexcept = 0;
+  virtual vm::PinnedHermesValue *getGCRoot(
+      NodeApiEnvironment &env) noexcept = 0;
+
+  virtual vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+      NodeApiEnvironment &env) noexcept = 0;
 
   static void getGCRoots(
       NodeApiEnvironment &env,
@@ -1164,6 +1168,19 @@ struct Reference : LinkedItem<Reference> {
       auto nextRef = ref->next();
       if (vm::PinnedHermesValue *hv = ref->getGCRoot(env)) {
         acceptor.accept(*hv);
+      }
+      ref = nextRef;
+    }
+  }
+
+  static void getGCWeakRoots(
+      NodeApiEnvironment &env,
+      LinkedItem<Reference> *list,
+      vm::WeakRefAcceptor &acceptor) noexcept {
+    for (auto ref = list->next(); ref != nullptr;) {
+      auto nextRef = ref->next();
+      if (vm::WeakRef<vm::HermesValue> *wr = ref->getGCWeakRoot(env)) {
+        acceptor.accept(*wr);
       }
       ref = nextRef;
     }
@@ -1224,13 +1241,19 @@ struct StrongReference : Reference {
     return value_;
   }
 
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
+  vm::PinnedHermesValue *getGCRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
     if (refCount() > 0) {
       return &value_;
     } else {
       delete this;
       return nullptr;
     }
+  }
+
+  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
+    return nullptr;
   }
 
  private:
@@ -1247,7 +1270,7 @@ struct FinalizingStrongReference final : StrongReference, Finalizer {
       : StrongReference(value),
         Finalizer(nativeData, finalizeCallback, finalizeHint) {}
 
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& env) noexcept override {
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment &env) noexcept override {
     if (refCount() > 0) {
       return StrongReference::getGCRoot(env);
     } else {
@@ -1274,8 +1297,19 @@ struct WeakReference final : Reference {
     return env.lockWeakObject(weakRef_);
   }
 
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
+  vm::PinnedHermesValue *getGCRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
     return nullptr;
+  }
+
+  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
+    if (refCount() > 0) {
+      return &weakRef_;
+    } else {
+      delete this;
+      return nullptr;
+    }
   }
 
  private:
@@ -1298,9 +1332,19 @@ struct ComplexReference : Reference {
     }
   }
 
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment& /*env*/) noexcept override {
+  vm::PinnedHermesValue *getGCRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
     if (refCount() > 0) {
       return &value_;
+    } else {
+      return nullptr;
+    }
+  }
+
+  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+      NodeApiEnvironment & /*env*/) noexcept override {
+    if (refCount() == 0) {
+      return &weakRef_;
     } else {
       return nullptr;
     }
@@ -1514,18 +1558,11 @@ NodeApiEnvironment::NodeApiEnvironment(
     Reference::getGCRoots(*this, &gcRoots_, acceptor);
     Reference::getGCRoots(*this, &finalizingGCRoots_, acceptor);
   });
-  // runtime_.addCustomWeakRootsFunction(
-  //     [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
-  //       for (auto it = weakHermesValues_->begin();
-  //            it != weakHermesValues_->end();) {
-  //         if (it->get() == 0) {
-  //           it = weakHermesValues_->erase(it);
-  //         } else {
-  //           acceptor.accept(it->wr);
-  //           ++it;
-  //         }
-  //       }
-  //     });
+  runtime_.addCustomWeakRootsFunction(
+      [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
+        Reference::getGCWeakRoots(*this, &gcRoots_, acceptor);
+        Reference::getGCWeakRoots(*this, &finalizingGCRoots_, acceptor);
+      });
   // runtime_.addCustomSnapshotFunction(
   //     [this](vm::HeapSnapshot &snap) {
   //       snap.beginNode();
