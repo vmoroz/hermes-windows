@@ -403,8 +403,9 @@ enum class IfNotFound {
 };
 
 struct ExternalValue : vm::DecoratedObject::Decoration {
-  ExternalValue() = default;
-  ExternalValue(void *nativeData) noexcept : nativeData_(nativeData) {}
+  ExternalValue(NodeApiEnvironment &env) noexcept : env_(env) {}
+  ExternalValue(NodeApiEnvironment &env, void *nativeData) noexcept
+      : env_(env), nativeData_(nativeData) {}
 
   ExternalValue(const ExternalValue &other) = delete;
   ExternalValue &operator=(const ExternalValue &other) = delete;
@@ -415,7 +416,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
     return sizeof(*this);
   }
 
-  void addFinalizer(Reference *ref) noexcept;
+  void addFinalizer(Finalizer *finalizer) noexcept;
 
   void *nativeData() noexcept {
     return nativeData_;
@@ -426,6 +427,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
   }
 
  private:
+  NodeApiEnvironment &env_;
   void *nativeData_{};
   LinkedItem<Finalizer> finalizers_;
 };
@@ -960,7 +962,7 @@ struct NodeApiEnvironment {
 
   napi_status addObjectFinalizer(
       vm::PinnedHermesValue *value,
-      Reference *ref) noexcept;
+      Finalizer *finalizer) noexcept;
 
   vm::PseudoHandle<vm::DecoratedObject> createExternal(
       void *nativeData,
@@ -1480,13 +1482,13 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
 };
 
 ExternalValue::~ExternalValue() {
-  // TODO:
-  // Reference::finalizeAll(&finalizers_, FinalizeReason::GCFinalize);
+  Finalizer::forEach(&finalizers_, [&](Finalizer *finalizer) {
+    env_.addToFinalizerQueue(finalizer);
+  });
 }
 
-void ExternalValue::addFinalizer(Reference *ref) noexcept {
-  // TODO:
-  // finalizers_.linkNext(ref);
+void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
+  finalizers_.linkNext(finalizer);
 }
 
 /*static*/ vm::CallResult<vm::HermesValue>
@@ -1961,7 +1963,7 @@ const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
     vm::PinnedHermesValue *value,
-    Reference *ref) noexcept {
+    Finalizer *finalizer) noexcept {
   return handleExceptions([&] {
     auto externalValue = getExternalValue(*value);
     if (!externalValue) {
@@ -1969,7 +1971,7 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
           toObjectHandle(value), IfNotFound::ThenCreate, &externalValue));
     }
 
-    externalValue->addFinalizer(ref);
+    externalValue->addFinalizer(finalizer);
 
     return clearLastError();
   });
@@ -1981,7 +1983,7 @@ vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
   auto decoratedObj = vm::DecoratedObject::create(
       &runtime_,
       vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
-      std::make_unique<ExternalValue>(nativeData),
+      std::make_unique<ExternalValue>(*this, nativeData),
       /*additionalSlotCount:*/ 1);
 
   // Add a special tag to differentiate from other decorated objects.
