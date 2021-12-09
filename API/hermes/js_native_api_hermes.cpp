@@ -1153,7 +1153,9 @@ struct Reference : LinkedList<Reference>::Item {
     unlink();
   }
 
-  napi_status incRefCount(NodeApiEnvironment &env) noexcept {
+  virtual napi_status incRefCount(
+      NodeApiEnvironment &env,
+      uint32_t &result) noexcept {
     if (refCount_ == 0) {
       STATUS_CALL(onFirstRefCount(env));
     }
@@ -1163,7 +1165,9 @@ struct Reference : LinkedList<Reference>::Item {
     return napi_ok;
   }
 
-  napi_status decRefCount(NodeApiEnvironment &env) noexcept {
+  virtual napi_status decRefCount(
+      NodeApiEnvironment &env,
+      uint32_t &result) noexcept {
     // TODO: make better use of atomic value
     if (refCount_ == 0) {
       return env.genericFailure("The ref count must not be negative.");
@@ -1229,6 +1233,41 @@ struct Reference : LinkedList<Reference>::Item {
 
  private:
   std::atomic<uint32_t> refCount_{1};
+};
+
+struct AtomicRefCountReference : Reference {
+  napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    result = refCount_.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (result == 1) {
+      return env.genericFailure("The ref count cannot bounce from zero.");
+    } else if (result > MaxRefCount) {
+      return env.genericFailure("The ref count is too big.");
+    }
+    return napi_ok;
+  }
+
+  napi_status decRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    result = refCount_.fetch_sub(1, std::memory_order_release) - 1;
+    if (result == 0) {
+      std::atomic_thread_fence(std::memory_order_acquire);
+    } else if (result > MaxRefCount) {
+      return env.genericFailure("The ref count must not be negative.");
+    }
+    return napi_ok;
+  }
+
+ protected:
+  uint32_t refCount() const noexcept {
+    return refCount_;
+  }
+
+ private:
+  std::atomic<uint32_t> refCount_{1};
+
+  static constexpr uint32_t MaxRefCount =
+      std::numeric_limits<uint32_t>::max() / 2;
 };
 
 //
@@ -1316,16 +1355,10 @@ struct FinalizingStrongReference final : StrongReference, Finalizer {
       return nullptr;
     }
   }
-
- protected:
-  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    STATUS_CALL(callCustomFinalizer(env));
-    return StrongReference::onLastRefCount(env);
-  }
 };
 
 // Ref-counted weak reference.
-struct WeakReference final : Reference {
+struct WeakReference final : AtomicRefCountReference {
   WeakReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
       : weakRef_(weakRef) {}
 
@@ -1775,12 +1808,16 @@ napi_status NodeApiEnvironment::createWeakRef(
 
 napi_status NodeApiEnvironment::incReference(napi_ext_ref ref) noexcept {
   CHECK_ARG(ref);
-  return reinterpret_cast<Reference *>(ref)->incRefCount(*this);
+  uint32_t refCount{};
+  return reinterpret_cast<Reference *>(ref)->incRefCount(
+      *this, /*ref*/ refCount);
 }
 
 napi_status NodeApiEnvironment::decReference(napi_ext_ref ref) noexcept {
   CHECK_ARG(ref);
-  return reinterpret_cast<Reference *>(ref)->decRefCount(*this);
+  uint32_t refCount{};
+  return reinterpret_cast<Reference *>(ref)->decRefCount(
+      *this, /*ref*/ refCount);
 }
 
 napi_status NodeApiEnvironment::getReferenceValue(
@@ -4169,51 +4206,33 @@ napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
   return reinterpret_cast<Reference *>(ref)->destroyFromNative(*this);
 }
 
-// Increments the reference count, optionally returning the resulting count.
-// After this call the reference will be a strong reference because its
-// refcount is >0, and the referenced object is effectively "pinned".
-// Calling this when the refcount is 0 and the object is unavailable
-// results in an error.
 napi_status NodeApiEnvironment::incReference(
     napi_ref ref,
     uint32_t *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(ref);
 
-  // TODO:
-  // Reference *reference = reinterpret_cast<Reference *>(ref);
-  // uint32_t count = reference->incRefCount(*this);
+  uint32_t refCount{};
+  STATUS_CALL(
+      reinterpret_cast<Reference *>(ref)->incRefCount(*this, /*ref*/ refCount));
 
-  // if (result != nullptr) {
-  //   *result = count;
-  // }
-
+  if (result != nullptr) {
+    *result = refCount;
+  }
   return clearLastError();
 }
 
-// Decrements the reference count, optionally returning the resulting count. If
-// the result is 0 the reference is now weak and the object may be GC'd at any
-// time if there are no other references. Calling this when the refcount is
-// already 0 results in an error.
 napi_status NodeApiEnvironment::decReference(
     napi_ref ref,
     uint32_t *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  // TODO:
-  // CHECK_ARG(ref);
+  CHECK_ARG(ref);
 
-  // Reference2 *reference = reinterpret_cast<Reference2 *>(ref);
+  uint32_t refCount{};
+  STATUS_CALL(
+      reinterpret_cast<Reference *>(ref)->decRefCount(*this, /*ref*/ refCount));
 
-  // if (reference->refCount() == 0) {
-  //   return setLastError(napi_generic_failure);
-  // }
-
-  // uint32_t count = reference->decRefCount();
-
-  // if (result != nullptr) {
-  //   *result = count;
-  // }
-
+  if (result != nullptr) {
+    *result = refCount;
+  }
   return clearLastError();
 }
 
