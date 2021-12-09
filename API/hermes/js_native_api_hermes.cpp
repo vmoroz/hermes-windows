@@ -276,48 +276,65 @@ enum class FinalizeReason {
   FinalizerQueue,
 };
 
-template <typename TDerived>
-struct LinkedItem {
-  void linkNext(LinkedItem *item) noexcept {
-    item->prev_ = this;
-    item->next_ = next_;
-    if (item->next_) {
+template <typename T>
+struct LinkedList {
+  LinkedList() noexcept {
+    // The list is circular:
+    // head.next_ points to the first item
+    // head.prev_ points to the last item
+    head.next_ = &head;
+    head.prev_ = &head;
+  }
+
+  struct Item {
+    void linkNext(Item *item) noexcept {
+      if (item->isLinked()) {
+        item->unlink();
+      }
+      item->prev_ = this;
+      item->next_ = next_;
       item->next_->prev_ = item;
+      next_ = item;
     }
-    next_ = item;
-  }
 
-  void unlink() noexcept {
-    if (prev_) {
+    void unlink() noexcept {
       prev_->next_ = next_;
-    }
-    if (next_) {
       next_->prev_ = prev_;
+      prev_ = nullptr;
+      next_ = nullptr;
     }
-    prev_ = nullptr;
-    next_ = nullptr;
+
+    bool isLinked() const noexcept {
+      return prev_ != nullptr;
+    }
+
+    friend LinkedList;
+
+   private:
+    Item *next_{};
+    Item *prev_{};
+  };
+
+  void pushFront(Item *item) noexcept {
+    head.linkNext(item);
   }
 
-  // TODO: add linkLast()
-  // TODO: add LinkedList
-
-  bool isLinked() const noexcept {
-    return prev_ != nullptr;
+  void pushBack(Item *item) noexcept {
+    head.prev_->linkNext(item);
   }
 
   template <typename TLambda>
-  static void forEach(LinkedItem<TDerived> *list, TLambda lambda) noexcept {
-    for (auto ref = list->next_; ref != nullptr;) {
-      // lambda can delete ref - get the next one before calling it.
-      auto nextRef = ref->next_;
-      lambda(static_cast<TDerived*>(ref));
-      ref = nextRef;
+  void forEach(TLambda lambda) noexcept {
+    for (auto item = head.next_; item != &head;) {
+      // lambda can delete the item - get the next one before calling it.
+      auto nextItem = item->next_;
+      lambda(static_cast<T *>(item));
+      item = nextItem;
     }
   }
 
  private:
-  LinkedItem *next_{};
-  LinkedItem *prev_{};
+  Item head;
 };
 
 napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
@@ -421,7 +438,7 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
  private:
   NodeApiEnvironment &env_;
   void *nativeData_{};
-  LinkedItem<Finalizer> finalizers_;
+  LinkedList<Finalizer> finalizers_;
 };
 
 struct NodeApiEnvironment {
@@ -473,10 +490,10 @@ struct NodeApiEnvironment {
   // have `napi_finalizer` callbacks, because we must first finalize the
   // ones that have such a callback. See `~NodeApiEnvironment()` above for
   // details.
-  LinkedItem<Reference> gcRoots_{};
-  LinkedItem<Reference> finalizingGCRoots_{};
-  LinkedItem<Finalizer> finalizerQueue_{};
-  LinkedItem<Reference> danglingRefList_{};
+  LinkedList<Reference> gcRoots_{};
+  LinkedList<Reference> finalizingGCRoots_{};
+  LinkedList<Finalizer> finalizerQueue_{};
+  LinkedList<Reference> danglingRefList_{};
   bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
@@ -1125,7 +1142,7 @@ struct HermesPreparedJavaScript {
 // TODO: Can we utilize the Hermes weak roots?
 
 // A base class for all references.
-struct Reference : LinkedItem<Reference> {
+struct Reference : LinkedList<Reference>::Item {
   Reference() = default;
 
   Reference(uint32_t initialRefCount) noexcept : refCount_(initialRefCount) {}
@@ -1174,9 +1191,9 @@ struct Reference : LinkedItem<Reference> {
 
   static void getGCRoots(
       NodeApiEnvironment &env,
-      LinkedItem<Reference> *list,
+      LinkedList<Reference> &list,
       vm::RootAcceptor &acceptor) noexcept {
-    forEach(list, [&](Reference *ref) {
+    list.forEach([&](Reference *ref) {
       if (vm::PinnedHermesValue *value = ref->getGCRoot(env)) {
         acceptor.accept(*value);
       }
@@ -1185,9 +1202,9 @@ struct Reference : LinkedItem<Reference> {
 
   static void getGCWeakRoots(
       NodeApiEnvironment &env,
-      LinkedItem<Reference> *list,
+      LinkedList<Reference> &list,
       vm::WeakRefAcceptor &acceptor) noexcept {
-    forEach(list, [&](Reference *ref) {
+    list.forEach([&](Reference *ref) {
       if (vm::WeakRef<vm::HermesValue> *weakRef = ref->getGCWeakRoot(env)) {
         acceptor.accept(*weakRef);
       }
@@ -1209,7 +1226,7 @@ struct Reference : LinkedItem<Reference> {
 };
 
 //
-struct Finalizer : LinkedItem<Finalizer> {
+struct Finalizer : LinkedList<Finalizer>::Item {
   Finalizer(
       void *nativeData,
       napi_finalize finalizeCallback,
@@ -1241,9 +1258,8 @@ struct Finalizer : LinkedItem<Finalizer> {
 
   static void finalizeAll(
       NodeApiEnvironment &env,
-      LinkedItem<Finalizer> *list) noexcept {
-    Finalizer::forEach(
-        list, [&](Finalizer *finalizer) { finalizer->finalize(env); });
+      LinkedList<Finalizer> &list) noexcept {
+    list.forEach([&](Finalizer *finalizer) { finalizer->finalize(env); });
   }
 
  private:
@@ -1399,7 +1415,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
  protected:
   napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
     STATUS_CALL(ComplexReference::onFirstRefCount(env));
-    LinkedItem<Finalizer>::unlink();
+    LinkedList<Finalizer>::Item::unlink();
     return napi_ok;
   }
 
@@ -1410,7 +1426,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   }
 
   bool isInFinalizerQueue() const noexcept {
-    return LinkedItem<Finalizer>::isLinked();
+    return LinkedList<Finalizer>::Item::isLinked();
   }
 
   // The destroyFromNative method is run from native methods such as the
@@ -1473,13 +1489,13 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
 };
 
 ExternalValue::~ExternalValue() {
-  Finalizer::forEach(&finalizers_, [&](Finalizer *finalizer) {
+  finalizers_.forEach([&](Finalizer *finalizer) {
     env_.addToFinalizerQueue(finalizer);
   });
 }
 
 void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
-  finalizers_.linkNext(finalizer);
+  finalizers_.pushBack(finalizer);
 }
 
 /*static*/ vm::CallResult<vm::HermesValue>
@@ -1563,13 +1579,13 @@ NodeApiEnvironment::NodeApiEnvironment(
     stackValues_.forEach([&](const vm::PinnedHermesValue &phv) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(phv));
     });
-    Reference::getGCRoots(*this, &gcRoots_, acceptor);
-    Reference::getGCRoots(*this, &finalizingGCRoots_, acceptor);
+    Reference::getGCRoots(*this, gcRoots_, acceptor);
+    Reference::getGCRoots(*this, finalizingGCRoots_, acceptor);
   });
   runtime_.addCustomWeakRootsFunction(
       [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
-        Reference::getGCWeakRoots(*this, &gcRoots_, acceptor);
-        Reference::getGCWeakRoots(*this, &finalizingGCRoots_, acceptor);
+        Reference::getGCWeakRoots(*this, gcRoots_, acceptor);
+        Reference::getGCWeakRoots(*this, finalizingGCRoots_, acceptor);
       });
   // runtime_.addCustomSnapshotFunction(
   //     [this](vm::HeapSnapshot &snap) {
@@ -1709,7 +1725,7 @@ napi_status NodeApiEnvironment::createWeakReference(
   vm::WeakRefSlot *weakRefSlot{};
   STATUS_CALL(createWeakRef(phv(value), &weakRefSlot));
   auto weakRef = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
-  gcRoots_.linkNext(weakRef);
+  gcRoots_.pushBack(weakRef);
   *result = reinterpret_cast<napi_ext_ref>(weakRef);
   return clearLastError();
 }
@@ -4381,7 +4397,7 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
 }
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
-  finalizerQueue_.linkNext(finalizer);
+  finalizerQueue_.pushBack(finalizer);
 }
 
 void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
@@ -5291,7 +5307,7 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
 napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
   if (!isRunningFinalizers_) {
     isRunningFinalizers_ = true;
-    Finalizer::finalizeAll(*this, &finalizerQueue_);
+    Finalizer::finalizeAll(*this, finalizerQueue_);
     isRunningFinalizers_ = false;
   }
   return napi_ok;
