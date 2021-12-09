@@ -510,6 +510,8 @@ struct NodeApiEnvironment {
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addToDanglingRefList(Reference *reference) noexcept;
+  void addGCRoot(Reference *reference) noexcept;
+  void addFinalizingGCRoot(Reference *reference) noexcept;
 
   napi_status setLastError(
       napi_status error_code,
@@ -936,13 +938,13 @@ struct NodeApiEnvironment {
 
   napi_status addFinalizer(
       napi_value object,
-      void *nativeObject,
+      void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
   napi_status wrapObject(
       napi_value object,
-      void *nativeObject,
+      void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
@@ -989,7 +991,7 @@ struct NodeApiEnvironment {
       uint32_t initialRefCount,
       bool deleteSelf,
       napi_finalize finalizeCallback,
-      void *nativeObject,
+      void *nativeData,
       void *finalizeHint);
 
   napi_status createStrongReference(
@@ -998,7 +1000,7 @@ struct NodeApiEnvironment {
 
   napi_status createStrongReferenceWithData(
       napi_value value,
-      void *nativeObject,
+      void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ext_ref *result) noexcept;
@@ -1343,6 +1345,23 @@ struct WeakReference final : Reference {
 };
 
 struct ComplexReference : Reference {
+  static napi_status create(
+      NodeApiEnvironment &env,
+      vm::PinnedHermesValue value,
+      uint32_t initialRefCount,
+      ComplexReference **result) noexcept {
+    vm::WeakRefSlot *weakRefSlot{};
+    STATUS_CALL(env.createWeakRef(
+        initialRefCount == 0
+            ? value
+            : env.getPredefined(NapiPredefined::UndefinedValue),
+        &weakRefSlot));
+    *result = new ComplexReference(
+        initialRefCount, value, vm::WeakRef<vm::HermesValue>(weakRefSlot));
+    env.addGCRoot(*result);
+    return env.clearLastError();
+  }
+
   ComplexReference(
       uint32_t initialRefCount,
       vm::PinnedHermesValue value,
@@ -1489,9 +1508,8 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
 };
 
 ExternalValue::~ExternalValue() {
-  finalizers_.forEach([&](Finalizer *finalizer) {
-    env_.addToFinalizerQueue(finalizer);
-  });
+  finalizers_.forEach(
+      [&](Finalizer *finalizer) { env_.addToFinalizerQueue(finalizer); });
 }
 
 void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
@@ -1707,13 +1725,13 @@ napi_status NodeApiEnvironment::createStrongReference(
 
 napi_status NodeApiEnvironment::createStrongReferenceWithData(
     napi_value value,
-    void *nativeObject,
+    void *nativeData,
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_ext_ref *result) noexcept {
   CHECK_ARG(result);
   *result = reinterpret_cast<napi_ext_ref>(new FinalizingStrongReference(
-      phv(value), nativeObject, finalizeCallback, finalizeHint));
+      phv(value), nativeData, finalizeCallback, finalizeHint));
   return clearLastError();
 }
 
@@ -1788,7 +1806,7 @@ const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
 
 napi_status NodeApiEnvironment::addFinalizer(
     napi_value object,
-    void *nativeObject,
+    void *nativeData,
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_ref *result) noexcept {
@@ -1797,24 +1815,31 @@ napi_status NodeApiEnvironment::addFinalizer(
     CHECK_ARG(finalizeCallback);
 
     // TODO:
-    // Reference2 *reference = createReference(
-    //     phv(object),
-    //     0,
-    //     /*deleteSelf:*/ result == nullptr,
-    //     finalizeCallback,
-    //     nativeObject,
-    //     finalizeHint);
-
     // if (result != nullptr) {
-    //   *result = reinterpret_cast<napi_ref>(reference);
+    //   // The returned reference should be deleted via napi_delete_reference()
+    //   // ONLY in response to the finalize callback invocation. (If it is
+    //   deleted
+    //   // before then, then the finalize callback will never be invoked.)
+
+    //   auto reference = new FinalizingComplexReference(0, phv(object), );
+
+    //   // reference = v8impl::Reference::New(
+    //   //     env, obj, 0, false, finalize_cb, native_object, finalize_hint);
+    //   // *result = reinterpret_cast<napi_ref>(reference);
+    // } else {
+    //   // Add simple finalizer to JS object.
+    //   STATUS_CALL(addObjectFinalizer(
+    //       &phv(object),
+    //       new Finalizer(nativeData, finalizeCallback, finalizeHint)));
     // }
+
     return clearLastError();
   });
 }
 
 napi_status NodeApiEnvironment::wrapObject(
     napi_value object,
-    void *nativeObject,
+    void *nativeData,
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_ref *result) noexcept {
@@ -1841,7 +1866,7 @@ napi_status NodeApiEnvironment::wrapObject(
     //     0,
     //     /*deleteSelf:*/ result == nullptr,
     //     finalizeCallback,
-    //     nativeObject,
+    //     nativeData,
     //     finalizeCallback ? finalizeHint : nullptr);
     // if (result != nullptr) {
     //   *result = reinterpret_cast<napi_ref>(reference);
@@ -1926,7 +1951,7 @@ Reference *NodeApiEnvironment::createReference(
     uint32_t initialRefCount,
     bool deleteSelf,
     napi_finalize finalizeCallback,
-    void *nativeObject,
+    void *nativeData,
     void *finalizeHint) {
   Reference *reference{};
   // if (finalizeCallback) {
@@ -1935,14 +1960,14 @@ Reference *NodeApiEnvironment::createReference(
   //       value,
   //       initialRefCount,
   //       deleteSelf,
-  //       nativeObject,
+  //       nativeData,
   //       finalizeCallback,
   //       finalizeHint);
   //   finalizingRefList_.linkNext(reference);
   // } else {
   //   reference =
   //       new Reference2(*this, value, initialRefCount, deleteSelf,
-  //       nativeObject);
+  //       nativeData);
   //   refList_.linkNext(reference);
   // }
 
@@ -4119,11 +4144,11 @@ napi_status NodeApiEnvironment::createReference(
   CHECK_OBJECT_ARG(value);
   CHECK_ARG(result);
 
-  // TODO:
-  // Reference2 *reference = Reference2::create(
-  //     this, phv(value), initialRefCount, /*deleteSelf:*/ false);
+  ComplexReference *reference{};
+  STATUS_CALL(
+      ComplexReference::create(*this, phv(value), initialRefCount, &reference));
 
-  // *result = reinterpret_cast<napi_ref>(reference);
+  *result = reinterpret_cast<napi_ref>(reference);
   return clearLastError();
 }
 
@@ -4403,6 +4428,14 @@ void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
 void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
   // TODO:
   // danglingRefList_.linkNext(reference);
+}
+
+void NodeApiEnvironment::addGCRoot(Reference *reference) noexcept {
+  gcRoots_.pushBack(reference);
+}
+
+void NodeApiEnvironment::addFinalizingGCRoot(Reference *reference) noexcept {
+  finalizingGCRoots_.pushBack(reference);
 }
 
 template <typename TLambda>
