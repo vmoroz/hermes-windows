@@ -1145,45 +1145,29 @@ struct HermesPreparedJavaScript {
 
 // A base class for all references.
 struct Reference : LinkedList<Reference>::Item {
-  Reference() = default;
-
-  Reference(uint32_t initialRefCount) noexcept : refCount_(initialRefCount) {}
-
   virtual ~Reference() noexcept {
     unlink();
   }
 
+  virtual napi_status destroy(NodeApiEnvironment &env) noexcept {
+    return env.genericFailure("Cannot directly destroy this reference.");
+  }
+
   virtual napi_status incRefCount(
       NodeApiEnvironment &env,
-      uint32_t &result) noexcept {
-    if (refCount_ == 0) {
-      STATUS_CALL(onFirstRefCount(env));
-    }
-    if (++refCount_ > std::numeric_limits<uint32_t>::max()) {
-      return env.genericFailure("The ref count overflow.");
-    }
-    return napi_ok;
+      uint32_t & /*result*/) noexcept {
+    return env.genericFailure("This reference does not support ref count.");
   }
 
   virtual napi_status decRefCount(
       NodeApiEnvironment &env,
       uint32_t &result) noexcept {
-    // TODO: make better use of atomic value
-    if (refCount_ == 0) {
-      return env.genericFailure("The ref count must not be negative.");
-    }
-    if (--refCount_ == 0) {
-      STATUS_CALL(onLastRefCount(env));
-    }
-    return napi_ok;
+    return env.genericFailure("This reference does not support ref count.");
   }
 
-  uint32_t refCount() const noexcept {
-    return refCount_;
+  virtual const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept {
+    return env.getPredefined(NapiPredefined::UndefinedValue);
   }
-
-  virtual const vm::PinnedHermesValue &value(
-      NodeApiEnvironment &env) noexcept = 0;
 
   virtual vm::PinnedHermesValue *getGCRoot(
       NodeApiEnvironment & /*env*/) noexcept {
@@ -1193,10 +1177,6 @@ struct Reference : LinkedList<Reference>::Item {
   virtual vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
       NodeApiEnvironment & /*env*/) noexcept {
     return nullptr;
-  }
-
-  virtual napi_status destroyFromNative(NodeApiEnvironment & /*env*/) noexcept {
-    return napi_invalid_arg; // TODO: add error message
   }
 
   static void getGCRoots(
@@ -1220,21 +1200,9 @@ struct Reference : LinkedList<Reference>::Item {
       }
     });
   }
-
- protected:
-  virtual napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept {
-    return env.genericFailure("The ref count must not bounce from zero.");
-  }
-
-  virtual napi_status onLastRefCount(NodeApiEnvironment & /*env*/) noexcept {
-    delete this;
-    return napi_ok;
-  }
-
- private:
-  std::atomic<uint32_t> refCount_{1};
 };
 
+// A reference with a ref count that can be changed from any thread.
 struct AtomicRefCountReference : Reference {
   napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
@@ -1314,7 +1282,7 @@ struct Finalizer : LinkedList<Finalizer>::Item {
 };
 
 // Wrapper around vm::PinnedHermesValue that implements reference counting.
-struct StrongReference : Reference {
+struct StrongReference : AtomicRefCountReference {
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
 
   const vm::PinnedHermesValue &value(
@@ -1355,6 +1323,8 @@ struct FinalizingStrongReference final : StrongReference, Finalizer {
       return nullptr;
     }
   }
+
+  // TODO: allow finalizer to delete this type of objects
 };
 
 // Ref-counted weak reference.
@@ -1403,11 +1373,42 @@ struct ComplexReference : Reference {
       uint32_t initialRefCount,
       vm::PinnedHermesValue value,
       vm::WeakRef<vm::HermesValue> weakRef) noexcept
-      : Reference(initialRefCount), value_(value), weakRef_(weakRef) {}
+      : refCount_(initialRefCount), value_(value), weakRef_(weakRef) {}
+
+  napi_status destroy(NodeApiEnvironment &env) noexcept override {
+    delete this;
+    return env.clearLastError();
+  }
+
+  napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    if (refCount_ == 0) {
+      value_ = env.lockWeakObject(weakRef_);
+    }
+    if (++refCount_ > MaxRefCount) {
+      return env.genericFailure("The ref count overflow.");
+    }
+    result = refCount_;
+    return env.clearLastError();
+  }
+
+  napi_status decRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    if (refCount_ == 0) {
+      return env.genericFailure("The ref count must not be negative.");
+    }
+    if (--refCount_ == 0) {
+      vm::WeakRefSlot *weakRefSlot{};
+      STATUS_CALL(env.createWeakRef(value_, &weakRefSlot));
+      weakRef_ = vm::WeakRef<vm::HermesValue>{weakRefSlot};
+    }
+    result = refCount_;
+    return env.clearLastError();
+  }
 
   const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept override {
-    if (refCount() > 0) {
+    if (refCount_ > 0) {
       return value_;
     } else {
       return env.lockWeakObject(weakRef_);
@@ -1416,44 +1417,21 @@ struct ComplexReference : Reference {
 
   vm::PinnedHermesValue *getGCRoot(
       NodeApiEnvironment & /*env*/) noexcept override {
-    if (refCount() > 0) {
-      return &value_;
-    } else {
-      return nullptr;
-    }
+    return (refCount_ > 0) ? &value_ : nullptr;
   }
 
   vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
       NodeApiEnvironment & /*env*/) noexcept override {
-    if (refCount() == 0) {
-      return &weakRef_;
-    } else {
-      return nullptr;
-    }
-  }
-
-  napi_status destroyFromNative(
-      NodeApiEnvironment & /*env*/) noexcept override {
-    delete this;
-    return napi_ok;
-  }
-
- protected:
-  napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
-    value_ = env.lockWeakObject(weakRef_);
-    return napi_ok;
-  }
-
-  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    vm::WeakRefSlot *weakRefSlot{};
-    STATUS_CALL(env.createWeakRef(value_, &weakRefSlot));
-    weakRef_ = vm::WeakRef<vm::HermesValue>{weakRefSlot};
-    return env.clearLastError();
+    return (refCount_ == 0) ? &weakRef_ : nullptr;
   }
 
  private:
+  uint32_t refCount_;
   vm::PinnedHermesValue value_;
   vm::WeakRef<vm::HermesValue> weakRef_;
+
+  static constexpr uint32_t MaxRefCount =
+      std::numeric_limits<uint32_t>::max() / 2;
 };
 
 struct FinalizingComplexReference : ComplexReference, Finalizer {
@@ -1474,25 +1452,31 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
     }
   }
 
+  napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    STATUS_CALL(ComplexReference::incRefCount(env, result));
+    if (result == 1) {
+      LinkedList<Finalizer>::Item::unlink();
+    }
+    return env.clearLastError();
+  }
+
+  napi_status decRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
+      override {
+    STATUS_CALL(ComplexReference::decRefCount(env, result));
+    if (result == 0) {
+      // TODO:
+      // return  env.addObjectFinalizer(&value_, this);
+    }
+    return env.clearLastError();
+  }
+
  protected:
-  napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
-    STATUS_CALL(ComplexReference::onFirstRefCount(env));
-    LinkedList<Finalizer>::Item::unlink();
-    return napi_ok;
-  }
-
-  napi_status onLastRefCount(NodeApiEnvironment &env) noexcept override {
-    // TODO:
-    // env.addObjectFinalizer(&value_, this);
-    return ComplexReference::onLastRefCount(env);
-  }
-
   bool isInFinalizerQueue() const noexcept {
     return LinkedList<Finalizer>::Item::isLinked();
   }
 
-  napi_status destroyFromNative(
-      NodeApiEnvironment & /*env*/) noexcept override {
+  napi_status destroy(NodeApiEnvironment & /*env*/) noexcept override {
     if (!isInFinalizerQueue()) {
       // TODO: set delete in GC instead
       delete this;
@@ -4198,12 +4182,9 @@ napi_status NodeApiEnvironment::createReference(
   return clearLastError();
 }
 
-// Deletes a reference. The referenced value is released, and may be GC'd unless
-// there are other references to it.
 napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(ref);
-  return reinterpret_cast<Reference *>(ref)->destroyFromNative(*this);
+  return reinterpret_cast<Reference *>(ref)->destroy(*this);
 }
 
 napi_status NodeApiEnvironment::incReference(
