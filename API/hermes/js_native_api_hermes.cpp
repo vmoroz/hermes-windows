@@ -1238,49 +1238,6 @@ struct AtomicRefCountReference : Reference {
       std::numeric_limits<uint32_t>::max() / 2;
 };
 
-//
-struct Finalizer : LinkedList<Finalizer>::Item {
-  Finalizer(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : nativeData_(nativeData),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
-
-  Finalizer(const Finalizer & /*other*/) = delete;
-  Finalizer &operator=(const Finalizer & /*other*/) = delete;
-
-  virtual ~Finalizer() noexcept {
-    unlink();
-  }
-
-  napi_status callCustomFinalizer(NodeApiEnvironment &env) noexcept {
-    if (finalizeCallback_) {
-      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-      return env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
-    }
-    return napi_ok;
-  }
-
-  virtual void finalize(NodeApiEnvironment &env) noexcept {
-    // TODO: Handle finalizer error
-    callCustomFinalizer(env);
-    delete this;
-  }
-
-  static void finalizeAll(
-      NodeApiEnvironment &env,
-      LinkedList<Finalizer> &list) noexcept {
-    list.forEach([&](Finalizer *finalizer) { finalizer->finalize(env); });
-  }
-
- private:
-  void *nativeData_{};
-  napi_finalize finalizeCallback_{};
-  void *finalizeHint_{};
-};
-
 // Wrapper around vm::PinnedHermesValue that implements reference counting.
 struct StrongReference : AtomicRefCountReference {
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
@@ -1302,29 +1259,6 @@ struct StrongReference : AtomicRefCountReference {
 
  private:
   vm::PinnedHermesValue value_;
-};
-
-// Associates data with StrongReference.
-struct FinalizingStrongReference final : StrongReference, Finalizer {
-  FinalizingStrongReference(
-      vm::PinnedHermesValue value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : StrongReference(value),
-        Finalizer(nativeData, finalizeCallback, finalizeHint) {}
-
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment &env) noexcept override {
-    if (refCount() > 0) {
-      return StrongReference::getGCRoot(env);
-    } else {
-      StrongReference::unlink();
-      env.addToFinalizerQueue(this);
-      return nullptr;
-    }
-  }
-
-  // TODO: allow finalizer to delete this type of objects
 };
 
 // Ref-counted weak reference.
@@ -1432,6 +1366,72 @@ struct ComplexReference : Reference {
 
   static constexpr uint32_t MaxRefCount =
       std::numeric_limits<uint32_t>::max() / 2;
+};
+
+//
+struct Finalizer : LinkedList<Finalizer>::Item {
+  Finalizer(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : nativeData_(nativeData),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+  Finalizer(const Finalizer & /*other*/) = delete;
+  Finalizer &operator=(const Finalizer & /*other*/) = delete;
+
+  virtual ~Finalizer() noexcept {
+    unlink();
+  }
+
+  napi_status callCustomFinalizer(NodeApiEnvironment &env) noexcept {
+    if (finalizeCallback_) {
+      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      return env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
+    }
+    return napi_ok;
+  }
+
+  virtual void finalize(NodeApiEnvironment &env) noexcept {
+    // TODO: Handle finalizer error
+    callCustomFinalizer(env);
+    delete this;
+  }
+
+  static void finalizeAll(
+      NodeApiEnvironment &env,
+      LinkedList<Finalizer> &list) noexcept {
+    list.forEach([&](Finalizer *finalizer) { finalizer->finalize(env); });
+  }
+
+ private:
+  void *nativeData_{};
+  napi_finalize finalizeCallback_{};
+  void *finalizeHint_{};
+};
+
+// Associates data with StrongReference.
+struct FinalizingStrongReference final : StrongReference, Finalizer {
+  FinalizingStrongReference(
+      vm::PinnedHermesValue value,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : StrongReference(value),
+        Finalizer(nativeData, finalizeCallback, finalizeHint) {}
+
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment &env) noexcept override {
+    if (refCount() > 0) {
+      return StrongReference::getGCRoot(env);
+    } else {
+      StrongReference::unlink();
+      env.addToFinalizerQueue(this);
+      return nullptr;
+    }
+  }
+
+  // TODO: allow finalizer to delete this type of objects
 };
 
 struct FinalizingComplexReference : ComplexReference, Finalizer {
