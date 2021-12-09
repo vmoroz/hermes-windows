@@ -1191,6 +1191,10 @@ struct Reference : LinkedList<Reference>::Item {
     return nullptr;
   }
 
+  virtual napi_status destroyFromNative(NodeApiEnvironment & /*env*/) noexcept {
+    return napi_invalid_arg; // TODO: add error message
+  }
+
   static void getGCRoots(
       NodeApiEnvironment &env,
       LinkedList<Reference> &list,
@@ -1395,6 +1399,12 @@ struct ComplexReference : Reference {
     }
   }
 
+  napi_status destroyFromNative(
+      NodeApiEnvironment & /*env*/) noexcept override {
+    delete this;
+    return napi_ok;
+  }
+
  protected:
   napi_status onFirstRefCount(NodeApiEnvironment &env) noexcept override {
     value_ = env.lockWeakObject(weakRef_);
@@ -1448,16 +1458,15 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
     return LinkedList<Finalizer>::Item::isLinked();
   }
 
-  // The destroyFromNative method is run from native methods such as the
-  // unwrapObject or deleteReference. In case if the reference is in the
-  // finalizer queue, it defers deletion of the object to the finalizer.
-  static void destroyFromNative(
-      FinalizingComplexReference *reference) noexcept {
-    if (!reference->isInFinalizerQueue()) {
-      delete reference;
+  napi_status destroyFromNative(
+      NodeApiEnvironment & /*env*/) noexcept override {
+    if (!isInFinalizerQueue()) {
+      // TODO: set delete in GC instead
+      delete this;
     } else {
-      reference->deleteSelf_ = true;
+      deleteSelf_ = true;
     }
+    return napi_ok;
   }
 
   // There are three scenarios when the finalize is called:
@@ -4157,11 +4166,7 @@ napi_status NodeApiEnvironment::createReference(
 napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(ref);
-
-  // TODO:
-  // Reference2::destroy(reinterpret_cast<Reference2 *>(ref));
-
-  return clearLastError();
+  return reinterpret_cast<Reference *>(ref)->destroyFromNative(*this);
 }
 
 // Increments the reference count, optionally returning the resulting count.
