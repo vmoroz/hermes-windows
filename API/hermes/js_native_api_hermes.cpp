@@ -341,6 +341,18 @@ napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
   return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
 }
 
+namespace {
+
+const vm::PinnedHermesValue *phv(napi_value value) noexcept {
+  return reinterpret_cast<vm::PinnedHermesValue *>(value);
+}
+
+const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
+  return value;
+}
+
+} // namespace
+
 struct HFContext;
 
 struct CallbackInfo final {
@@ -500,7 +512,6 @@ struct NodeApiEnvironment {
   int openCallbackScopeCount_{};
   void *instanceData_{};
 
-  static vm::PinnedHermesValue *phv(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
       vm::PinnedHermesValue *value) noexcept;
@@ -1009,8 +1020,8 @@ struct NodeApiEnvironment {
       napi_value value,
       napi_ext_ref *result) noexcept;
 
-  napi_status createWeakRef(
-      vm::PinnedHermesValue value,
+  napi_status createWeakRefSlot(
+      const vm::PinnedHermesValue &value,
       vm::WeakRefSlot **result) noexcept;
 
   napi_status incReference(napi_ext_ref ref) noexcept;
@@ -1310,12 +1321,16 @@ struct StrongReference : AtomicRefCountReference {
 struct WeakReference final : AtomicRefCountReference {
   static napi_status create(
       NodeApiEnvironment &env,
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue *value,
       WeakReference **result) noexcept {
+    CHECK_OBJECT_ARG(value);
     vm::WeakRefSlot *weakRefSlot{};
-    STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
-    *result = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
+    STATUS_CALL(env.createWeakRefSlot(*value, &weakRefSlot));
+    auto ref = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
     env.addGCRoot(*result);
+    if (result) {
+      *result = ref;
+    }
     return env.clearLastError();
   }
 
@@ -1356,7 +1371,7 @@ struct ComplexReference : Reference {
       *result = new ComplexReference(initialRefCount, value);
     } else {
       vm::WeakRefSlot *weakRefSlot{};
-      STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
+      STATUS_CALL(env.createWeakRefSlot(value, &weakRefSlot));
       *result = new ComplexReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
     }
     env.addGCRoot(*result);
@@ -1379,7 +1394,7 @@ struct ComplexReference : Reference {
     if (--refCount_ == 0) {
       vm::WeakRefSlot *weakRefSlot{};
       if (value_.isObject()) {
-        STATUS_CALL(env.createWeakRef(value_, &weakRefSlot));
+        STATUS_CALL(env.createWeakRefSlot(value_, &weakRefSlot));
       }
       weakRef_ = vm::WeakRef<vm::HermesValue>{weakRefSlot};
     }
@@ -1529,13 +1544,14 @@ struct FinalizingStrongReference final
       ReferenceFinalizer<FinalizingStrongReference> {
   static napi_status create(
       NodeApiEnvironment &env,
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue *value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       FinalizingStrongReference **result) noexcept {
+    CHECK_ARG(value);
     auto ref = new FinalizingStrongReference(
-        value, nativeData, finalizeCallback, finalizeHint);
+        *value, nativeData, finalizeCallback, finalizeHint);
     env.addFinalizingGCRoot(ref);
     if (result) {
       *result = ref;
@@ -1557,7 +1573,7 @@ struct FinalizingStrongReference final
 
  private:
   FinalizingStrongReference(
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue &value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
@@ -1585,7 +1601,7 @@ struct FinalizingComplexReference final
           initialRefCount, value, nativeData, finalizeCallback, finalizeHint);
     } else {
       vm::WeakRefSlot *weakRefSlot{};
-      STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
+      STATUS_CALL(env.createWeakRefSlot(value, &weakRefSlot));
       *result = new FinalizingComplexReference(
           vm::WeakRef<vm::HermesValue>(weakRefSlot),
           nativeData,
@@ -1702,7 +1718,7 @@ HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
   auto result = hfc->hostCallback_(
       reinterpret_cast<napi_env>(&env),
       reinterpret_cast<napi_callback_info>(&callbackInfo));
-  return *env.phv(result);
+  return *phv(result);
   // TODO: handle errors
   // TODO: Add call in module
 }
@@ -1901,25 +1917,24 @@ napi_status NodeApiEnvironment::createStrongReferenceWithData(
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_ext_ref *result) noexcept {
-  CHECK_ARG(result);
-  FinalizingStrongReference *ref{};
-  STATUS_CALL(FinalizingStrongReference::create(
-      *this, *phv(value), nativeData, finalizeCallback, finalizeHint, &ref));
-  *result = reinterpret_cast<napi_ext_ref>(ref);
-  return clearLastError();
+  return FinalizingStrongReference::create(
+      *this,
+      phv(value),
+      nativeData,
+      finalizeCallback,
+      finalizeHint,
+      reinterpret_cast<FinalizingStrongReference **>(result));
 }
 
 napi_status NodeApiEnvironment::createWeakReference(
     napi_value value,
     napi_ext_ref *result) noexcept {
-  CHECK_OBJECT_ARG(value);
-  CHECK_ARG(result);
   return WeakReference::create(
-      *this, *phv(value), reinterpret_cast<WeakReference **>(result));
+      *this, phv(value), reinterpret_cast<WeakReference **>(result));
 }
 
-napi_status NodeApiEnvironment::createWeakRef(
-    vm::PinnedHermesValue value,
+napi_status NodeApiEnvironment::createWeakRefSlot(
+    const vm::PinnedHermesValue &value,
     vm::WeakRefSlot **result) noexcept {
   RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
   return handleExceptions([&] {
@@ -4214,13 +4229,14 @@ napi_status NodeApiEnvironment::createExternal(
     *result = addStackValue(decoratedObj.getHermesValue());
 
     if (finalizeCallback) {
-      createReference(
-          *phv(*result),
-          /*initialRefCount:*/ 0,
-          /*deleteSelf:*/ true,
-          finalizeCallback,
-          nativeData,
-          finalizeHint);
+      // TODO:
+      // createReference(
+      //     *phv(*result),
+      //     /*initialRefCount:*/ 0,
+      //     /*deleteSelf:*/ true,
+      //     finalizeCallback,
+      //     nativeData,
+      //     finalizeHint);
     }
 
     return clearLastError();
@@ -4514,10 +4530,6 @@ napi_status NodeApiEnvironment::newInstance(
   // *result = v8impl::JsValueFromV8LocalValue(maybe.ToLocalChecked());
   // return GET_RETURN_STATUS(env);
   return napi_ok;
-}
-
-vm::PinnedHermesValue *NodeApiEnvironment::phv(napi_value value) noexcept {
-  return reinterpret_cast<vm::PinnedHermesValue *>(value);
 }
 
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
