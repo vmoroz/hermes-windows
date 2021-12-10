@@ -351,6 +351,14 @@ const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
   return value;
 }
 
+Reference *asReference(napi_ext_ref ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
+Reference *asReference(napi_ref ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
 } // namespace
 
 struct HFContext;
@@ -1183,7 +1191,7 @@ struct Reference : LinkedList<Reference>::Item {
 
   virtual napi_status decRefCount(
       NodeApiEnvironment &env,
-      uint32_t &result) noexcept {
+      uint32_t & /*result*/) noexcept {
     return env.genericFailure("This reference does not support ref count.");
   }
 
@@ -1323,7 +1331,7 @@ struct WeakReference final : AtomicRefCountReference {
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
       WeakReference **result) noexcept {
-    CHECK_OBJECT_ARG(value);
+    CHECK_ARG(value);
     vm::WeakRefSlot *weakRefSlot{};
     STATUS_CALL(env.createWeakRefSlot(*value, &weakRefSlot));
     auto ref = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
@@ -1933,37 +1941,38 @@ napi_status NodeApiEnvironment::createWeakReference(
       *this, phv(value), reinterpret_cast<WeakReference **>(result));
 }
 
+// TODO: move next to helper methods
 napi_status NodeApiEnvironment::createWeakRefSlot(
     const vm::PinnedHermesValue &value,
     vm::WeakRefSlot **result) noexcept {
   RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
+  CHECK_ARG(result);
   return handleExceptions([&] {
     vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
     *result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value)
                   .unsafeGetSlot();
-    return napi_ok;
+    return clearLastError();
   });
 }
 
 napi_status NodeApiEnvironment::incReference(napi_ext_ref ref) noexcept {
   CHECK_ARG(ref);
   uint32_t refCount{};
-  return reinterpret_cast<Reference *>(ref)->incRefCount(
-      *this, /*ref*/ refCount);
+  return asReference(ref)->incRefCount(*this, /*ref*/ refCount);
 }
 
 napi_status NodeApiEnvironment::decReference(napi_ext_ref ref) noexcept {
   CHECK_ARG(ref);
   uint32_t refCount{};
-  return reinterpret_cast<Reference *>(ref)->decRefCount(
-      *this, /*ref*/ refCount);
+  return asReference(ref)->decRefCount(*this, /*ref*/ refCount);
 }
 
 napi_status NodeApiEnvironment::getReferenceValue(
     napi_ext_ref ref,
     napi_value *result) noexcept {
   CHECK_ARG(ref);
-  *result = toNapiValue(reinterpret_cast<Reference *>(ref)->value(*this));
+  CHECK_ARG(result);
+  *result = addStackValue(asReference(ref)->value(*this));
   return clearLastError();
 }
 
