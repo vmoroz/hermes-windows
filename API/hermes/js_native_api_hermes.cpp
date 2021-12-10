@@ -58,15 +58,12 @@ using ::hermes::hermesLog;
     }                                  \
   } while (false)
 
-#define ENV_RETURN_STATUS_IF_FALSE(env, condition, status) \
-  do {                                                     \
-    if (!(condition)) {                                    \
-      return env.setLastError((status));                   \
-    }                                                      \
-  } while (false)
-
 #define RETURN_STATUS_IF_FALSE(condition, status) \
-  ENV_RETURN_STATUS_IF_FALSE((*this), condition, status)
+  do {                                            \
+    if (!(condition)) {                           \
+      return env.setLastError((status));          \
+    }                                             \
+  } while (false)
 
 #define CRASH_IF_FALSE(condition)  \
   do {                             \
@@ -101,7 +98,7 @@ using ::hermes::hermesLog;
 #define CHECK_FUNCTION_ARG(arg)                    \
   do {                                             \
     CHECK_OBJECT_ARG(arg);                         \
-    if (vm::vmisa<vm::Callable>(*phv(arg))) {       \
+    if (vm::vmisa<vm::Callable>(*phv(arg))) {      \
       return setLastError(napi_function_expected); \
     }                                              \
   } while (false)
@@ -1063,6 +1060,9 @@ struct NodeApiEnvironment {
 
   int openHandleScopes_{};
   int openCallbackScopes_{};
+
+ private:
+  NodeApiEnvironment &env{*this};
 };
 
 struct HermesBuffer : Buffer {
@@ -1273,10 +1273,14 @@ struct AtomicRefCountReference : Reference {
 struct StrongReference : AtomicRefCountReference {
   static napi_status create(
       NodeApiEnvironment &env,
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue *value,
       StrongReference **result) noexcept {
-    *result = new StrongReference(value);
-    env.addGCRoot(*result);
+    CHECK_ARG(value);
+    auto ref = new StrongReference(*value);
+    env.addGCRoot(ref);
+    if (result) {
+      *result = ref;
+    }
     return env.clearLastError();
   }
 
@@ -1295,7 +1299,8 @@ struct StrongReference : AtomicRefCountReference {
   }
 
  protected:
-  StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+  StrongReference(const vm::PinnedHermesValue &value) noexcept
+      : value_(value) {}
 
  private:
   vm::PinnedHermesValue value_;
@@ -1346,7 +1351,7 @@ struct ComplexReference : Reference {
       vm::PinnedHermesValue value,
       uint32_t initialRefCount,
       ComplexReference **result) noexcept {
-    ENV_RETURN_STATUS_IF_FALSE(env, value.isObject(), napi_object_expected);
+    RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
     if (initialRefCount > 0) {
       *result = new ComplexReference(initialRefCount, value);
     } else {
@@ -1574,7 +1579,7 @@ struct FinalizingComplexReference final
       napi_finalize finalizeCallback,
       void *finalizeHint,
       FinalizingComplexReference **result) noexcept {
-    ENV_RETURN_STATUS_IF_FALSE(env, value.isObject(), napi_object_expected);
+    RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
     if (initialRefCount > 0) {
       *result = new FinalizingComplexReference(
           initialRefCount, value, nativeData, finalizeCallback, finalizeHint);
@@ -1886,10 +1891,8 @@ napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
 napi_status NodeApiEnvironment::createStrongReference(
     napi_value value,
     napi_ext_ref *result) noexcept {
-  CHECK_ARG(value);
-  CHECK_ARG(result);
   return StrongReference::create(
-      *this, *phv(value), reinterpret_cast<StrongReference **>(result));
+      *this, phv(value), reinterpret_cast<StrongReference **>(result));
 }
 
 napi_status NodeApiEnvironment::createStrongReferenceWithData(
@@ -4310,8 +4313,8 @@ napi_status NodeApiEnvironment::createReference(
   CHECK_ARG(result);
 
   ComplexReference *reference{};
-  STATUS_CALL(
-      ComplexReference::create(*this, *phv(value), initialRefCount, &reference));
+  STATUS_CALL(ComplexReference::create(
+      *this, *phv(value), initialRefCount, &reference));
 
   *result = reinterpret_cast<napi_ref>(reference);
   return clearLastError();
