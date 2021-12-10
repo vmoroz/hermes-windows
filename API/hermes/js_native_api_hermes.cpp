@@ -1145,12 +1145,20 @@ struct HermesPreparedJavaScript {
 
 // A base class for all references.
 struct Reference : LinkedList<Reference>::Item {
-  virtual ~Reference() noexcept {
-    unlink();
-  }
+  enum class ReasonToDelete {
+    ZeroRefCount,
+    FinalizerCall,
+    ExternalCall,
+    EnvironmentShutdown,
+  };
 
-  virtual napi_status destroy(NodeApiEnvironment &env) noexcept {
-    return env.genericFailure("Cannot directly destroy this reference.");
+  static void deleteReference(
+      NodeApiEnvironment &env,
+      Reference *reference,
+      ReasonToDelete reason) noexcept {
+    if (reference && reference->startDeleting(env, reason)) {
+      delete reference;
+    }
   }
 
   virtual napi_status incRefCount(
@@ -1200,6 +1208,17 @@ struct Reference : LinkedList<Reference>::Item {
       }
     });
   }
+
+ protected:
+  virtual ~Reference() noexcept {
+    unlink();
+  }
+
+  virtual bool startDeleting(
+      NodeApiEnvironment &env,
+      ReasonToDelete /*reason*/) noexcept {
+    return true;
+  }
 };
 
 // A reference with a ref count that can be changed from any thread.
@@ -1231,6 +1250,11 @@ struct AtomicRefCountReference : Reference {
     return refCount_;
   }
 
+  bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
+      override {
+    return reason != ReasonToDelete::ExternalCall;
+  }
+
  private:
   std::atomic<uint32_t> refCount_{1};
 
@@ -1240,6 +1264,15 @@ struct AtomicRefCountReference : Reference {
 
 // Wrapper around vm::PinnedHermesValue that implements reference counting.
 struct StrongReference : AtomicRefCountReference {
+  static napi_status create(
+      NodeApiEnvironment &env,
+      vm::PinnedHermesValue value,
+      StrongReference **result) noexcept {
+    *result = new StrongReference(value);
+    env.addGCRoot(*result);
+    return env.clearLastError();
+  }
+
   StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
 
   const vm::PinnedHermesValue &value(
@@ -1247,12 +1280,11 @@ struct StrongReference : AtomicRefCountReference {
     return value_;
   }
 
-  vm::PinnedHermesValue *getGCRoot(
-      NodeApiEnvironment & /*env*/) noexcept override {
+  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment &env) noexcept override {
     if (refCount() > 0) {
       return &value_;
     } else {
-      delete this;
+      deleteReference(env, this, ReasonToDelete::ZeroRefCount);
       return nullptr;
     }
   }
@@ -1263,6 +1295,17 @@ struct StrongReference : AtomicRefCountReference {
 
 // Ref-counted weak reference.
 struct WeakReference final : AtomicRefCountReference {
+  static napi_status create(
+      NodeApiEnvironment &env,
+      vm::PinnedHermesValue value,
+      WeakReference **result) noexcept {
+    vm::WeakRefSlot *weakRefSlot{};
+    STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
+    *result = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
+    env.addGCRoot(*result);
+    return env.clearLastError();
+  }
+
   WeakReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
       : weakRef_(weakRef) {}
 
@@ -1272,11 +1315,11 @@ struct WeakReference final : AtomicRefCountReference {
   }
 
   vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
-      NodeApiEnvironment & /*env*/) noexcept override {
+      NodeApiEnvironment &env) noexcept override {
     if (refCount() > 0) {
       return &weakRef_;
     } else {
-      delete this;
+      deleteReference(env, this, ReasonToDelete::ZeroRefCount);
       return nullptr;
     }
   }
@@ -1292,11 +1335,9 @@ struct ComplexReference : Reference {
       uint32_t initialRefCount,
       ComplexReference **result) noexcept {
     vm::WeakRefSlot *weakRefSlot{};
-    STATUS_CALL(env.createWeakRef(
-        initialRefCount == 0
-            ? value
-            : env.getPredefined(NapiPredefined::UndefinedValue),
-        &weakRefSlot));
+    if (initialRefCount == 0) {
+      STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
+    }
     *result = new ComplexReference(
         initialRefCount, value, vm::WeakRef<vm::HermesValue>(weakRefSlot));
     env.addGCRoot(*result);
@@ -1308,11 +1349,6 @@ struct ComplexReference : Reference {
       vm::PinnedHermesValue value,
       vm::WeakRef<vm::HermesValue> weakRef) noexcept
       : refCount_(initialRefCount), value_(value), weakRef_(weakRef) {}
-
-  napi_status destroy(NodeApiEnvironment &env) noexcept override {
-    delete this;
-    return env.clearLastError();
-  }
 
   napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
@@ -1359,6 +1395,11 @@ struct ComplexReference : Reference {
     return (refCount_ == 0) ? &weakRef_ : nullptr;
   }
 
+ protected:
+  uint32_t refCount() const noexcept {
+    return refCount_;
+  }
+
  private:
   uint32_t refCount_;
   vm::PinnedHermesValue value_;
@@ -1378,14 +1419,11 @@ struct Finalizer : LinkedList<Finalizer>::Item {
         finalizeCallback_(finalizeCallback),
         finalizeHint_(finalizeHint) {}
 
-  Finalizer(const Finalizer & /*other*/) = delete;
-  Finalizer &operator=(const Finalizer & /*other*/) = delete;
-
-  virtual ~Finalizer() noexcept {
+  ~Finalizer() noexcept {
     unlink();
   }
 
-  napi_status callCustomFinalizer(NodeApiEnvironment &env) noexcept {
+  napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
     if (finalizeCallback_) {
       auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
       return env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
@@ -1393,11 +1431,7 @@ struct Finalizer : LinkedList<Finalizer>::Item {
     return napi_ok;
   }
 
-  virtual void finalize(NodeApiEnvironment &env) noexcept {
-    // TODO: Handle finalizer error
-    callCustomFinalizer(env);
-    delete this;
-  }
+  virtual void finalize(NodeApiEnvironment &env) noexcept = 0;
 
   static void finalizeAll(
       NodeApiEnvironment &env,
@@ -1411,45 +1445,132 @@ struct Finalizer : LinkedList<Finalizer>::Item {
   void *finalizeHint_{};
 };
 
+template <typename TDerived>
+struct ReferenceFinalizer : Finalizer {
+  using Finalizer::Finalizer;
+
+ protected:
+  void finalize(NodeApiEnvironment &env) noexcept override {
+    callFinalizerCallback(env);
+    Reference::deleteReference(
+        env,
+        static_cast<TDerived *>(this),
+        Reference::ReasonToDelete::FinalizerCall);
+  }
+};
+
+struct UnreferencedFinalizer final : Reference,
+                                     ReferenceFinalizer<UnreferencedFinalizer> {
+  napi_status create(
+      NodeApiEnvironment &env,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      UnreferencedFinalizer **result) noexcept {
+    auto ref =
+        new UnreferencedFinalizer(nativeData, finalizeCallback, finalizeHint);
+    env.addFinalizingGCRoot(ref);
+    if (result) {
+      *result = ref;
+    }
+    return env.clearLastError();
+  }
+
+ protected:
+  bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
+      override {
+    if (reason == ReasonToDelete::FinalizerCall) {
+      return true;
+    } else if (reason == ReasonToDelete::EnvironmentShutdown) {
+      callFinalizerCallback(env);
+      return true;
+    }
+    return false;
+  }
+
+ private:
+  UnreferencedFinalizer(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : ReferenceFinalizer(nativeData, finalizeCallback, finalizeHint) {}
+};
+
 // Associates data with StrongReference.
-struct FinalizingStrongReference final : StrongReference, Finalizer {
+struct FinalizingStrongReference final
+    : StrongReference,
+      ReferenceFinalizer<FinalizingStrongReference> {
+  static napi_status create(
+      NodeApiEnvironment &env,
+      vm::PinnedHermesValue value,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      FinalizingStrongReference **result) noexcept {
+    auto ref = new FinalizingStrongReference(
+        value, nativeData, finalizeCallback, finalizeHint);
+    env.addFinalizingGCRoot(ref);
+    if (result) {
+      *result = ref;
+    }
+    return env.clearLastError();
+  }
+
+ protected:
+  bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
+      override {
+    if (reason == ReasonToDelete::FinalizerCall) {
+      return true;
+    } else if (reason == ReasonToDelete::EnvironmentShutdown) {
+      callFinalizerCallback(env);
+      return true;
+    }
+    return false;
+  }
+
+ private:
   FinalizingStrongReference(
       vm::PinnedHermesValue value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
       : StrongReference(value),
-        Finalizer(nativeData, finalizeCallback, finalizeHint) {}
-
-  vm::PinnedHermesValue *getGCRoot(NodeApiEnvironment &env) noexcept override {
-    if (refCount() > 0) {
-      return StrongReference::getGCRoot(env);
-    } else {
-      StrongReference::unlink();
-      env.addToFinalizerQueue(this);
-      return nullptr;
-    }
-  }
-
-  // TODO: allow finalizer to delete this type of objects
+        ReferenceFinalizer<FinalizingStrongReference>(
+            nativeData,
+            finalizeCallback,
+            finalizeHint) {}
 };
 
-struct FinalizingComplexReference : ComplexReference, Finalizer {
-  FinalizingComplexReference(
+struct FinalizingComplexReference final
+    : ComplexReference,
+      ReferenceFinalizer<FinalizingComplexReference> {
+  napi_status create(
       NodeApiEnvironment &env,
       uint32_t initialRefCount,
       vm::PinnedHermesValue value,
-      vm::WeakRef<vm::HermesValue> weakRef,
-      bool deleteSelf,
       void *nativeData,
       napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ComplexReference(initialRefCount, value, weakRef),
-        Finalizer(nativeData, finalizeCallback, finalizeHint),
-        deleteSelf_(deleteSelf) {
+      void *finalizeHint,
+      FinalizingComplexReference **result) noexcept {
+    vm::WeakRefSlot *weakRefSlot{};
     if (initialRefCount == 0) {
-      env.addObjectFinalizer(&value, this);
+      STATUS_CALL(env.createWeakRef(value, &weakRefSlot));
     }
+    auto ref = new FinalizingComplexReference(
+        initialRefCount,
+        value,
+        vm::WeakRef<vm::HermesValue>(weakRefSlot),
+        nativeData,
+        finalizeCallback,
+        finalizeHint);
+    if (initialRefCount == 0) {
+      env.addObjectFinalizer(&value, ref);
+    }
+    env.addFinalizingGCRoot(ref);
+    if (result) {
+      *result = ref;
+    }
+    return env.clearLastError();
   }
 
   napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
@@ -1463,10 +1584,13 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
 
   napi_status decRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
+    vm::PinnedHermesValue hv;
+    if (refCount() == 1) {
+      hv = value(env);
+    }
     STATUS_CALL(ComplexReference::decRefCount(env, result));
-    if (result == 0) {
-      // TODO:
-      // return  env.addObjectFinalizer(&value_, this);
+    if (hv.isObject()) {
+      return env.addObjectFinalizer(&hv, this);
     }
     return env.clearLastError();
   }
@@ -1476,61 +1600,44 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
     return LinkedList<Finalizer>::Item::isLinked();
   }
 
-  napi_status destroy(NodeApiEnvironment & /*env*/) noexcept override {
-    if (!isInFinalizerQueue()) {
-      // TODO: set delete in GC instead
-      delete this;
-    } else {
-      deleteSelf_ = true;
-    }
-    return napi_ok;
-  }
-
-  // There are three scenarios when the finalize is called:
-  // - when an object is collected by GC;
-  // - when a micro task runs the finalizing queue.
-  // - on the environment teardown;
-  void finalize(NodeApiEnvironment &env, FinalizeReason reason) noexcept {
-    // The value_ is invalid when the finalizer runs.
-    Reference::unlink();
-
-    if (reason == FinalizeReason::GCFinalize) {
-      // Move reference with the custom finalizer to the finalizing queue
-      // because the GC is in unstable state and the custom finalizer cannot
-      // access other JS objects.
-      Finalizer::unlink();
-      env.addToFinalizerQueue(this);
-    } else {
-      // We must call custom finalizer before we remove the reference from a
-      // finalizer queue.
-      callCustomFinalizer(env);
-      if (deleteSelf_) {
-        delete this;
+  bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
+      override {
+    if (reason == ReasonToDelete::ExternalCall) {
+      if (!isInFinalizerQueue()) {
+        return true;
       } else {
-        // Let the destroyFromNative method to delete the reference.
-        Finalizer::unlink();
-        env.addToDanglingRefList(this);
+        Reference::unlink();
+        deleteSelf_ = true;
+        return false;
       }
     }
-  }
-
-  void finalize(NodeApiEnvironment &env) noexcept override {
-    Reference::unlink();
-    // We must call custom finalizer before we remove the reference from the
-    // finalizer queue. It prevents the destroyFromNative method to delete this
-    // instance.
-    callCustomFinalizer(env);
+    callFinalizerCallback(env);
     if (deleteSelf_) {
-      delete this;
+      return true;
     } else {
-      // Let the destroyFromNative method to delete the reference.
+      // Let the deleteReference method to delete the reference.
       Finalizer::unlink();
       env.addToDanglingRefList(this);
+      return false;
     }
   }
 
+ protected:
+  FinalizingComplexReference(
+      uint32_t initialRefCount,
+      vm::PinnedHermesValue value,
+      vm::WeakRef<vm::HermesValue> weakRef,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : ComplexReference(initialRefCount, value, weakRef),
+        ReferenceFinalizer<FinalizingComplexReference>(
+            nativeData,
+            finalizeCallback,
+            finalizeHint) {}
+
  private:
-  bool deleteSelf_{};
+  bool deleteSelf_{false};
 };
 
 ExternalValue::~ExternalValue() {
@@ -1756,8 +1863,10 @@ napi_status NodeApiEnvironment::createStrongReferenceWithData(
     void *finalizeHint,
     napi_ext_ref *result) noexcept {
   CHECK_ARG(result);
-  *result = reinterpret_cast<napi_ext_ref>(new FinalizingStrongReference(
-      phv(value), nativeData, finalizeCallback, finalizeHint));
+  FinalizingStrongReference *ref{};
+  STATUS_CALL(FinalizingStrongReference::create(
+      *this, phv(value), nativeData, finalizeCallback, finalizeHint, &ref));
+  *result = reinterpret_cast<napi_ext_ref>(ref);
   return clearLastError();
 }
 
@@ -1777,15 +1886,11 @@ napi_status NodeApiEnvironment::createWeakReference(
 napi_status NodeApiEnvironment::createWeakRef(
     vm::PinnedHermesValue value,
     vm::WeakRefSlot **result) noexcept {
+  RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
   return handleExceptions([&] {
-    if (value.isObject()) {
-      vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-      *result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value)
-                    .unsafeGetSlot();
-    } else {
-      *result =
-          vm::WeakRef<vm::HermesValue>(&runtime_.getHeap()).unsafeGetSlot();
-    }
+    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
+    *result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value)
+                  .unsafeGetSlot();
     return napi_ok;
   });
 }
@@ -4184,7 +4289,11 @@ napi_status NodeApiEnvironment::createReference(
 
 napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
   CHECK_ARG(ref);
-  return reinterpret_cast<Reference *>(ref)->destroy(*this);
+  Reference::deleteReference(
+      *this,
+      reinterpret_cast<Reference *>(ref),
+      Reference::ReasonToDelete::ExternalCall);
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::incReference(
