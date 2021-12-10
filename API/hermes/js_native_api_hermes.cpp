@@ -1526,14 +1526,17 @@ struct ReferenceFinalizer : Finalizer {
 struct FinalizingAnonymousReference final
     : Reference,
       ReferenceFinalizer<FinalizingAnonymousReference> {
-  napi_status create(
+  static napi_status create(
       NodeApiEnvironment &env,
+      const vm::PinnedHermesValue *value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       FinalizingAnonymousReference **result) noexcept {
+    CHECK_OBJECT_ARG(value);
     auto ref = new FinalizingAnonymousReference(
         nativeData, finalizeCallback, finalizeHint);
+    env.addObjectFinalizer(value, ref);
     env.addFinalizingGCRoot(ref);
     if (result) {
       *result = ref;
@@ -1615,7 +1618,7 @@ struct FinalizingStrongReference final
 struct FinalizingComplexReference final
     : ComplexReference,
       ReferenceFinalizer<FinalizingComplexReference> {
-  napi_status create(
+  static napi_status create(
       NodeApiEnvironment &env,
       uint32_t initialRefCount,
       const vm::PinnedHermesValue *value,
@@ -2067,7 +2070,7 @@ napi_status NodeApiEnvironment::wrapObject(
     if (result != nullptr) {
       // The returned reference should be deleted via napi_delete_reference()
       // ONLY in response to the finalize callback invocation. (If it is deleted
-      // before then, then the finalize callback will never be invoked.)
+      // before that, then the finalize callback will never be invoked.)
       // Therefore a finalize callback is required when returning a reference.
       CHECK_ARG(finalizeCallback);
     }
@@ -2078,20 +2081,30 @@ napi_status NodeApiEnvironment::wrapObject(
         toObjectHandle(object), IfNotFound::ThenCreate, &externalValue));
     RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
-    // TODO:
-    // Reference2 *reference = createReference(
-    //     *phv(object),
-    //     0,
-    //     /*deleteSelf:*/ result == nullptr,
-    //     finalizeCallback,
-    //     nativeData,
-    //     finalizeCallback ? finalizeHint : nullptr);
-    // if (result != nullptr) {
-    //   *result = reinterpret_cast<napi_ref>(reference);
-    // }
+    Reference *reference{};
+    if (result != nullptr) {
+      STATUS_CALL(FinalizingComplexReference::create(
+          *this,
+          0,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          reinterpret_cast<FinalizingComplexReference **>(reference)));
+      *result = reinterpret_cast<napi_ref>(reference);
+    } else {
+      // TODO: Add AnonymousReference class for cases when there is no
+      // finalizeCallback
+      STATUS_CALL(FinalizingAnonymousReference::create(
+          *this,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          reinterpret_cast<FinalizingAnonymousReference **>(reference)));
+    }
 
-    // externalValue->setNativeData(reference);
-
+    externalValue->setNativeData(reference);
     return clearLastError();
   });
 }
