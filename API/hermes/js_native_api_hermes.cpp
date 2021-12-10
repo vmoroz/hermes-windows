@@ -522,7 +522,7 @@ struct NodeApiEnvironment {
 
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
-      vm::PinnedHermesValue *value) noexcept;
+      const vm::PinnedHermesValue *value) noexcept;
   static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
@@ -991,7 +991,7 @@ struct NodeApiEnvironment {
       NapiPredefined key) noexcept;
 
   napi_status addObjectFinalizer(
-      vm::PinnedHermesValue *value,
+      const vm::PinnedHermesValue *value,
       Finalizer *finalizer) noexcept;
 
   vm::PseudoHandle<vm::DecoratedObject> createExternal(
@@ -1288,7 +1288,7 @@ struct AtomicRefCountReference : Reference {
       std::numeric_limits<uint32_t>::max() / 2;
 };
 
-// Keep vm::PinnedHermesValue and implement atomic reference counting.
+// Atomic ref counting for vm::PinnedHermesValue.
 struct StrongReference : AtomicRefCountReference {
   static napi_status create(
       NodeApiEnvironment &env,
@@ -1325,7 +1325,7 @@ struct StrongReference : AtomicRefCountReference {
   vm::PinnedHermesValue value_;
 };
 
-// Keep vm::WeakRef<vm::HermesValue> and implement atomic reference counting.
+// Atomic ref counting for a vm::WeakRef<vm::HermesValue>.
 struct WeakReference final : AtomicRefCountReference {
   static napi_status create(
       NodeApiEnvironment &env,
@@ -1398,9 +1398,15 @@ struct ComplexReference : Reference {
 
   napi_status decRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
-    CRASH_IF_FALSE(refCount_ > 0 && "The ref count must not be negative.");
+    if (refCount_ == 0) {
+      // Ignore this error situation to match NAPI for V8 code.
+      result = 0;
+      return napi_ok;
+    }
     if (--refCount_ == 0) {
       vm::WeakRefSlot *weakRefSlot{};
+      // The weakRefSlot is nullptr if value_ became Unknown in previous bounce
+      // from zero.
       if (value_.isObject()) {
         STATUS_CALL(env.createWeakRefSlot(value_, &weakRefSlot));
       }
@@ -1459,20 +1465,9 @@ struct ComplexReference : Reference {
       std::numeric_limits<uint32_t>::max() / 2;
 };
 
-//
+// A base class for References that call native code on JS object finalization
+// by GC.
 struct Finalizer : LinkedList<Finalizer>::Item {
-  Finalizer(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : nativeData_(nativeData),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
-
-  ~Finalizer() noexcept {
-    unlink();
-  }
-
   napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
     if (finalizeCallback_) {
       auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
@@ -1486,7 +1481,22 @@ struct Finalizer : LinkedList<Finalizer>::Item {
   static void finalizeAll(
       NodeApiEnvironment &env,
       LinkedList<Finalizer> &list) noexcept {
+    // TODO: use a different list function that is safe for when items are
+    // removed
     list.forEach([&](Finalizer *finalizer) { finalizer->finalize(env); });
+  }
+
+ protected:
+  Finalizer(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : nativeData_(nativeData),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+  ~Finalizer() noexcept {
+    unlink();
   }
 
  private:
@@ -1495,11 +1505,13 @@ struct Finalizer : LinkedList<Finalizer>::Item {
   void *finalizeHint_{};
 };
 
+// A helper class to avoid implementing the same finalize method in all
+// Reference classes derived from the Finalizer class.
 template <typename TDerived>
 struct ReferenceFinalizer : Finalizer {
+ protected:
   using Finalizer::Finalizer;
 
- protected:
   void finalize(NodeApiEnvironment &env) noexcept override {
     callFinalizerCallback(env);
     Reference::deleteReference(
@@ -1509,16 +1521,19 @@ struct ReferenceFinalizer : Finalizer {
   }
 };
 
-struct UnreferencedFinalizer final : Reference,
-                                     ReferenceFinalizer<UnreferencedFinalizer> {
+// The reference that is never returned to the user code and only used to hold
+// the native data and its finalizer callback.
+struct FinalizingAnonymousReference final
+    : Reference,
+      ReferenceFinalizer<FinalizingAnonymousReference> {
   napi_status create(
       NodeApiEnvironment &env,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
-      UnreferencedFinalizer **result) noexcept {
-    auto ref =
-        new UnreferencedFinalizer(nativeData, finalizeCallback, finalizeHint);
+      FinalizingAnonymousReference **result) noexcept {
+    auto ref = new FinalizingAnonymousReference(
+        nativeData, finalizeCallback, finalizeHint);
     env.addFinalizingGCRoot(ref);
     if (result) {
       *result = ref;
@@ -1539,11 +1554,14 @@ struct UnreferencedFinalizer final : Reference,
   }
 
  private:
-  UnreferencedFinalizer(
+  FinalizingAnonymousReference(
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
-      : ReferenceFinalizer(nativeData, finalizeCallback, finalizeHint) {}
+      : ReferenceFinalizer<FinalizingAnonymousReference>(
+            nativeData,
+            finalizeCallback,
+            finalizeHint) {}
 };
 
 // Associates data with StrongReference.
@@ -1592,32 +1610,38 @@ struct FinalizingStrongReference final
             finalizeHint) {}
 };
 
+// A reference that can be either strong or weak and that holds a finalizer
+// callback.
 struct FinalizingComplexReference final
     : ComplexReference,
       ReferenceFinalizer<FinalizingComplexReference> {
   napi_status create(
       NodeApiEnvironment &env,
       uint32_t initialRefCount,
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue *value,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       FinalizingComplexReference **result) noexcept {
-    RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
+    CHECK_OBJECT_ARG(value);
+    FinalizingComplexReference *ref{};
     if (initialRefCount > 0) {
-      *result = new FinalizingComplexReference(
-          initialRefCount, value, nativeData, finalizeCallback, finalizeHint);
+      ref = new FinalizingComplexReference(
+          initialRefCount, *value, nativeData, finalizeCallback, finalizeHint);
     } else {
       vm::WeakRefSlot *weakRefSlot{};
-      STATUS_CALL(env.createWeakRefSlot(value, &weakRefSlot));
-      *result = new FinalizingComplexReference(
+      STATUS_CALL(env.createWeakRefSlot(*value, &weakRefSlot));
+      ref = new FinalizingComplexReference(
           vm::WeakRef<vm::HermesValue>(weakRefSlot),
           nativeData,
           finalizeCallback,
           finalizeHint);
-      env.addObjectFinalizer(&value, *result);
+      env.addObjectFinalizer(value, ref);
     }
-    env.addFinalizingGCRoot(*result);
+    env.addFinalizingGCRoot(ref);
+    if (result) {
+      *result = ref;
+    }
     return env.clearLastError();
   }
 
@@ -1676,7 +1700,7 @@ struct FinalizingComplexReference final
     }
   }
 
- protected:
+ private:
   FinalizingComplexReference(
       uint32_t initialRefCount,
       vm::PinnedHermesValue value,
@@ -2187,7 +2211,7 @@ const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
-    vm::PinnedHermesValue *value,
+    const vm::PinnedHermesValue *value,
     Finalizer *finalizer) noexcept {
   return handleExceptions([&] {
     auto externalValue = getExternalValue(*value);
@@ -4547,7 +4571,7 @@ vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
 }
 
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
-    vm::PinnedHermesValue *value) noexcept {
+    const vm::PinnedHermesValue *value) noexcept {
   return vm::Handle<vm::JSObject>::vmcast(value);
 }
 
