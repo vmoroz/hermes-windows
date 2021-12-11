@@ -1199,6 +1199,10 @@ struct Reference : LinkedList<Reference>::Item {
     return env.getPredefined(NapiPredefined::UndefinedValue);
   }
 
+  virtual void *nativeData() noexcept {
+    return nullptr;
+  }
+
   virtual vm::PinnedHermesValue *getGCRoot(
       NodeApiEnvironment & /*env*/) noexcept {
     return nullptr;
@@ -1465,14 +1469,13 @@ struct ComplexReference : Reference {
       std::numeric_limits<uint32_t>::max() / 2;
 };
 
-// A base class for References that call native code on JS object finalization
-// by GC.
+// A base class for References that wrap native data and must be finalized.
 struct Finalizer : LinkedList<Finalizer>::Item {
-  napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
-    if (finalizeCallback_) {
-      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
-      return env.callFinalizer(finalizeCallback, nativeData_, finalizeHint_);
-    }
+  void *nativeData() noexcept {
+    return nativeData_;
+  }
+
+  virtual napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
     return napi_ok;
   }
 
@@ -1487,13 +1490,7 @@ struct Finalizer : LinkedList<Finalizer>::Item {
   }
 
  protected:
-  Finalizer(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : nativeData_(nativeData),
-        finalizeCallback_(finalizeCallback),
-        finalizeHint_(finalizeHint) {}
+  Finalizer(void *nativeData) noexcept : nativeData_(nativeData) {}
 
   ~Finalizer() noexcept {
     unlink();
@@ -1501,31 +1498,54 @@ struct Finalizer : LinkedList<Finalizer>::Item {
 
  private:
   void *nativeData_{};
+};
+
+// Common code for references inherited from Finalizer.
+template <typename TReference>
+struct FinalizingReference : TReference {
+  template <typename... TArgs>
+  FinalizingReference(TArgs &&...args) noexcept
+      : TReference(std::forward<TArgs>(args)...) {}
+
+ protected:
+  void finalize(NodeApiEnvironment &env) noexcept override {
+    callFinalizerCallback(env);
+    Reference::deleteReference(
+        env, this, Reference::ReasonToDelete::FinalizerCall);
+  }
+};
+
+// Common code for references inherited from Finalizer and holding a finalizer
+// callback.
+template <typename TReference>
+struct FinalizingReferenceWithCallback final : FinalizingReference<TReference> {
+  template <typename... TArgs>
+  FinalizingReferenceWithCallback(
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      TArgs &&...args) noexcept
+      : FinalizingReference<TReference>(std::forward<TArgs>(args)...),
+        finalizeCallback_(finalizeCallback),
+        finalizeHint_(finalizeHint) {}
+
+ protected:
+  napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept override {
+    if (finalizeCallback_) {
+      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      return env.callFinalizer(
+          finalizeCallback, Finalizer::nativeData(), finalizeHint_);
+    }
+    return napi_ok;
+  }
+
+ private:
   napi_finalize finalizeCallback_{};
   void *finalizeHint_{};
 };
 
-// A helper class to avoid implementing the same finalize method in all
-// Reference classes derived from the Finalizer class.
-template <typename TDerived>
-struct ReferenceFinalizer : Finalizer {
- protected:
-  using Finalizer::Finalizer;
-
-  void finalize(NodeApiEnvironment &env) noexcept override {
-    callFinalizerCallback(env);
-    Reference::deleteReference(
-        env,
-        static_cast<TDerived *>(this),
-        Reference::ReasonToDelete::FinalizerCall);
-  }
-};
-
 // The reference that is never returned to the user code and only used to hold
 // the native data and its finalizer callback.
-struct FinalizingAnonymousReference final
-    : Reference,
-      ReferenceFinalizer<FinalizingAnonymousReference> {
+struct FinalizingAnonymousReference : Reference, Finalizer {
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1534,8 +1554,10 @@ struct FinalizingAnonymousReference final
       void *finalizeHint,
       FinalizingAnonymousReference **result) noexcept {
     CHECK_OBJECT_ARG(value);
-    auto ref = new FinalizingAnonymousReference(
-        nativeData, finalizeCallback, finalizeHint);
+    auto ref = finalizeCallback != nullptr
+        ? new FinalizingReferenceWithCallback<FinalizingAnonymousReference>(
+              finalizeCallback, finalizeHint, nativeData)
+        : new FinalizingReference<FinalizingAnonymousReference>(nativeData);
     env.addObjectFinalizer(value, ref);
     env.addFinalizingGCRoot(ref);
     if (result) {
@@ -1545,6 +1567,9 @@ struct FinalizingAnonymousReference final
   }
 
  protected:
+  FinalizingAnonymousReference(void *nativeData) noexcept
+      : Finalizer(nativeData) {}
+
   bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
       override {
     if (reason == ReasonToDelete::FinalizerCall) {
@@ -1555,22 +1580,10 @@ struct FinalizingAnonymousReference final
     }
     return false;
   }
-
- private:
-  FinalizingAnonymousReference(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ReferenceFinalizer<FinalizingAnonymousReference>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint) {}
 };
 
 // Associates data with StrongReference.
-struct FinalizingStrongReference final
-    : StrongReference,
-      ReferenceFinalizer<FinalizingStrongReference> {
+struct FinalizingStrongReference : StrongReference, Finalizer {
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1579,8 +1592,11 @@ struct FinalizingStrongReference final
       void *finalizeHint,
       FinalizingStrongReference **result) noexcept {
     CHECK_ARG(value);
-    auto ref = new FinalizingStrongReference(
-        *value, nativeData, finalizeCallback, finalizeHint);
+    auto ref = finalizeCallback != nullptr
+        ? new FinalizingReferenceWithCallback<FinalizingStrongReference>(
+              finalizeCallback, finalizeHint, *value, nativeData)
+        : new FinalizingReference<FinalizingStrongReference>(
+              *value, nativeData);
     env.addFinalizingGCRoot(ref);
     if (result) {
       *result = ref;
@@ -1589,6 +1605,11 @@ struct FinalizingStrongReference final
   }
 
  protected:
+  FinalizingStrongReference(
+      const vm::PinnedHermesValue &value,
+      void *nativeData) noexcept
+      : StrongReference(value), Finalizer(nativeData) {}
+
   bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
       override {
     if (reason == ReasonToDelete::FinalizerCall) {
@@ -1599,25 +1620,11 @@ struct FinalizingStrongReference final
     }
     return false;
   }
-
- private:
-  FinalizingStrongReference(
-      const vm::PinnedHermesValue &value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : StrongReference(value),
-        ReferenceFinalizer<FinalizingStrongReference>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint) {}
 };
 
 // A reference that can be either strong or weak and that holds a finalizer
 // callback.
-struct FinalizingComplexReference final
-    : ComplexReference,
-      ReferenceFinalizer<FinalizingComplexReference> {
+struct FinalizingComplexReference : ComplexReference, Finalizer {
   static napi_status create(
       NodeApiEnvironment &env,
       uint32_t initialRefCount,
@@ -1629,16 +1636,26 @@ struct FinalizingComplexReference final
     CHECK_OBJECT_ARG(value);
     FinalizingComplexReference *ref{};
     if (initialRefCount > 0) {
-      ref = new FinalizingComplexReference(
-          initialRefCount, *value, nativeData, finalizeCallback, finalizeHint);
+      ref = finalizeCallback != nullptr
+          ? new FinalizingReferenceWithCallback<FinalizingComplexReference>(
+                finalizeCallback,
+                finalizeHint,
+                initialRefCount,
+                *value,
+                nativeData)
+          : new FinalizingReference<FinalizingComplexReference>(
+                initialRefCount, *value, nativeData);
     } else {
       vm::WeakRefSlot *weakRefSlot{};
       STATUS_CALL(env.createWeakRefSlot(*value, &weakRefSlot));
-      ref = new FinalizingComplexReference(
-          vm::WeakRef<vm::HermesValue>(weakRefSlot),
-          nativeData,
-          finalizeCallback,
-          finalizeHint);
+      ref = finalizeCallback != nullptr
+          ? new FinalizingReferenceWithCallback<FinalizingComplexReference>(
+                finalizeCallback,
+                finalizeHint,
+                vm::WeakRef<vm::HermesValue>(weakRefSlot),
+                nativeData)
+          : new FinalizingReference<FinalizingComplexReference>(
+                vm::WeakRef<vm::HermesValue>(weakRefSlot), nativeData);
       env.addObjectFinalizer(value, ref);
     }
     env.addFinalizingGCRoot(ref);
@@ -1672,6 +1689,17 @@ struct FinalizingComplexReference final
   }
 
  protected:
+  FinalizingComplexReference(
+      uint32_t initialRefCount,
+      vm::PinnedHermesValue value,
+      void *nativeData) noexcept
+      : ComplexReference(initialRefCount, value), Finalizer(nativeData) {}
+
+  FinalizingComplexReference(
+      vm::WeakRef<vm::HermesValue> weakRef,
+      void *nativeData) noexcept
+      : ComplexReference(weakRef), Finalizer(nativeData) {}
+
   bool isInFinalizerQueue() const noexcept {
     return LinkedList<Finalizer>::Item::isLinked();
   }
@@ -1702,30 +1730,6 @@ struct FinalizingComplexReference final
         return false;
     }
   }
-
- private:
-  FinalizingComplexReference(
-      uint32_t initialRefCount,
-      vm::PinnedHermesValue value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ComplexReference(initialRefCount, value),
-        ReferenceFinalizer<FinalizingComplexReference>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint) {}
-
-  FinalizingComplexReference(
-      vm::WeakRef<vm::HermesValue> weakRef,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : ComplexReference(weakRef),
-        ReferenceFinalizer<FinalizingComplexReference>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint) {}
 
  private:
   bool deleteSelf_{false};
@@ -2093,8 +2097,6 @@ napi_status NodeApiEnvironment::wrapObject(
           reinterpret_cast<FinalizingComplexReference **>(reference)));
       *result = reinterpret_cast<napi_ref>(reference);
     } else {
-      // TODO: Add AnonymousReference class for cases when there is no
-      // finalizeCallback
       STATUS_CALL(FinalizingAnonymousReference::create(
           *this,
           phv(object),
