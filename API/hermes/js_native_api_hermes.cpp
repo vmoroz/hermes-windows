@@ -359,6 +359,10 @@ Reference *asReference(napi_ref ref) noexcept {
   return reinterpret_cast<Reference *>(ref);
 }
 
+Reference *asReference(void *ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
 } // namespace
 
 struct HFContext;
@@ -2130,16 +2134,16 @@ napi_status NodeApiEnvironment::unwrapObject(
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
-    // TODO:
-    // auto reference = static_cast<Reference2 *>(externalValue->nativeData());
-    // if (result) {
-    //   *result = reference->nativeData();
-    // }
+    auto reference = asReference(externalValue->nativeData());
+    if (result) {
+      *result = reference->nativeData();
+    }
 
-    // if (action == UnwrapAction::RemoveWrap) {
-    //   externalValue->setNativeData(nullptr);
-    //   Reference2::destroyFromNative(reference);
-    // }
+    if (action == UnwrapAction::RemoveWrap) {
+      externalValue->setNativeData(nullptr);
+      Reference::deleteReference(
+          *this, reference, Reference::ReasonToDelete::ExternalCall);
+    }
 
     return clearLastError();
   });
