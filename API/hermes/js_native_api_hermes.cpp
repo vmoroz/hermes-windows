@@ -1174,13 +1174,14 @@ struct Reference : LinkedList<Reference>::Item {
     EnvironmentShutdown,
   };
 
-  static void deleteReference(
+  static napi_status deleteReference(
       NodeApiEnvironment &env,
       Reference *reference,
       ReasonToDelete reason) noexcept {
     if (reference && reference->startDeleting(env, reason)) {
       delete reference;
     }
+    return env.clearLastError();
   }
 
   virtual napi_status incRefCount(
@@ -1375,15 +1376,17 @@ struct WeakReference final : AtomicRefCountReference {
 struct ComplexReference : Reference {
   static napi_status create(
       NodeApiEnvironment &env,
-      vm::PinnedHermesValue value,
+      const vm::PinnedHermesValue *value,
       uint32_t initialRefCount,
       ComplexReference **result) noexcept {
-    RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
+    CHECK_OBJECT_ARG(value);
+    CHECK_ARG(result);
+    ComplexReference *ref{};
     if (initialRefCount > 0) {
-      *result = new ComplexReference(initialRefCount, value);
+      *result = new ComplexReference(initialRefCount, *value);
     } else {
       vm::WeakRefSlot *weakRefSlot{};
-      STATUS_CALL(env.createWeakRefSlot(value, &weakRefSlot));
+      STATUS_CALL(env.createWeakRefSlot(*value, &weakRefSlot));
       *result = new ComplexReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
     }
     env.addGCRoot(*result);
@@ -1443,7 +1446,7 @@ struct ComplexReference : Reference {
  protected:
   ComplexReference(
       uint32_t initialRefCount,
-      vm::PinnedHermesValue value) noexcept
+      const vm::PinnedHermesValue &value) noexcept
       : refCount_(initialRefCount), value_(value) {}
 
   ComplexReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
@@ -4367,41 +4370,29 @@ napi_status NodeApiEnvironment::getValueExternal(
   });
 }
 
-// Set initial_refcount to 0 for a weak reference, >0 for a strong reference.
 napi_status NodeApiEnvironment::createReference(
     napi_value value,
     uint32_t initialRefCount,
     napi_ref *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_OBJECT_ARG(value);
-  CHECK_ARG(result);
-
-  ComplexReference *reference{};
-  STATUS_CALL(ComplexReference::create(
-      *this, *phv(value), initialRefCount, &reference));
-
-  *result = reinterpret_cast<napi_ref>(reference);
-  return clearLastError();
+  return ComplexReference::create(
+      *this,
+      phv(value),
+      initialRefCount,
+      reinterpret_cast<ComplexReference **>(result));
 }
 
 napi_status NodeApiEnvironment::deleteReference(napi_ref ref) noexcept {
   CHECK_ARG(ref);
-  Reference::deleteReference(
-      *this,
-      reinterpret_cast<Reference *>(ref),
-      Reference::ReasonToDelete::ExternalCall);
-  return clearLastError();
+  return Reference::deleteReference(
+      *this, asReference(ref), Reference::ReasonToDelete::ExternalCall);
 }
 
 napi_status NodeApiEnvironment::incReference(
     napi_ref ref,
     uint32_t *result) noexcept {
   CHECK_ARG(ref);
-
   uint32_t refCount{};
-  STATUS_CALL(
-      reinterpret_cast<Reference *>(ref)->incRefCount(*this, /*ref*/ refCount));
-
+  STATUS_CALL(asReference(ref)->incRefCount(*this, refCount));
   if (result != nullptr) {
     *result = refCount;
   }
@@ -4412,31 +4403,20 @@ napi_status NodeApiEnvironment::decReference(
     napi_ref ref,
     uint32_t *result) noexcept {
   CHECK_ARG(ref);
-
   uint32_t refCount{};
-  STATUS_CALL(
-      reinterpret_cast<Reference *>(ref)->decRefCount(*this, /*ref*/ refCount));
-
+  STATUS_CALL(asReference(ref)->decRefCount(*this, refCount));
   if (result != nullptr) {
     *result = refCount;
   }
   return clearLastError();
 }
 
-// Attempts to get a referenced value. If the reference is weak, the value might
-// no longer be available, in that case the call is still successful but the
-// result is nullptr.
 napi_status NodeApiEnvironment::getReferenceValue(
     napi_ref ref,
     napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  // TODO:
-  // CHECK_ARG(ref);
-  // CHECK_ARG(result);
-
-  // Reference2 *reference = reinterpret_cast<Reference2 *>(ref);
-  // *result = addStackValue(reference->get());
-
+  CHECK_ARG(ref);
+  CHECK_ARG(result);
+  *result = addStackValue(asReference(ref)->value(env));
   return clearLastError();
 }
 
@@ -6095,7 +6075,6 @@ napi_get_value_external(napi_env env, napi_value value, void **result) {
   return CHECKED_ENV(env)->getValueExternal(value, result);
 }
 
-// Set initial_refcount to 0 for a weak reference, >0 for a strong reference.
 napi_status napi_create_reference(
     napi_env env,
     napi_value value,
@@ -6104,32 +6083,18 @@ napi_status napi_create_reference(
   return CHECKED_ENV(env)->createReference(value, initial_refcount, result);
 }
 
-// Deletes a reference. The referenced value is released, and may be GC'd unless
-// there are other references to it.
 napi_status napi_delete_reference(napi_env env, napi_ref ref) {
   return CHECKED_ENV(env)->deleteReference(ref);
 }
 
-// Increments the reference count, optionally returning the resulting count.
-// After this call the reference will be a strong reference because its
-// refcount is >0, and the referenced object is effectively "pinned".
-// Calling this when the refcount is 0 and the object is unavailable
-// results in an error.
 napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
   return CHECKED_ENV(env)->incReference(ref, result);
 }
 
-// Decrements the reference count, optionally returning the resulting count. If
-// the result is 0 the reference is now weak and the object may be GC'd at any
-// time if there are no other references. Calling this when the refcount is
-// already 0 results in an error.
 napi_status napi_reference_unref(napi_env env, napi_ref ref, uint32_t *result) {
   return CHECKED_ENV(env)->decReference(ref, result);
 }
 
-// Attempts to get a referenced value. If the reference is weak, the value might
-// no longer be available, in that case the call is still successful but the
-// result is NULL.
 napi_status
 napi_get_reference_value(napi_env env, napi_ref ref, napi_value *result) {
   return CHECKED_ENV(env)->getReferenceValue(ref, result);
