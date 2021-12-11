@@ -961,12 +961,14 @@ struct NodeApiEnvironment {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
+
   napi_status wrapObject(
       napi_value object,
       void *nativeData,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
+
   napi_status
   unwrapObject(napi_value object, UnwrapAction action, void **result) noexcept;
 
@@ -2041,27 +2043,24 @@ napi_status NodeApiEnvironment::addFinalizer(
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
     CHECK_ARG(finalizeCallback);
-
-    // TODO:
-    // if (result != nullptr) {
-    //   // The returned reference should be deleted via napi_delete_reference()
-    //   // ONLY in response to the finalize callback invocation. (If it is
-    //   deleted
-    //   // before then, then the finalize callback will never be invoked.)
-
-    //   auto reference = new FinalizingComplexReference(0, *phv(object), );
-
-    //   // reference = v8impl::Reference::New(
-    //   //     env, obj, 0, false, finalize_cb, native_object, finalize_hint);
-    //   // *result = reinterpret_cast<napi_ref>(reference);
-    // } else {
-    //   // Add simple finalizer to JS object.
-    //   STATUS_CALL(addObjectFinalizer(
-    //       &*phv(object),
-    //       new Finalizer(nativeData, finalizeCallback, finalizeHint)));
-    // }
-
-    return clearLastError();
+    if (result != nullptr) {
+      return FinalizingComplexReference::create(
+          *this,
+          0,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          reinterpret_cast<FinalizingComplexReference **>(result));
+    } else {
+      return FinalizingAnonymousReference::create(
+          *this,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          nullptr);
+    }
   });
 }
 
