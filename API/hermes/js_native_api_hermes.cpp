@@ -1178,7 +1178,6 @@ struct HermesPreparedJavaScript {
 //   Removal is explicit if external code holds a reference.
 
 // TODO: can we apply shared_ptr-like concept with two ref counts?
-// TODO: Can we utilize the Hermes weak roots?
 
 // A base class for References that wrap native data and must be finalized.
 struct Finalizer : LinkedList<Finalizer>::Item {
@@ -4281,21 +4280,17 @@ napi_status NodeApiEnvironment::createExternal(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-
     auto decoratedObj = createExternal(nativeData, nullptr);
     *result = addStackValue(decoratedObj.getHermesValue());
-
     if (finalizeCallback) {
-      // TODO:
-      // createReference(
-      //     *phv(*result),
-      //     /*initialRefCount:*/ 0,
-      //     /*deleteSelf:*/ true,
-      //     finalizeCallback,
-      //     nativeData,
-      //     finalizeHint);
+      STATUS_CALL(FinalizingAnonymousReference::create(
+          *this,
+          phv(*result),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          nullptr));
     }
-
     return clearLastError();
   });
 }
