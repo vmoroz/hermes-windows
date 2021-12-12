@@ -1527,6 +1527,11 @@ struct FinalizingReference : TReference {
   }
 };
 
+// TODO: make sure that in the unwrap we can convert the self deleting complex
+// ref to manually deleted one if the ref count is incremented
+
+// TODO: Optimize for cases when some of the nativeData, finalizeCallback, or
+// finalizeHint are nulls
 // Common code for references inherited from Finalizer and holding native data.
 template <typename TReference>
 struct FinalizingReferenceWithData : FinalizingReference<TReference> {
