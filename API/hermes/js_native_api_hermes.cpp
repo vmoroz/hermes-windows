@@ -526,7 +526,6 @@ struct NodeApiEnvironment {
   LinkedList<Reference> gcRoots_{};
   LinkedList<Reference> finalizingGCRoots_{};
   LinkedList<Finalizer> finalizerQueue_{};
-  LinkedList<Reference> danglingRefList_{};
   bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
@@ -541,7 +540,6 @@ struct NodeApiEnvironment {
   static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
-  void addToDanglingRefList(Reference *reference) noexcept;
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
 
@@ -1897,12 +1895,6 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   // Reference2::finalizeAll(&finalizingRefList_, FinalizeReason::EnvTeardown);
   // Reference2::finalizeAll(&finalizingQueue_, FinalizeReason::EnvTeardown);
   // Reference2::finalizeAll(&refList_, FinalizeReason::EnvTeardown);
-
-  // We must not have any dangling references, but if we do, then delete them.
-  // TODO:
-  // while (auto next = danglingRefList_.next()) {
-  //   delete next;
-  // }
 
   // TODO: assert/delete the finalizingQueue_, finalizingRefList_, and refList_
 }
@@ -4603,11 +4595,6 @@ vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
   finalizerQueue_.pushBack(finalizer);
-}
-
-void NodeApiEnvironment::addToDanglingRefList(Reference *reference) noexcept {
-  // TODO:
-  // danglingRefList_.linkNext(reference);
 }
 
 void NodeApiEnvironment::addGCRoot(Reference *reference) noexcept {
