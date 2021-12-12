@@ -1,6 +1,5 @@
 // TODO: change the stack references to use collection with chunks of equal 2^n
 // size.
-// TODO: unify different types of References
 
 #include <algorithm>
 #include <atomic>
@@ -1076,7 +1075,6 @@ struct NodeApiEnvironment {
 
   std::atomic<int> refCount{1};
 
-  // TODO: use it as a GC root
   vm::PinnedHermesValue lastException_{EmptyHermesValue};
   std::array<
       vm::PinnedHermesValue,
@@ -1840,6 +1838,12 @@ NodeApiEnvironment::NodeApiEnvironment(
     });
     Reference::getGCRoots(*this, gcRoots_, acceptor);
     Reference::getGCRoots(*this, finalizingGCRoots_, acceptor);
+    if (!lastException_.isEmpty()) {
+      acceptor.accept(lastException_);
+    }
+    for (auto &value : predefinedValues_) {
+      acceptor.accept(value);
+    }
   });
   runtime_.addCustomWeakRootsFunction(
       [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
