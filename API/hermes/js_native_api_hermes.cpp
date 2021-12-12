@@ -332,6 +332,10 @@ struct LinkedList {
     return static_cast<T *>(&head_);
   }
 
+  bool isEmpty() noexcept {
+    return head_.next_ == head_.prev_;
+  }
+
   template <typename TLambda>
   void forEach(TLambda lambda) noexcept {
     for (auto item = begin(); item != end();) {
@@ -1178,6 +1182,18 @@ struct HermesPreparedJavaScript {
 // TODO: can we apply shared_ptr-like concept with two ref counts?
 // TODO: Can we utilize the Hermes weak roots?
 
+// A base class for References that wrap native data and must be finalized.
+struct Finalizer : LinkedList<Finalizer>::Item {
+  virtual void finalize(NodeApiEnvironment &env) noexcept = 0;
+
+ protected:
+  Finalizer() = default;
+
+  ~Finalizer() noexcept {
+    unlink();
+  }
+};
+
 // A base class for all references.
 struct Reference : LinkedList<Reference>::Item {
   enum class ReasonToDelete {
@@ -1247,6 +1263,30 @@ struct Reference : LinkedList<Reference>::Item {
         acceptor.accept(*weakRef);
       }
     });
+  }
+
+  virtual napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
+    return napi_ok;
+  }
+
+  virtual void finalize(NodeApiEnvironment &env) noexcept {}
+
+  template <typename TItem>
+  static void finalizeAll(
+      NodeApiEnvironment &env,
+      LinkedList<TItem> &list) noexcept {
+    for (auto item = list.begin(); item != list.end();) {
+      item->finalize(env);
+    }
+  }
+
+  static void deleteAll(
+      NodeApiEnvironment &env,
+      LinkedList<Reference> &list,
+      ReasonToDelete reason) noexcept {
+    for (auto referfence = list.begin(); referfence != list.end();) {
+      deleteReference(env, referfence, reason);
+    }
   }
 
  protected:
@@ -1473,30 +1513,6 @@ struct ComplexReference : Reference {
 
   static constexpr uint32_t MaxRefCount =
       std::numeric_limits<uint32_t>::max() / 2;
-};
-
-// A base class for References that wrap native data and must be finalized.
-struct Finalizer : LinkedList<Finalizer>::Item {
-  virtual napi_status callFinalizerCallback(NodeApiEnvironment &env) noexcept {
-    return napi_ok;
-  }
-
-  virtual void finalize(NodeApiEnvironment &env) noexcept = 0;
-
-  static void finalizeAll(
-      NodeApiEnvironment &env,
-      LinkedList<Finalizer> &list) noexcept {
-    for (auto finalizer = list.begin(); finalizer != list.end();) {
-      finalizer->finalize(env);
-    }
-  }
-
- protected:
-  Finalizer() = default;
-
-  ~Finalizer() noexcept {
-    unlink();
-  }
 };
 
 // Common code for references inherited from Finalizer.
@@ -1891,12 +1907,13 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   // they delete during their `napi_finalizer` callbacks. If we deleted such
   // references here first, they would be doubly deleted when the
   // `napi_finalizer` deleted them subsequently.
-  // TODO:
-  // Reference2::finalizeAll(&finalizingRefList_, FinalizeReason::EnvTeardown);
-  // Reference2::finalizeAll(&finalizingQueue_, FinalizeReason::EnvTeardown);
-  // Reference2::finalizeAll(&refList_, FinalizeReason::EnvTeardown);
-
-  // TODO: assert/delete the finalizingQueue_, finalizingRefList_, and refList_
+  Reference::finalizeAll(*this, finalizerQueue_);
+  Reference::finalizeAll(*this, finalizingGCRoots_);
+  Reference::deleteAll(
+      *this, gcRoots_, Reference::ReasonToDelete::EnvironmentShutdown);
+  CRASH_IF_FALSE(finalizerQueue_.isEmpty());
+  CRASH_IF_FALSE(finalizingGCRoots_.isEmpty());
+  CRASH_IF_FALSE(gcRoots_.isEmpty());
 }
 
 napi_status NodeApiEnvironment::incRefCount() noexcept {
@@ -5507,7 +5524,7 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
 napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
   if (!isRunningFinalizers_) {
     isRunningFinalizers_ = true;
-    Finalizer::finalizeAll(*this, finalizerQueue_);
+    Reference::finalizeAll(*this, finalizerQueue_);
     isRunningFinalizers_ = false;
   }
   return napi_ok;
