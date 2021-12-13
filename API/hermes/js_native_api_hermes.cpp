@@ -50,6 +50,7 @@ using ::hermes::hermesLog;
   } while (0)
 #endif
 
+// TODO: review and rename macros
 #define STATUS_CALL(call)              \
   do {                                 \
     if (napi_status status = (call)) { \
@@ -487,6 +488,7 @@ struct NodeApiEnvironment {
 
   vm::Handle<> toHandle(napi_value value) noexcept;
 
+  // TODO: implement - delete?
   // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
   // v8impl::Persistent<v8::Context> context_persistent;
 
@@ -501,6 +503,7 @@ struct NodeApiEnvironment {
   const vm::PinnedHermesValue &lockWeakObject(
       vm::WeakRef<vm::HermesValue> &weakRef) noexcept;
 
+  // TODO: implement - delete?
   // virtual bool can_call_into_js() const { return true; }
   // virtual v8::Maybe<bool> mark_arraybuffer_as_untransferable(
   //     v8::Local<v8::ArrayBuffer> ab) const {
@@ -1928,6 +1931,7 @@ NodeApiEnvironment::NodeApiEnvironment(
         Reference::getGCWeakRoots(*this, gcRoots_, acceptor);
         Reference::getGCWeakRoots(*this, finalizingGCRoots_, acceptor);
       });
+  // TODO: implement
   // runtime_.addCustomSnapshotFunction(
   //     [this](vm::HeapSnapshot &snap) {
   //       snap.beginNode();
@@ -2184,6 +2188,7 @@ napi_status NodeApiEnvironment::wrapObject(
           reinterpret_cast<FinalizingComplexReference **>(reference)));
       *result = reinterpret_cast<napi_ref>(reference);
     } else {
+      // TODO: do not use the anonymous ref here
       STATUS_CALL(FinalizingAnonymousReference::create(
           *this,
           phv(object),
@@ -2273,6 +2278,7 @@ Reference *NodeApiEnvironment::createReference(
     napi_finalize finalizeCallback,
     void *nativeData,
     void *finalizeHint) {
+  // TODO: implement - delete
   Reference *reference{};
   // if (finalizeCallback) {
   //   reference = new FinalizingReference(
@@ -2506,6 +2512,7 @@ static const char *error_messages[] = {
 
 napi_status NodeApiEnvironment::getLastErrorInfo(
     const napi_extended_error_info **result) noexcept {
+  // TODO: implement
   // CHECK_ARG(env, result);
 
   // // The value of the constant below must be updated to reference the last
@@ -2574,6 +2581,7 @@ napi_status NodeApiEnvironment::defineClass(
     size_t propertyCount,
     const napi_property_descriptor *properties,
     napi_value *result) noexcept {
+  // TODO: implement
   // return handleExceptions([&] {
   //   CHECK_ARG(result);
   //   CHECK_ARG(constructor);
@@ -2777,6 +2785,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_filter keyFilter,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
+  // TODO: review and complete
   return handleExceptions([&] {
     CHECK_ARG(result);
     CHECK_OBJECT_ARG(object);
@@ -3236,6 +3245,7 @@ napi_status NodeApiEnvironment::setElement(
     napi_value arr,
     uint32_t index,
     napi_value value) noexcept {
+  // TODO: implement
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(arr);
     CHECK_ARG(value);
@@ -3278,6 +3288,7 @@ napi_status NodeApiEnvironment::hasElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
 
@@ -3299,6 +3310,7 @@ napi_status NodeApiEnvironment::getElement(
     napi_value object,
     uint32_t index,
     napi_value *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
 
@@ -3320,6 +3332,7 @@ napi_status NodeApiEnvironment::deleteElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
 
   // v8::Local<v8::Context> context = env->context();
@@ -3928,6 +3941,7 @@ napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
 }
 
 napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, error);
 
@@ -3943,6 +3957,7 @@ napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
 napi_status NodeApiEnvironment::throwError(
     const char *code,
     const char *msg) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
 
   // v8::Isolate *isolate = env->isolate;
@@ -3962,6 +3977,7 @@ napi_status NodeApiEnvironment::throwError(
 napi_status NodeApiEnvironment::throwTypeError(
     const char *code,
     const char *msg) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
 
   // v8::Isolate *isolate = env->isolate;
@@ -3981,6 +3997,7 @@ napi_status NodeApiEnvironment::throwTypeError(
 napi_status NodeApiEnvironment::throwRangeError(
     const char *code,
     const char *msg) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
 
   // v8::Isolate *isolate = env->isolate;
@@ -4000,6 +4017,7 @@ napi_status NodeApiEnvironment::throwRangeError(
 napi_status NodeApiEnvironment::isError(
     napi_value value,
     bool *result) noexcept {
+  // TODO: implement
   // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, result);
@@ -4377,6 +4395,7 @@ napi_status NodeApiEnvironment::createExternal(
 napi_status NodeApiEnvironment::typeTagObject(
     napi_value object,
     const napi_type_tag *typeTag) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // v8::Local<v8::Context> context = env->context();
   // v8::Local<v8::Object> obj;
@@ -4406,6 +4425,7 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     napi_value object,
     const napi_type_tag *typeTag,
     bool *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // v8::Local<v8::Context> context = env->context();
   // v8::Local<v8::Object> obj;
@@ -4615,6 +4635,7 @@ napi_status NodeApiEnvironment::newInstance(
     size_t argc,
     const napi_value *argv,
     napi_value *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, constructor);
   // if (argc > 0) {
@@ -4744,27 +4765,6 @@ napi_status NodeApiEnvironment::instanceOf(
     *result = *res;
     return clearLastError();
   });
-
-  // v8::Local<v8::Object> ctor;
-  // v8::Local<v8::Context> context = env->context();
-
-  // CHECK_TO_OBJECT(env, context, ctor, constructor);
-
-  // if (!ctor->IsFunction()) {
-  //   napi_throw_type_error(
-  //       env, "ERR_NAPI_CONS_FUNCTION", "Constructor must be a function");
-
-  //   return napi_set_last_error(env, napi_function_expected);
-  // }
-
-  // napi_status status = napi_generic_failure;
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(object);
-  // auto maybe_result = val->InstanceOf(context, ctor);
-  // CHECK_MAYBE_NOTHING(env, maybe_result, status);
-  // *result = maybe_result.FromJust();
-  // return GET_RETURN_STATUS(env);
-  // return napi_ok;
 }
 
 // Methods to support catching exceptions
@@ -4806,6 +4806,7 @@ napi_status NodeApiEnvironment::createArrayBuffer(
     size_t byte_length,
     void **data,
     napi_value *result) noexcept {
+  // TODO: implement
   // CHECK_ARG(this, result);
   // return HandleExceptions([&] {
   //   vm::GCScope gcScope(&runtime_);
@@ -4840,6 +4841,7 @@ napi_status NodeApiEnvironment::createExternalArrayBuffer(
     napi_finalize finalize_cb,
     void *finalize_hint,
     napi_value *result) noexcept {
+  // TODO: implement
   // // The API contract here is that the cleanup function runs on the JS
   // thread,
   // // and is able to use napi_env. Implementing that properly is hard, so
@@ -4858,6 +4860,7 @@ napi_status NodeApiEnvironment::getArrayBufferInfo(
     napi_value arraybuffer,
     void **data,
     size_t *byte_length) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, arraybuffer);
 
@@ -4883,6 +4886,7 @@ napi_status NodeApiEnvironment::getArrayBufferInfo(
 napi_status NodeApiEnvironment::isTypedArray(
     napi_value value,
     bool *result) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, result);
@@ -4900,6 +4904,7 @@ napi_status NodeApiEnvironment::createTypedArray(
     napi_value arraybuffer,
     size_t byte_offset,
     napi_value *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, arraybuffer);
   // CHECK_ARG(env, result);
@@ -4973,6 +4978,7 @@ napi_status NodeApiEnvironment::getTypedArrayInfo(
     void **data,
     napi_value *arraybuffer,
     size_t *byte_offset) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, typedarray);
 
@@ -5040,6 +5046,7 @@ napi_status NodeApiEnvironment::createDataView(
     napi_value arraybuffer,
     size_t byte_offset,
     napi_value *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, arraybuffer);
   // CHECK_ARG(env, result);
@@ -5068,6 +5075,7 @@ napi_status NodeApiEnvironment::createDataView(
 napi_status NodeApiEnvironment::isDataView(
     napi_value value,
     bool *result) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, result);
@@ -5085,6 +5093,7 @@ napi_status NodeApiEnvironment::getDataViewInfo(
     void **data,
     napi_value *arraybuffer,
     size_t *byte_offset) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, dataview);
 
@@ -5122,6 +5131,7 @@ napi_status NodeApiEnvironment::getDataViewInfo(
 }
 
 napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, result);
   // *result = NAPI_VERSION;
@@ -5132,6 +5142,7 @@ napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
 napi_status NodeApiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *promise) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, deferred);
   // CHECK_ARG(env, promise);
@@ -5152,6 +5163,7 @@ napi_status NodeApiEnvironment::createPromise(
 napi_status NodeApiEnvironment::resolveDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
+  // TODO: implement
   // return v8impl::ConcludeDeferred(env, deferred, resolution, true);
   return napi_ok;
 }
@@ -5159,6 +5171,7 @@ napi_status NodeApiEnvironment::resolveDeferred(
 napi_status NodeApiEnvironment::rejectDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
+  // TODO: implement
   // return v8impl::ConcludeDeferred(env, deferred, resolution, false);
   return napi_ok;
 }
@@ -5166,6 +5179,7 @@ napi_status NodeApiEnvironment::rejectDeferred(
 napi_status NodeApiEnvironment::isPromise(
     napi_value value,
     bool *is_promise) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, is_promise);
@@ -5179,6 +5193,7 @@ napi_status NodeApiEnvironment::isPromise(
 napi_status NodeApiEnvironment::createDate(
     double time,
     napi_value *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, result);
 
@@ -5194,6 +5209,7 @@ napi_status NodeApiEnvironment::createDate(
 napi_status NodeApiEnvironment::isDate(
     napi_value value,
     bool *is_date) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, is_date);
@@ -5207,6 +5223,7 @@ napi_status NodeApiEnvironment::isDate(
 napi_status NodeApiEnvironment::getDateValue(
     napi_value value,
     double *result) noexcept {
+  // TODO: implement
   // NAPI_PREAMBLE(env);
   // CHECK_ARG(env, value);
   // CHECK_ARG(env, result);
@@ -5224,6 +5241,7 @@ napi_status NodeApiEnvironment::getDateValue(
 napi_status NodeApiEnvironment::adjustExternalMemory(
     int64_t change_in_bytes,
     int64_t *adjusted_value) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, adjusted_value);
 
@@ -5238,6 +5256,7 @@ napi_status NodeApiEnvironment::setInstanceData(
     void *data,
     napi_finalize finalize_cb,
     void *finalize_hint) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
 
   // v8impl::RefBase *old_data =
@@ -5257,6 +5276,7 @@ napi_status NodeApiEnvironment::setInstanceData(
 }
 
 napi_status NodeApiEnvironment::getInstanceData(void **data) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, data);
 
@@ -5271,6 +5291,7 @@ napi_status NodeApiEnvironment::getInstanceData(void **data) noexcept {
 
 napi_status NodeApiEnvironment::detachArrayBuffer(
     napi_value arraybuffer) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, arraybuffer);
 
@@ -5291,6 +5312,7 @@ napi_status NodeApiEnvironment::detachArrayBuffer(
 napi_status NodeApiEnvironment::isDetachedArrayBuffer(
     napi_value arraybuffer,
     bool *result) noexcept {
+  // TODO: implement
   // CHECK_ENV(env);
   // CHECK_ARG(env, arraybuffer);
   // CHECK_ARG(env, result);
