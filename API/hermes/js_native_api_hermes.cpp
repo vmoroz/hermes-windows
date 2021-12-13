@@ -125,6 +125,7 @@ namespace napi {
 // Forward declarations
 struct Finalizer;
 struct HermesBuffer;
+struct InstanceData;
 struct HFContext;
 struct NodeApiEnvironment;
 struct Reference;
@@ -522,7 +523,7 @@ struct NodeApiEnvironment {
 
   napi_extended_error_info lastError_{};
   int openCallbackScopeCount_{};
-  void *instanceData_{};
+  InstanceData *instanceData_{};
 
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
@@ -875,10 +876,12 @@ struct NodeApiEnvironment {
       int64_t *adjusted_value) noexcept;
 
   napi_status setInstanceData(
-      void *data,
-      napi_finalize finalize_cb,
-      void *finalize_hint) noexcept;
-  napi_status getInstanceData(void **data) noexcept;
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept;
+
+  napi_status getInstanceData(void **nativeData) noexcept;
+
   napi_status detachArrayBuffer(napi_value arraybuffer) noexcept;
   napi_status isDetachedArrayBuffer(
       napi_value arraybuffer,
@@ -1758,6 +1761,22 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   bool deleteSelf_{false};
 };
 
+struct InstanceData : Reference {
+  static napi_status create(
+      NodeApiEnvironment &env,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      /*optional*/ InstanceData **result) noexcept {
+    auto ref = FinalizingReferenceFactory<InstanceData>::create(
+        nativeData, finalizeCallback, finalizeHint);
+    if (result) {
+      *result = ref;
+    }
+    return env.clearLastError();
+  }
+};
+
 ExternalValue::~ExternalValue() {
   finalizers_.forEach(
       [&](Finalizer *finalizer) { env_.addToFinalizerQueue(finalizer); });
@@ -1919,6 +1938,11 @@ NodeApiEnvironment::NodeApiEnvironment(
 }
 
 NodeApiEnvironment::~NodeApiEnvironment() {
+  if (instanceData_) {
+    instanceData_->finalize(*this);
+    instanceData_ = nullptr;
+  }
+
   // First we must finalize those references that have `napi_finalizer`
   // callbacks. The reason is that addons might store other references which
   // they delete during their `napi_finalizer` callbacks. If we deleted such
@@ -5155,40 +5179,24 @@ napi_status NodeApiEnvironment::adjustExternalMemory(
 }
 
 napi_status NodeApiEnvironment::setInstanceData(
-    void *data,
-    napi_finalize finalize_cb,
-    void *finalize_hint) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-
-  // v8impl::RefBase *old_data =
-  //     static_cast<v8impl::RefBase *>(env->instance_data);
-  // if (old_data != nullptr) {
-  //   // Our contract so far has been to not finalize any old data there may
-  //   be.
-  //   // So we simply delete it.
-  //   v8impl::RefBase::Delete(old_data);
-  // }
-
-  // env->instance_data =
-  //     v8impl::RefBase::New(env, 0, true, finalize_cb, data, finalize_hint);
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    void *nativeData,
+    napi_finalize finalizeCallback,
+    void *finalizeHint) noexcept {
+  if (instanceData_ != nullptr) {
+    // Our contract so far has been to not finalize any old data there may be.
+    // So we simply delete it.
+    delete instanceData_;
+    instanceData_ = nullptr;
+  }
+  return InstanceData::create(
+      *this, nativeData, finalizeCallback, finalizeHint, &instanceData_);
 }
 
-napi_status NodeApiEnvironment::getInstanceData(void **data) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, data);
-
-  // v8impl::RefBase *idata = static_cast<v8impl::RefBase
-  // *>(env->instance_data);
-
-  // *data = (idata == nullptr ? nullptr : idata->Data());
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+napi_status NodeApiEnvironment::getInstanceData(void **nativeData) noexcept {
+  CHECK_ARG(nativeData);
+  *nativeData =
+      instanceData_ == nullptr ? nullptr : instanceData_->nativeData();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::detachArrayBuffer(
