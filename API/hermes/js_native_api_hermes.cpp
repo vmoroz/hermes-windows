@@ -122,6 +122,13 @@ using ::hermes::hermesLog;
 namespace hermes {
 namespace napi {
 
+// Forward declarations
+struct Finalizer;
+struct HermesBuffer;
+struct HFContext;
+struct NodeApiEnvironment;
+struct Reference;
+
 struct Marker {
   size_t chunkIndex{0};
   size_t itemIndex{0};
@@ -261,16 +268,6 @@ struct NonMovableObjStack {
       storage_; // There is always at least one chunk in the storage
 };
 
-struct NodeApiEnvironment;
-struct Reference;
-struct Finalizer;
-
-enum class FinalizeReason {
-  GCFinalize,
-  EnvTeardown,
-  FinalizerQueue,
-};
-
 template <typename T>
 struct LinkedList {
   LinkedList() noexcept {
@@ -373,8 +370,6 @@ Reference *asReference(void *ref) noexcept {
 
 } // namespace
 
-struct HFContext;
-
 struct CallbackInfo final {
   CallbackInfo(HFContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
@@ -403,8 +398,6 @@ struct CallbackInfo final {
   vm::NativeArgs &hvArgs_;
 };
 
-struct NodeApiEnvironment;
-
 struct HFContext final {
   HFContext(NodeApiEnvironment &env, napi_callback hostCallback, void *data)
       : env_(env), hostCallback_(hostCallback), data_(data) {}
@@ -424,8 +417,6 @@ struct HFContext final {
 void *CallbackInfo::Data() noexcept {
   return context_.data_;
 }
-
-struct HermesBuffer;
 
 enum class UnwrapAction { KeepWrap, RemoveWrap };
 
