@@ -5138,9 +5138,10 @@ napi_status NodeApiEnvironment::createDate(
   return handleExceptions([&] {
     CHECK_ARG(result);
     auto dateHandle = vm::JSDate::create(
-        &runtime_, dateTime, toObjectHandle(&runtime_.datePrototype));
-    // The JSDate::create has a bug where it does not set the value in
-    // constructor.
+        &runtime_,
+        /*unused because of a bug*/ dateTime,
+        toObjectHandle(&runtime_.datePrototype));
+    // Set the value explicitly to work around the bug.
     vm::JSDate::setPrimitiveValue(
         dateHandle.get(),
         &runtime_,
