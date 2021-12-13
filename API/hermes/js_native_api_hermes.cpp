@@ -1,5 +1,23 @@
 // TODO: change the stack references to use collection with chunks of equal 2^n
 // size.
+// TODO: Implement unit tests
+// TODO: Sync with latest code
+// TODO: Reorder the code
+// TODO: Better native error handling
+// TODO: define class
+// TODO: Array functions
+// TODO: Finish callFunction
+// TODO: JS error throwing
+// TODO: Type Tag
+// TODO newInstance
+// TODO: ArrayBuffer
+// TODO: TypedArray
+// TODO: DataView
+// TODO: Promise
+// TODO: Date
+// TODO: adjustExternalMemory
+// TODO: Unique strings
+// TODO: Fix references for Unwrap
 
 #define NAPI_EXPERIMENTAL
 
