@@ -1010,14 +1010,6 @@ struct NodeApiEnvironment {
       IfNotFound ifNotFound,
       ExternalValue **result) noexcept;
 
-  Reference *createReference(
-      vm::PinnedHermesValue &value,
-      uint32_t initialRefCount,
-      bool deleteSelf,
-      napi_finalize finalizeCallback,
-      void *nativeData,
-      void *finalizeHint);
-
   napi_status createStrongReference(
       napi_value value,
       napi_ext_ref *result) noexcept;
@@ -2208,35 +2200,6 @@ vm::CallResult<bool> NodeApiEnvironment::deletePrivate(
   vm::SymbolID name = getPredefined(key).getSymbol();
   return vm::JSObject::deleteNamed(
       objHandle, &runtime_, name, vm::PropOpFlags().plusThrowOnError());
-}
-
-Reference *NodeApiEnvironment::createReference(
-    vm::PinnedHermesValue &value,
-    uint32_t initialRefCount,
-    bool deleteSelf,
-    napi_finalize finalizeCallback,
-    void *nativeData,
-    void *finalizeHint) {
-  // TODO: implement - delete
-  Reference *reference{};
-  // if (finalizeCallback) {
-  //   reference = new FinalizingReference(
-  //       *this,
-  //       value,
-  //       initialRefCount,
-  //       deleteSelf,
-  //       nativeData,
-  //       finalizeCallback,
-  //       finalizeHint);
-  //   finalizingRefList_.linkNext(reference);
-  // } else {
-  //   reference =
-  //       new Reference2(*this, value, initialRefCount, deleteSelf,
-  //       nativeData);
-  //   refList_.linkNext(reference);
-  // }
-
-  return reference;
 }
 
 napi_status NodeApiEnvironment::genericFailure(
