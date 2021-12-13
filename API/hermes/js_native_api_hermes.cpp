@@ -9,15 +9,15 @@
 // TODO: Finish callFunction
 // TODO: JS error throwing
 // TODO: Type Tag
-// TODO newInstance
+// TODO: newInstance
 // TODO: ArrayBuffer
 // TODO: TypedArray
 // TODO: DataView
 // TODO: Promise
-// TODO: Date
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
+// TODO: report bug in JSDate::create - value is unused
 
 #define NAPI_EXPERIMENTAL
 
@@ -33,6 +33,7 @@
 #include "hermes/VM/HostModel.h"
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
+#include "hermes/VM/JSDate.h"
 #include "hermes/VM/JSError.h"
 #include "hermes/VM/JSProxy.h"
 #include "hermes/VM/PrimitiveBox.h"
@@ -883,10 +884,10 @@ struct NodeApiEnvironment {
 
   napi_status isPromise(napi_value value, bool *is_promise) noexcept;
 
-  napi_status createDate(double time, napi_value *result) noexcept;
-
-  napi_status isDate(napi_value value, bool *is_date) noexcept;
-
+  //=======================================================================
+  // Date functions
+  napi_status createDate(double dateTime, napi_value *result) noexcept;
+  napi_status isDate(napi_value value, bool *result) noexcept;
   napi_status getDateValue(napi_value value, double *result) noexcept;
 
   napi_status adjustExternalMemory(
@@ -5132,51 +5133,51 @@ napi_status NodeApiEnvironment::isPromise(
 }
 
 napi_status NodeApiEnvironment::createDate(
-    double time,
+    double dateTime,
     napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::MaybeLocal<v8::Value> maybe_date = v8::Date::New(env->context(),
-  // time); CHECK_MAYBE_EMPTY(env, maybe_date, napi_generic_failure);
-
-  // *result = v8impl::JsValueFromV8LocalValue(maybe_date.ToLocalChecked());
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+    auto dateHandle = vm::JSDate::create(
+        &runtime_, dateTime, toObjectHandle(&runtime_.datePrototype));
+    // The JSDate::create has a bug where it does not set the value in
+    // constructor.
+    vm::JSDate::setPrimitiveValue(
+        dateHandle.get(),
+        &runtime_,
+        vm::SmallHermesValue::encodeNumberValue(dateTime, &runtime_));
+    *result = addStackValue(dateHandle.getHermesValue());
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::isDate(
     napi_value value,
-    bool *is_date) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, is_date);
-
-  // *is_date = v8impl::V8LocalValueFromJsValue(value)->IsDate();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    bool *result) noexcept {
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  const vm::PinnedHermesValue *hv = phv(value);
+  *result = hv->isObject() && vm::vmisa<vm::JSDate>(*hv);
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getDateValue(
     napi_value value,
     double *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // RETURN_STATUS_IF_FALSE(env, val->IsDate(), napi_date_expected);
-
-  // v8::Local<v8::Date> date = val.As<v8::Date>();
-  // *result = date->ValueOf();
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    const vm::PinnedHermesValue *hv = phv(value);
+    RETURN_STATUS_IF_FALSE(
+        hv->isObject() && vm::vmisa<vm::JSDate>(*hv), napi_date_expected);
+    auto dateHandle = vm::Handle<vm::JSDate>::vmcast(hv);
+    vm::SmallHermesValue shv = vm::JSDate::getPrimitiveValue(dateHandle.get());
+    if (shv.isNumber()) {
+      *result = shv.getNumber(&runtime_);
+    } else {
+      *result = std::numeric_limits<double>::quiet_NaN();
+    }
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::adjustExternalMemory(
