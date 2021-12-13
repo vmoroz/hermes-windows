@@ -326,7 +326,7 @@ struct LinkedList {
     return static_cast<T *>(head_.next_);
   }
 
-  // The end() returns a popinter to an invalid object.
+  // The end() returns a pointer to an invalid object.
   T *end() noexcept {
     return static_cast<T *>(&head_);
   }
@@ -1272,7 +1272,7 @@ struct Reference : LinkedList<Reference>::Item {
   static void finalizeAll(
       NodeApiEnvironment &env,
       LinkedList<TItem> &list) noexcept {
-    for (auto item = list.begin(); item != list.end();) {
+    for (auto item = list.begin(); item != list.end(); item = list.begin()) {
       item->finalize(env);
     }
   }
@@ -1281,8 +1281,8 @@ struct Reference : LinkedList<Reference>::Item {
       NodeApiEnvironment &env,
       LinkedList<Reference> &list,
       ReasonToDelete reason) noexcept {
-    for (auto referfence = list.begin(); referfence != list.end();) {
-      deleteReference(env, referfence, reason);
+    for (auto ref = list.begin(); ref != list.end(); ref = list.begin()) {
+      deleteReference(env, ref, reason);
     }
   }
 
