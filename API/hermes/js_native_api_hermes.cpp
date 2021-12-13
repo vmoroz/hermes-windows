@@ -1219,6 +1219,10 @@ struct Reference : LinkedList<Reference>::Item {
     return nullptr;
   }
 
+  virtual void *finalizeHint() noexcept {
+    return nullptr;
+  }
+
   virtual vm::PinnedHermesValue *getGCRoot(
       NodeApiEnvironment & /*env*/) noexcept {
     return nullptr;
@@ -1505,13 +1509,14 @@ struct ComplexReference : Reference {
 // ref to manually deleted one if the ref count is incremented
 
 // Store finalizeHint if it is not null.
-template <typename TReference, bool HasHint>
-struct FinalizeHint : TReference {
+template <typename TBaseReference>
+struct FinalizeHintHolder : TBaseReference {
   template <typename... TArgs>
-  FinalizeHint(void *finalizeHint, TArgs &&...args) noexcept
-      : TReference(std::forward<TArgs>(args)...), finalizeHint_(finalizeHint) {}
+  FinalizeHintHolder(void *finalizeHint, TArgs &&...args) noexcept
+      : TBaseReference(std::forward<TArgs>(args)...),
+        finalizeHint_(finalizeHint) {}
 
-  void *finalizeHint() noexcept {
+  void *finalizeHint() noexcept override {
     return finalizeHint_;
   }
 
@@ -1519,23 +1524,14 @@ struct FinalizeHint : TReference {
   void *finalizeHint_;
 };
 
-template <typename TReference>
-struct FinalizeHint<TReference, false> : TReference {
-  template <typename... TArgs>
-  FinalizeHint(void * /*finalizeHint*/, TArgs &&...args) noexcept
-      : TReference(std::forward<TArgs>(args)...) {}
-
-  void *finalizeHint() noexcept {
-    return nullptr;
-  }
-};
-
 // Store and call finalizeCallback if it is not null.
-template <typename TReference, bool HasCallback, bool HasHint>
-struct FinalizeCallback : FinalizeHint<TReference, HasHint> {
+template <typename TBaseReference>
+struct FinalizeCallbackHolder : TBaseReference {
   template <typename... TArgs>
-  FinalizeCallback(napi_finalize finalizeCallback, TArgs &&...args) noexcept
-      : FinalizeHint<TReference, HasHint>(std::forward<TArgs>(args)...),
+  FinalizeCallbackHolder(
+      napi_finalize finalizeCallback,
+      TArgs &&...args) noexcept
+      : TBaseReference(std::forward<TArgs>(args)...),
         finalizeCallback_(finalizeCallback) {}
 
   napi_status callFinalizeCallback(NodeApiEnvironment &env) noexcept override {
@@ -1550,22 +1546,12 @@ struct FinalizeCallback : FinalizeHint<TReference, HasHint> {
   napi_finalize finalizeCallback_{};
 };
 
-template <typename TReference, bool HasHint>
-struct FinalizeCallback<TReference, false, HasHint>
-    : FinalizeHint<TReference, HasHint> {
-  template <typename... TArgs>
-  FinalizeCallback(napi_finalize /*finalizeCallback*/, TArgs &&...args) noexcept
-      : FinalizeHint<TReference, HasHint>(std::forward<TArgs>(args)...) {}
-};
-
 // Store nativeData if it is not null.
-template <typename TReference, bool HasData, bool HasCallback, bool HasHint>
-struct FinalizeNativeData : FinalizeCallback<TReference, HasCallback, HasHint> {
+template <typename TBaseReference>
+struct NativeDataHolder : TBaseReference {
   template <typename... TArgs>
-  FinalizeNativeData(void *nativeData, TArgs &&...args) noexcept
-      : FinalizeCallback<TReference, HasCallback, HasHint>(
-            std::forward<TArgs>(args)...),
-        nativeData_(nativeData) {}
+  NativeDataHolder(void *nativeData, TArgs &&...args) noexcept
+      : TBaseReference(std::forward<TArgs>(args)...), nativeData_(nativeData) {}
 
   void *nativeData() noexcept override {
     return nativeData_;
@@ -1575,23 +1561,12 @@ struct FinalizeNativeData : FinalizeCallback<TReference, HasCallback, HasHint> {
   void *nativeData_;
 };
 
-template <typename TReference, bool HasCallback, bool HasHint>
-struct FinalizeNativeData<TReference, false, HasCallback, HasHint>
-    : FinalizeCallback<TReference, HasCallback, HasHint> {
-  template <typename... TArgs>
-  FinalizeNativeData(void * /*nativeData*/, TArgs &&...args) noexcept
-      : FinalizeCallback<TReference, HasCallback, HasHint>(
-            std::forward<TArgs>(args)...) {}
-};
-
 // Common code for references inherited from Finalizer.
-template <typename TReference, bool HasData, bool HasCallback, bool HasHint>
-struct FinalizingReference final
-    : FinalizeNativeData<TReference, HasData, HasCallback, HasHint> {
+template <typename TBaseReference>
+struct FinalizingReference final : TBaseReference {
   template <typename... TArgs>
   FinalizingReference(TArgs &&...args) noexcept
-      : FinalizeNativeData<TReference, HasData, HasCallback, HasHint>(
-            std::forward<TArgs>(args)...) {}
+      : TBaseReference(std::forward<TArgs>(args)...) {}
 
   void finalize(NodeApiEnvironment &env) noexcept override {
     callFinalizeCallback(env);
@@ -1614,49 +1589,27 @@ struct FinalizingReferenceFactory {
     switch (selector) {
       default:
       case 0b000:
-        return new FinalizingReference<TReference, false, false, false>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
       case 0b001:
-        return new FinalizingReference<TReference, false, false, true>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
+        return new FinalizingReference<TReference>(
             std::forward<TArgs>(args)...);
       case 0b010:
-        return new FinalizingReference<TReference, false, true, false>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
+        return new FinalizingReference<FinalizeCallbackHolder<TReference>>(
+            finalizeCallback, std::forward<TArgs>(args)...);
       case 0b011:
-        return new FinalizingReference<TReference, false, true, true>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
+        return new FinalizingReference<
+            FinalizeCallbackHolder<FinalizeHintHolder<TReference>>>(
+            finalizeCallback, finalizeHint, std::forward<TArgs>(args)...);
       case 0b100:
-        return new FinalizingReference<TReference, true, false, false>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
       case 0b101:
-        return new FinalizingReference<TReference, true, false, true>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
+        return new FinalizingReference<NativeDataHolder<TReference>>(
+            nativeData, std::forward<TArgs>(args)...);
       case 0b110:
-        return new FinalizingReference<TReference, true, true, false>(
-            nativeData,
-            finalizeCallback,
-            finalizeHint,
-            std::forward<TArgs>(args)...);
+        return new FinalizingReference<
+            NativeDataHolder<FinalizeCallbackHolder<TReference>>>(
+            nativeData, finalizeCallback, std::forward<TArgs>(args)...);
       case 0b111:
-        return new FinalizingReference<TReference, true, true, true>(
+        return new FinalizingReference<NativeDataHolder<
+            FinalizeCallbackHolder<FinalizeHintHolder<TReference>>>>(
             nativeData,
             finalizeCallback,
             finalizeHint,
