@@ -1,41 +1,36 @@
 // TODO: change the stack references to use collection with chunks of equal 2^n
 // size.
 
-#include <algorithm>
-#include <atomic>
-#include <climits> // INT_MAX
-#include <cmath>
-#include <vector>
 #define NAPI_EXPERIMENTAL
 
-#include "llvh/Support/Compiler.h"
+#include "hermes_napi.h"
 
 #include "hermes.h"
 #include "hermes/BCGen/HBC/BytecodeDataProvider.h"
 #include "hermes/BCGen/HBC/BytecodeFileFormat.h"
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
-#include "hermes/VM/Runtime.h"
-
-#include "hermes/Support/SimpleDiagHandler.h"
-
 #include "hermes/SourceMap/SourceMapParser.h"
-
+#include "hermes/Support/SimpleDiagHandler.h"
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/HostModel.h"
-#include "hermes/VM/PropertyAccessor.h"
-#include "hermes/VM/StringPrimitive.h"
-
-#include "llvh/Support/ConvertUTF.h"
-
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
 #include "hermes/VM/JSError.h"
 #include "hermes/VM/JSProxy.h"
 #include "hermes/VM/PrimitiveBox.h"
+#include "hermes/VM/PropertyAccessor.h"
+#include "hermes/VM/Runtime.h"
+#include "hermes/VM/StringPrimitive.h"
 
 #include "llvh/ADT/SmallSet.h"
+#include "llvh/Support/Compiler.h"
+#include "llvh/Support/ConvertUTF.h"
 
-#include "hermes_napi.h"
+#include <algorithm>
+#include <atomic>
+#include <climits> // INT_MAX
+#include <cmath>
+#include <vector>
 
 using ::hermes::hermesLog;
 
