@@ -36,6 +36,7 @@
 #include "hermes/VM/JSDate.h"
 #include "hermes/VM/JSError.h"
 #include "hermes/VM/JSProxy.h"
+#include "hermes/VM/JSTypedArray.h"
 #include "hermes/VM/PrimitiveBox.h"
 #include "hermes/VM/PropertyAccessor.h"
 #include "hermes/VM/Runtime.h"
@@ -820,21 +821,21 @@ struct NodeApiEnvironment {
   napi_status isArrayBuffer(napi_value value, bool *result) noexcept;
 
   napi_status createArrayBuffer(
-      size_t byte_length,
+      size_t byteLength,
       void **data,
       napi_value *result) noexcept;
 
   napi_status createExternalArrayBuffer(
-      void *external_data,
-      size_t byte_length,
-      napi_finalize finalize_cb,
-      void *finalize_hint,
+      void *externalData,
+      size_t byteLength,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
       napi_value *result) noexcept;
 
   napi_status getArrayBufferInfo(
-      napi_value arraybuffer,
+      napi_value arrayBuffer,
       void **data,
-      size_t *byte_length) noexcept;
+      size_t *byteLength) noexcept;
 
   napi_status isTypedArray(napi_value value, bool *result) noexcept;
 
@@ -4739,52 +4740,40 @@ napi_status NodeApiEnvironment::getAndClearLastException(
 napi_status NodeApiEnvironment::isArrayBuffer(
     napi_value value,
     bool *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(value);
   CHECK_ARG(result);
-
   *result = vm::vmisa<vm::JSArrayBuffer>(*phv(value));
   return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createArrayBuffer(
-    size_t byte_length,
+    size_t byteLength,
     void **data,
     napi_value *result) noexcept {
-  // TODO: implement
-  // CHECK_ARG(this, result);
-  // return HandleExceptions([&] {
-  //   vm::GCScope gcScope(&runtime_);
-  //   vm::JSArrayBuffer::create(&runtime_, ) auto res =
-  //       vm::JSArray::create(&runtime_, length, length);
-  //   CHECK_STATUS(res.getStatus());
-  //   *result = AddStackValue(res->getHermesValue());
-  // });
+  return handleExceptions([&] {
+    CHECK_ARG(result);
 
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
+    auto buffer = vm::JSArrayBuffer::create(
+        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
+    // Add result to the local values before allocating buffer to ensure
+    // GC-safety.
+    *result = addStackValue(buffer.getHermesValue());
+    CHECK_STATUS(buffer->createDataBlock(&runtime_, byteLength));
 
-  // v8::Isolate *isolate = env->isolate;
-  // v8::Local<v8::ArrayBuffer> buffer =
-  //     v8::ArrayBuffer::New(isolate, byte_length);
-
-  // // Optionally return a pointer to the buffer's data, to avoid another
-  // call to
-  // // retrieve it.
-  // if (data != nullptr) {
-  //   *data = buffer->GetBackingStore()->Data();
-  // }
-
-  // *result = v8impl::JsValueFromV8LocalValue(buffer);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    // Optionally return a pointer to the buffer's data, to avoid another call
+    // to retrieve it.
+    if (data != nullptr) {
+      *data = buffer->getDataBlock();
+    }
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::createExternalArrayBuffer(
-    void *external_data,
-    size_t byte_length,
-    napi_finalize finalize_cb,
-    void *finalize_hint,
+    void *externalData,
+    size_t byteLength,
+    napi_finalize finalizeCallback,
+    void *finalizeHint,
     napi_value *result) noexcept {
   // TODO: implement
   // // The API contract here is that the cleanup function runs on the JS
@@ -4802,45 +4791,34 @@ napi_status NodeApiEnvironment::createExternalArrayBuffer(
 }
 
 napi_status NodeApiEnvironment::getArrayBufferInfo(
-    napi_value arraybuffer,
+    napi_value arrayBuffer,
     void **data,
-    size_t *byte_length) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, arraybuffer);
+    size_t *byteLength) noexcept {
+  CHECK_ARG(arrayBuffer);
+  RETURN_STATUS_IF_FALSE(
+      vm::vmisa<vm::JSArrayBuffer>(*phv(arrayBuffer)), napi_invalid_arg);
 
-  // v8::Local<v8::Value> value =
-  // v8impl::V8LocalValueFromJsValue(arraybuffer); RETURN_STATUS_IF_FALSE(env,
-  // value->IsArrayBuffer(), napi_invalid_arg);
+  vm::JSArrayBuffer *buffer = vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  if (data != nullptr) {
+    // TODO: make it right for attached data blocks
+    *data = buffer->attached() ? buffer->getDataBlock() : nullptr;
+  }
 
-  // std::shared_ptr<v8::BackingStore> backing_store =
-  //     value.As<v8::ArrayBuffer>()->GetBackingStore();
+  if (byteLength != nullptr) {
+    // TODO: make it right for attached data blocks
+    *byteLength = buffer->attached() ? buffer->size() : 0;
+  }
 
-  // if (data != nullptr) {
-  //   *data = backing_store->Data();
-  // }
-
-  // if (byte_length != nullptr) {
-  //   *byte_length = backing_store->ByteLength();
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::isTypedArray(
     napi_value value,
     bool *result) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // *result = val->IsTypedArray();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  *result = vm::vmisa<vm::JSTypedArrayBase>(*phv(value));
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createTypedArray(
