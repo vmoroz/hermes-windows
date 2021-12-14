@@ -66,11 +66,11 @@ using ::hermes::hermesLog;
 #endif
 
 // TODO: review and rename macros
-#define STATUS_CALL(call)              \
-  do {                                 \
-    if (napi_status status = (call)) { \
-      return status;                   \
-    }                                  \
+#define STATUS_CALL(...)                      \
+  do {                                        \
+    if (napi_status status = (__VA_ARGS__)) { \
+      return status;                          \
+    }                                         \
   } while (false)
 
 #define RETURN_STATUS_IF_FALSE(condition, status) \
@@ -139,6 +139,15 @@ using ::hermes::hermesLog;
 
 #define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
 
+#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)            \
+  do {                                                               \
+    if (!(condition)) {                                              \
+      std::string message = env.formatMessage(__VA_ARGS__);          \
+      env.throwRangeError((error), message.c_str());                 \
+      return setLastError(napi_generic_failure, std::move(message)); \
+    }                                                                \
+  } while (0)
+
 namespace hermes {
 namespace napi {
 
@@ -149,6 +158,8 @@ struct InstanceData;
 struct HFContext;
 struct NodeApiEnvironment;
 struct Reference;
+
+const napi_status napi_not_implemented = napi_generic_failure;
 
 struct Marker {
   size_t chunkIndex{0};
@@ -542,6 +553,7 @@ struct NodeApiEnvironment {
   bool isRunningFinalizers_{};
 
   napi_extended_error_info lastError_{};
+  std::string lastErrorMessage_;
   int openCallbackScopeCount_{};
   InstanceData *instanceData_{};
 
@@ -556,10 +568,13 @@ struct NodeApiEnvironment {
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
 
+  template <typename... TArgs>
+  std::string formatMessage(TArgs &&...args) noexcept;
   napi_status setLastError(
       napi_status error_code,
-      uint32_t engine_error_code = 0,
-      void *engine_reserved = nullptr) noexcept;
+      std::string &&message = nullptr) noexcept;
+  template <typename... TArgs>
+  napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
   napi_status clearLastError() noexcept;
 
   napi_status getLastErrorInfo(
@@ -718,12 +733,9 @@ struct NodeApiEnvironment {
   napi_status getGlobal(napi_value *result) noexcept;
 
   napi_status throwError(napi_value error) noexcept;
-
-  napi_status throwError(const char *code, const char *msg) noexcept;
-
-  napi_status throwTypeError(const char *code, const char *msg) noexcept;
-
-  napi_status throwRangeError(const char *code, const char *msg) noexcept;
+  napi_status throwError(const char *code, const char *message) noexcept;
+  napi_status throwTypeError(const char *code, const char *message) noexcept;
+  napi_status throwRangeError(const char *code, const char *message) noexcept;
 
   napi_status isError(napi_value value, bool *result) noexcept;
 
@@ -839,35 +851,42 @@ struct NodeApiEnvironment {
 
   napi_status isTypedArray(napi_value value, bool *result) noexcept;
 
+  template <typename TItem, vm::CellKind CellKind>
+  napi_status createTypedArray(
+      size_t length,
+      vm::JSArrayBuffer *buffer,
+      size_t byteOffset,
+      vm::JSTypedArrayBase **result) noexcept;
+
   napi_status createTypedArray(
       napi_typedarray_type type,
       size_t length,
-      napi_value arraybuffer,
-      size_t byte_offset,
+      napi_value arrayBuffer,
+      size_t byteOffset,
       napi_value *result) noexcept;
 
   napi_status getTypedArrayInfo(
-      napi_value typedarray,
+      napi_value typedArray,
       napi_typedarray_type *type,
       size_t *length,
       void **data,
-      napi_value *arraybuffer,
-      size_t *byte_offset) noexcept;
+      napi_value *arrayBuffer,
+      size_t *byteOffset) noexcept;
 
   napi_status createDataView(
-      size_t byte_length,
-      napi_value arraybuffer,
-      size_t byte_offset,
+      size_t byteLength,
+      napi_value arrayBuffer,
+      size_t byteOffset,
       napi_value *result) noexcept;
 
   napi_status isDataView(napi_value value, bool *result) noexcept;
 
   napi_status getDataViewInfo(
-      napi_value dataview,
-      size_t *byte_length,
+      napi_value dataView,
+      size_t *byteLength,
       void **data,
-      napi_value *arraybuffer,
-      size_t *byte_offset) noexcept;
+      napi_value *arrayBuffer,
+      size_t *byteOffset) noexcept;
 
   napi_status getVersion(uint32_t *result) noexcept;
 
@@ -883,7 +902,7 @@ struct NodeApiEnvironment {
       napi_deferred deferred,
       napi_value resolution) noexcept;
 
-  napi_status isPromise(napi_value value, bool *is_promise) noexcept;
+  napi_status isPromise(napi_value value, bool *result) noexcept;
 
   //=======================================================================
   // Date functions
@@ -2076,20 +2095,45 @@ napi_status NodeApiEnvironment::getReferenceValue(
   return clearLastError();
 }
 
+void raw_ostream_append(llvh::raw_ostream &os) {}
+
+template <typename Arg0, typename... Args>
+void raw_ostream_append(llvh::raw_ostream &os, Arg0 &&arg0, Args &&...args) {
+  os << arg0;
+  raw_ostream_append(os, args...);
+}
+
+template <typename... TArgs>
+std::string NodeApiEnvironment::formatMessage(TArgs &&...args) noexcept {
+  std::string result;
+  llvh::raw_string_ostream os(result);
+  raw_ostream_append(os, std::forward<TArgs>(args)...);
+  os.flush();
+  return result;
+}
+
 napi_status NodeApiEnvironment::setLastError(
-    napi_status error_code,
-    uint32_t engine_error_code,
-    void *engine_reserved) noexcept {
-  lastError_.error_code = error_code;
-  lastError_.engine_error_code = engine_error_code;
-  lastError_.engine_reserved = engine_reserved;
-  return error_code;
+    napi_status errorCode,
+    std::string &&message) noexcept {
+  lastErrorMessage_ = std::move(message);
+  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
+  return errorCode;
+}
+
+template <typename... TArgs>
+napi_status NodeApiEnvironment::setLastError(
+    napi_status errorCode,
+    TArgs &&...args) noexcept {
+  lastErrorMessage_.clear();
+  llvh::raw_string_ostream errorStream(lastErrorMessage_);
+  raw_ostream_append(errorStream, std::forward<TArgs>(args)...);
+  errorStream.flush();
+  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
+  return errorCode;
 }
 
 napi_status NodeApiEnvironment::clearLastError() noexcept {
-  lastError_.error_code = napi_ok;
-  lastError_.engine_error_code = 0;
-  lastError_.engine_reserved = nullptr;
+  lastError_ = {};
   return napi_ok;
 }
 
@@ -4821,77 +4865,122 @@ napi_status NodeApiEnvironment::isTypedArray(
   return clearLastError();
 }
 
+template <vm::CellKind CellKind>
+constexpr const char *getTypedArrayName() noexcept {
+  static constexpr const char *names[] = {
+#define TYPED_ARRAY(name, type) #name "Array",
+#include "hermes/VM/TypedArrays.def"
+  };
+  return names
+      [static_cast<int>(CellKind) -
+       static_cast<int>(vm::CellKind::TypedArrayBaseKind_first)];
+}
+
+template <typename TElement, vm::CellKind CellKind>
+napi_status NodeApiEnvironment::createTypedArray(
+    size_t length,
+    vm::JSArrayBuffer *buffer,
+    size_t byteOffset,
+    vm::JSTypedArrayBase **result) noexcept {
+  constexpr size_t elementSize = sizeof(TElement);
+  if (elementSize > 1) {
+    THROW_RANGE_ERROR_IF_FALSE(
+        byteOffset % elementSize == 0,
+        "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT",
+        "start offset of ",
+        getTypedArrayName<CellKind>(),
+        " should be a multiple of ",
+        elementSize);
+  }
+  THROW_RANGE_ERROR_IF_FALSE(
+      length * elementSize + byteOffset <= buffer->size(),
+      "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH",
+      "Invalid typed array length");
+  using TypedArray = vm::JSTypedArray<TElement, CellKind>;
+  auto arrayHandle =
+      TypedArray::create(&runtime_, TypedArray::getPrototype(&runtime_));
+  vm::JSTypedArrayBase::setBuffer(
+      &runtime_,
+      arrayHandle.get(),
+      buffer,
+      byteOffset,
+      length * elementSize,
+      static_cast<uint8_t>(elementSize));
+  *result = arrayHandle.get();
+  return clearLastError();
+}
+
 napi_status NodeApiEnvironment::createTypedArray(
     napi_typedarray_type type,
     size_t length,
-    napi_value arraybuffer,
-    size_t byte_offset,
+    napi_value arrayBuffer,
+    size_t byteOffset,
     napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, arraybuffer);
-  // CHECK_ARG(env, result);
+  return handleExceptions([&] {
+    CHECK_ARG(arrayBuffer);
+    CHECK_ARG(result);
 
-  // v8::Local<v8::Value> value =
-  // v8impl::V8LocalValueFromJsValue(arraybuffer); RETURN_STATUS_IF_FALSE(env,
-  // value->IsArrayBuffer(), napi_invalid_arg);
+    RETURN_STATUS_IF_FALSE(
+        vm::vmisa<vm::JSArrayBuffer>(*phv(arrayBuffer)), napi_invalid_arg);
 
-  // v8::Local<v8::ArrayBuffer> buffer = value.As<v8::ArrayBuffer>();
-  // v8::Local<v8::TypedArray> typedArray;
+    vm::JSArrayBuffer *buffer =
+        vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
+    vm::JSTypedArrayBase *typedArray{};
 
-  // switch (type) {
-  //   case napi_int8_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Int8Array, 1, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_uint8_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Uint8Array, 1, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_uint8_clamped_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Uint8ClampedArray, 1, buffer, byte_offset, length,
-  //         typedArray);
-  //     break;
-  //   case napi_int16_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Int16Array, 2, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_uint16_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Uint16Array, 2, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_int32_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Int32Array, 4, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_uint32_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Uint32Array, 4, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_float32_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Float32Array, 4, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_float64_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, Float64Array, 8, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_bigint64_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, BigInt64Array, 8, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   case napi_biguint64_array:
-  //     CREATE_TYPED_ARRAY(
-  //         env, BigUint64Array, 8, buffer, byte_offset, length, typedArray);
-  //     break;
-  //   default:
-  //     return napi_set_last_error(env, napi_invalid_arg);
-  // }
+    switch (type) {
+      case napi_int8_array:
+        STATUS_CALL(createTypedArray<int8_t, vm::CellKind::Int8ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_uint8_array:
+        STATUS_CALL(createTypedArray<uint8_t, vm::CellKind::Uint8ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_uint8_clamped_array:
+        STATUS_CALL(
+            createTypedArray<uint8_t, vm::CellKind::Uint8ClampedArrayKind>(
+                length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_int16_array:
+        STATUS_CALL(createTypedArray<int16_t, vm::CellKind::Int16ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_uint16_array:
+        STATUS_CALL(createTypedArray<uint16_t, vm::CellKind::Uint16ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_int32_array:
+        STATUS_CALL(createTypedArray<int32_t, vm::CellKind::Int32ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_uint32_array:
+        STATUS_CALL(createTypedArray<uint32_t, vm::CellKind::Uint32ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_float32_array:
+        STATUS_CALL(createTypedArray<float, vm::CellKind::Float32ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_float64_array:
+        STATUS_CALL(createTypedArray<double, vm::CellKind::Float64ArrayKind>(
+            length, buffer, byteOffset, &typedArray));
+        break;
+      case napi_bigint64_array:
+        return setLastError(
+            napi_not_implemented,
+            "BigInt64Array is not implemented in Hermes yet");
+      case napi_biguint64_array:
+        return setLastError(
+            napi_not_implemented,
+            "BigUint64Array is not implemented in Hermes yet");
+      default:
+        return setLastError(
+            napi_invalid_arg, "Unsupported TypedArray type ", type);
+    }
 
-  // *result = v8impl::JsValueFromV8LocalValue(typedArray);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    *result = addStackValue(vm::HermesValue::encodeObjectValue(typedArray));
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getTypedArrayInfo(
