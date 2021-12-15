@@ -9,7 +9,6 @@
 // TODO: Finish callFunction
 // TODO: JS error throwing
 // TODO: Type Tag
-// TODO: newInstance
 // TODO: External ArrayBuffer
 // TODO: Promise
 // TODO: adjustExternalMemory
@@ -112,7 +111,7 @@ using ::hermes::hermesLog;
 #define CHECK_FUNCTION_ARG(arg)                    \
   do {                                             \
     CHECK_OBJECT_ARG(arg);                         \
-    if (vm::vmisa<vm::Callable>(*phv(arg))) {      \
+    if (!vm::vmisa<vm::Callable>(*phv(arg))) {     \
       return setLastError(napi_function_expected); \
     }                                              \
   } while (false)
@@ -4624,30 +4623,84 @@ napi_status NodeApiEnvironment::newInstance(
     size_t argc,
     const napi_value *argv,
     napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, constructor);
-  // if (argc > 0) {
-  //   CHECK_ARG(env, argv);
-  // }
-  // CHECK_ARG(env, result);
+  return handleExceptions([&] {
+    CHECK_ARG(constructor);
+    CHECK_ARG(result);
+    if (argc > 0) {
+      CHECK_ARG(argv);
+    }
 
-  // v8::Local<v8::Context> context = env->context();
+    vm::Callable *callable =
+        vm::vmcast_or_null<vm::Callable>(*phv(constructor));
+    RETURN_STATUS_IF_FALSE(callable, napi_function_expected);
+    auto funcHandle = runtime_.makeHandle<vm::Callable>(callable);
 
-  // v8::Local<v8::Function> ctor;
-  // CHECK_TO_FUNCTION(env, ctor, constructor);
+    if (argc > std::numeric_limits<uint32_t>::max() ||
+        !runtime_.checkAvailableStack((uint32_t)argc)) {
+      return setLastError(
+          napi_generic_failure,
+          "NodeApiEnvironment::newInstance: Unable to call function: stack overflow");
+    }
 
-  // auto maybe = ctor->NewInstance(
-  //     context,
-  //     argc,
-  //     reinterpret_cast<v8::Local<v8::Value> *>(const_cast<napi_value
-  //     *>(argv)));
+    auto &stats = runtime_.getRuntimeStats();
+    const vm::instrumentation::RAIITimer timer{
+        "Incoming Function: Call As Constructor",
+        stats,
+        stats.incomingFunction};
 
-  // CHECK_MAYBE_EMPTY(env, maybe, napi_generic_failure);
+    // We follow es5 13.2.2 [[Construct]] here. Below F == func.
+    // 13.2.2.5:
+    //    Let proto be the value of calling the [[Get]] internal property of
+    //    F with argument "prototype"
+    // 13.2.2.6:
+    //    If Type(proto) is Object, set the [[Prototype]] internal property
+    //    of obj to proto
+    // 13.2.2.7:
+    //    If Type(proto) is not Object, set the [[Prototype]] internal property
+    //    of obj to the standard built-in Object prototype object as described
+    //    in 15.2.4
+    //
+    // Note that 13.2.2.1-4 are also handled by the call to newObject.
+    auto thisRes = vm::Callable::createThisForConstruct(funcHandle, &runtime_);
+    // We need to capture this in case the ctor doesn't return an object,
+    // we need to return this object.
+    auto objHandle = runtime_.makeHandle<vm::JSObject>(std::move(*thisRes));
 
-  // *result = v8impl::JsValueFromV8LocalValue(maybe.ToLocalChecked());
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    // 13.2.2.8:
+    //    Let result be the result of calling the [[Call]] internal property of
+    //    F, providing obj as the this value and providing the argument list
+    //    passed into [[Construct]] as args.
+    //
+    // For us result == res.
+
+    vm::ScopedNativeCallFrame newFrame{
+        &runtime_,
+        static_cast<uint32_t>(argc),
+        funcHandle.getHermesValue(),
+        funcHandle.getHermesValue(),
+        objHandle.getHermesValue()};
+    if (newFrame.overflowed()) {
+      CHECK_STATUS(runtime_.raiseStackOverflow(
+          ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack));
+    }
+    for (uint32_t i = 0; i != argc; ++i) {
+      newFrame->getArgRef(i) = *phv(argv[i]);
+    }
+    // The last parameter indicates that this call should construct an object.
+    auto callRes = vm::Callable::call(funcHandle, &runtime_);
+    CHECK_STATUS(callRes.getStatus());
+
+    // 13.2.2.9:
+    //    If Type(result) is Object then return result
+    // 13.2.2.10:
+    //    Return obj
+    auto resultValue = callRes->get();
+    vm::HermesValue resultHValue =
+        resultValue.isObject() ? resultValue : objHandle.getHermesValue();
+    *result = addStackValue(resultHValue);
+
+    return clearLastError();
+  });
 }
 
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
