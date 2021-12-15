@@ -10,7 +10,7 @@
 // TODO: JS error throwing
 // TODO: Type Tag
 // TODO: newInstance
-// TODO: DataView
+// TODO: External ArrayBuffer
 // TODO: Promise
 // TODO: adjustExternalMemory
 // TODO: Unique strings
@@ -31,6 +31,7 @@
 #include "hermes/VM/HostModel.h"
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
+#include "hermes/VM/JSDataView.h"
 #include "hermes/VM/JSDate.h"
 #include "hermes/VM/JSError.h"
 #include "hermes/VM/JSProxy.h"
@@ -137,13 +138,13 @@ using ::hermes::hermesLog;
 
 #define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
 
-#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)            \
-  do {                                                               \
-    if (!(condition)) {                                              \
-      std::string message = env.formatMessage(__VA_ARGS__);          \
-      env.throwRangeError((error), message.c_str());                 \
-      return setLastError(napi_generic_failure, std::move(message)); \
-    }                                                                \
+#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)              \
+  do {                                                                 \
+    if (!(condition)) {                                                \
+      std::string message = env.formatMessage(__VA_ARGS__);            \
+      env.throwRangeError((error), message.c_str());                   \
+      return setLastError(napi_pending_exception, std::move(message)); \
+    }                                                                  \
   } while (0)
 
 namespace hermes {
@@ -5043,92 +5044,72 @@ napi_status NodeApiEnvironment::getTypedArrayInfo(
 }
 
 napi_status NodeApiEnvironment::createDataView(
-    size_t byte_length,
-    napi_value arraybuffer,
-    size_t byte_offset,
+    size_t byteLength,
+    napi_value arrayBuffer,
+    size_t byteOffset,
     napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, arraybuffer);
-  // CHECK_ARG(env, result);
+  return handleExceptions([&] {
+    CHECK_ARG(arrayBuffer);
+    CHECK_ARG(result);
 
-  // v8::Local<v8::Value> value =
-  // v8impl::V8LocalValueFromJsValue(arraybuffer); RETURN_STATUS_IF_FALSE(env,
-  // value->IsArrayBuffer(), napi_invalid_arg);
+    vm::JSArrayBuffer *buffer =
+        vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+    RETURN_STATUS_IF_FALSE(buffer, napi_invalid_arg);
 
-  // v8::Local<v8::ArrayBuffer> buffer = value.As<v8::ArrayBuffer>();
-  // if (byte_length + byte_offset > buffer->ByteLength()) {
-  //   napi_throw_range_error(
-  //       env,
-  //       "ERR_NAPI_INVALID_DATAVIEW_ARGS",
-  //       "byte_offset + byte_length should be less than or "
-  //       "equal to the size in bytes of the array passed in");
-  //   return napi_set_last_error(env, napi_pending_exception);
-  // }
-  // v8::Local<v8::DataView> DataView =
-  //     v8::DataView::New(buffer, byte_offset, byte_length);
-
-  // *result = v8impl::JsValueFromV8LocalValue(DataView);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    THROW_RANGE_ERROR_IF_FALSE(
+        byteLength + byteOffset <= buffer->size(),
+        "ERR_NAPI_INVALID_DATAVIEW_ARGS",
+        "byte_offset + byte_length should be less than or "
+        "equal to the size in bytes of the array passed in");
+    auto viewHandle = vm::JSDataView::create(
+        &runtime_, toObjectHandle(&runtime_.dataViewPrototype));
+    viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
+    *result = addStackValue(viewHandle.getHermesValue());
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::isDataView(
     napi_value value,
     bool *result) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // *result = val->IsDataView();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  *result = vm::vmisa<vm::JSDataView>(*phv(value));
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getDataViewInfo(
-    napi_value dataview,
-    size_t *byte_length,
+    napi_value dataView,
+    size_t *byteLength,
     void **data,
-    napi_value *arraybuffer,
-    size_t *byte_offset) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, dataview);
+    napi_value *arrayBuffer,
+    size_t *byteOffset) noexcept {
+  CHECK_ARG(dataView);
 
-  // v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(dataview);
-  // RETURN_STATUS_IF_FALSE(env, value->IsDataView(), napi_invalid_arg);
+  vm::JSDataView *view = vm::vmcast_or_null<vm::JSDataView>(*phv(dataView));
+  RETURN_STATUS_IF_FALSE(view, napi_invalid_arg);
 
-  // v8::Local<v8::DataView> array = value.As<v8::DataView>();
+  if (byteLength != nullptr) {
+    *byteLength = view->byteLength();
+  }
 
-  // if (byte_length != nullptr) {
-  //   *byte_length = array->ByteLength();
-  // }
+  if (data != nullptr) {
+    *data = view->attached(&runtime_)
+        ? view->getBuffer(&runtime_)->getDataBlock() + view->byteOffset()
+        : nullptr;
+  }
 
-  // v8::Local<v8::ArrayBuffer> buffer;
-  // if (data != nullptr || arraybuffer != nullptr) {
-  //   // Calling Buffer() may have the side effect of allocating the buffer,
-  //   // so only do this when it’s needed.
-  //   buffer = array->Buffer();
-  // }
+  if (arrayBuffer != nullptr) {
+    *arrayBuffer = view->attached(&runtime_)
+        ? addStackValue(view->getBuffer(&runtime_).getHermesValue())
+        : (napi_value)&getPredefined(NapiPredefined::UndefinedValue);
+  }
 
-  // if (data != nullptr) {
-  //   *data = static_cast<uint8_t *>(buffer->GetBackingStore()->Data()) +
-  //       array->ByteOffset();
-  // }
+  if (byteOffset != nullptr) {
+    *byteOffset = view->byteOffset();
+  }
 
-  // if (arraybuffer != nullptr) {
-  //   *arraybuffer = v8impl::JsValueFromV8LocalValue(buffer);
-  // }
-
-  // if (byte_offset != nullptr) {
-  //   *byte_offset = array->ByteOffset();
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
