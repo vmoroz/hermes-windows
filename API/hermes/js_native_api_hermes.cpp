@@ -137,13 +137,13 @@ using ::hermes::hermesLog;
 
 #define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
 
-#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)              \
-  do {                                                                 \
-    if (!(condition)) {                                                \
-      std::string message = env.formatMessage(__VA_ARGS__);            \
-      env.throwRangeError((error), message.c_str());                   \
-      return setLastError(napi_pending_exception, std::move(message)); \
-    }                                                                  \
+#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
+  do {                                                              \
+    if (!(condition)) {                                             \
+      StringBuilder message(__VA_ARGS__);                           \
+      env.throwRangeError((error), message.c_str());                \
+      return setLastError(napi_pending_exception, message.c_str()); \
+    }                                                               \
   } while (0)
 
 namespace hermes {
@@ -158,6 +158,11 @@ struct NodeApiEnvironment;
 struct Reference;
 
 const napi_status napi_not_implemented = napi_generic_failure;
+
+template <class T, std::size_t N>
+constexpr std::size_t size(const T (&array)[N]) noexcept {
+  return N;
+}
 
 struct Marker {
   size_t chunkIndex{0};
@@ -550,8 +555,8 @@ struct NodeApiEnvironment {
   LinkedList<Finalizer> finalizerQueue_{};
   bool isRunningFinalizers_{};
 
-  napi_extended_error_info lastError_{};
   std::string lastErrorMessage_;
+  napi_extended_error_info lastError_{"", 0, 0, napi_ok};
   int openCallbackScopeCount_{};
   InstanceData *instanceData_{};
 
@@ -567,14 +572,8 @@ struct NodeApiEnvironment {
   void addFinalizingGCRoot(Reference *reference) noexcept;
 
   template <typename... TArgs>
-  std::string formatMessage(TArgs &&...args) noexcept;
-  napi_status setLastError(
-      napi_status error_code,
-      std::string &&message = nullptr) noexcept;
-  template <typename... TArgs>
   napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
   napi_status clearLastError() noexcept;
-
   napi_status getLastErrorInfo(
       const napi_extended_error_info **result) noexcept;
 
@@ -2093,45 +2092,106 @@ napi_status NodeApiEnvironment::getReferenceValue(
   return clearLastError();
 }
 
-void raw_ostream_append(llvh::raw_ostream &os) {}
+struct StringBuilder {
+  struct AdoptStringTag {};
+  constexpr static AdoptStringTag AdoptString{};
 
-template <typename Arg0, typename... Args>
-void raw_ostream_append(llvh::raw_ostream &os, Arg0 &&arg0, Args &&...args) {
-  os << arg0;
-  raw_ostream_append(os, args...);
-}
+  StringBuilder(AdoptStringTag, std::string &&str) noexcept
+      : str_(std::move(str)), stream_(str_) {}
 
-template <typename... TArgs>
-std::string NodeApiEnvironment::formatMessage(TArgs &&...args) noexcept {
-  std::string result;
-  llvh::raw_string_ostream os(result);
-  raw_ostream_append(os, std::forward<TArgs>(args)...);
-  os.flush();
-  return result;
-}
+  template <typename... TArgs>
+  StringBuilder(TArgs &&...args) noexcept : stream_(str_) {
+    append(std::forward<TArgs>(args)...);
+  }
 
-napi_status NodeApiEnvironment::setLastError(
-    napi_status errorCode,
-    std::string &&message) noexcept {
-  lastErrorMessage_ = std::move(message);
-  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
-  return errorCode;
-}
+  StringBuilder &append() noexcept {
+    return *this;
+  }
+
+  template <typename TArg0, typename... TArgs>
+  StringBuilder &append(TArg0 &&arg0, TArgs &&...args) noexcept {
+    stream_ << arg0;
+    return append(std::forward<TArgs>(args)...);
+  }
+
+  std::string &str() noexcept {
+    stream_.flush();
+    return str_;
+  }
+
+  const char *c_str() noexcept {
+    return str().c_str();
+  }
+
+ private:
+  std::string str_;
+  llvh::raw_string_ostream stream_;
+};
 
 template <typename... TArgs>
 napi_status NodeApiEnvironment::setLastError(
     napi_status errorCode,
     TArgs &&...args) noexcept {
+  // Warning: Keep in-sync with napi_status enum
+  static constexpr const char *errorMessages[] = {
+      "",
+      "Invalid argument",
+      "An object was expected",
+      "A string was expected",
+      "A string or symbol was expected",
+      "A function was expected",
+      "A number was expected",
+      "A boolean was expected",
+      "An array was expected",
+      "Unknown failure",
+      "An exception is pending",
+      "The async work item was cancelled",
+      "napi_escape_handle already called on scope",
+      "Invalid handle scope usage",
+      "Invalid callback scope usage",
+      "Thread-safe function queue is full",
+      "Thread-safe function handle is closing",
+      "A bigint was expected",
+      "A date was expected",
+      "An arraybuffer was expected",
+      "A detachable arraybuffer was expected",
+      "Main thread would deadlock",
+  };
+
+  // The value of the constant below must be updated to reference the last
+  // message in the `napi_status` enum each time a new error message is added.
+  // We don't have a napi_status_last as this would result in an ABI
+  // change each time a message was added.
+  const int lastStatus = napi_would_deadlock;
+  static_assert(
+      size(errorMessages) == lastStatus + 1,
+      "Count of error messages must match count of error values");
+
+  if (errorCode < napi_ok || errorCode >= lastStatus) {
+    errorCode = napi_generic_failure;
+  }
+
   lastErrorMessage_.clear();
-  llvh::raw_string_ostream errorStream(lastErrorMessage_);
-  raw_ostream_append(errorStream, std::forward<TArgs>(args)...);
-  errorStream.flush();
+  StringBuilder sb{StringBuilder::AdoptString, std::move(lastErrorMessage_)};
+  sb.append(errorMessages[errorCode]);
+  if (sizeof...(args) > 0) {
+    sb.append(": ", std::forward<TArgs>(args)...);
+  }
+  lastErrorMessage_ = std::move(sb.str());
   lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
   return errorCode;
 }
 
 napi_status NodeApiEnvironment::clearLastError() noexcept {
-  lastError_ = {};
+  lastErrorMessage_.clear();
+  lastError_ = {"", 0, 0, napi_ok};
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::getLastErrorInfo(
+    const napi_extended_error_info **result) noexcept {
+  CHECK_ARG(result);
+  *result = &lastError_;
   return napi_ok;
 }
 
@@ -2470,59 +2530,6 @@ napi_status NodeApiEnvironment::checkStatus(
   lastException_ = runtime_.getThrownValue();
   runtime_.clearThrownValue();
   return napi_pending_exception;
-}
-
-// Warning: Keep in-sync with napi_status enum
-static const char *error_messages[] = {
-    nullptr,
-    "Invalid argument",
-    "An object was expected",
-    "A string was expected",
-    "A string or symbol was expected",
-    "A function was expected",
-    "A number was expected",
-    "A boolean was expected",
-    "An array was expected",
-    "Unknown failure",
-    "An exception is pending",
-    "The async work item was cancelled",
-    "napi_escape_handle already called on scope",
-    "Invalid handle scope usage",
-    "Invalid callback scope usage",
-    "Thread-safe function queue is full",
-    "Thread-safe function handle is closing",
-    "A bigint was expected",
-    "A date was expected",
-    "An arraybuffer was expected",
-    "A detachable arraybuffer was expected",
-    "Main thread would deadlock",
-};
-
-napi_status NodeApiEnvironment::getLastErrorInfo(
-    const napi_extended_error_info **result) noexcept {
-  // TODO: implement
-  // CHECK_ARG(env, result);
-
-  // // The value of the constant below must be updated to reference the last
-  // // message in the `napi_status` enum each time a new error message is
-  // added.
-  // // We don't have a napi_status_last as this would result in an ABI
-  // // change each time a message was added.
-  // const int last_status = napi_would_deadlock;
-
-  // static_assert(
-  //     NAPI_ARRAYSIZE(error_messages) == last_status + 1,
-  //     "Count of error messages must match count of error values");
-  // CHECK_LE(env->last_error.error_code, last_status);
-
-  // // Wait until someone requests the last error information to fetch the
-  // error
-  // // message string
-  // env->last_error.error_message =
-  //     error_messages[env->last_error.error_code];
-
-  // *result = &(env->last_error);
-  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::newFunction(
