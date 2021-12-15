@@ -10,8 +10,6 @@
 // TODO: JS error throwing
 // TODO: Type Tag
 // TODO: newInstance
-// TODO: ArrayBuffer
-// TODO: TypedArray
 // TODO: DataView
 // TODO: Promise
 // TODO: adjustExternalMemory
@@ -4984,73 +4982,64 @@ napi_status NodeApiEnvironment::createTypedArray(
 }
 
 napi_status NodeApiEnvironment::getTypedArrayInfo(
-    napi_value typedarray,
+    napi_value typedArray,
     napi_typedarray_type *type,
     size_t *length,
     void **data,
-    napi_value *arraybuffer,
-    size_t *byte_offset) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, typedarray);
+    napi_value *arrayBuffer,
+    size_t *byteOffset) noexcept {
+  CHECK_ARG(typedArray);
 
-  // v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(typedarray);
-  // RETURN_STATUS_IF_FALSE(env, value->IsTypedArray(), napi_invalid_arg);
+  vm::JSTypedArrayBase *array =
+      vm::vmcast_or_null<vm::JSTypedArrayBase>(*phv(typedArray));
+  RETURN_STATUS_IF_FALSE(array, napi_invalid_arg);
 
-  // v8::Local<v8::TypedArray> array = value.As<v8::TypedArray>();
+  if (type != nullptr) {
+    if (vm::vmisa<vm::Int8Array>(array)) {
+      *type = napi_int8_array;
+    } else if (vm::vmisa<vm::Uint8Array>(array)) {
+      *type = napi_uint8_array;
+    } else if (vm::vmisa<vm::Uint8ClampedArray>(array)) {
+      *type = napi_uint8_clamped_array;
+    } else if (vm::vmisa<vm::Int16Array>(array)) {
+      *type = napi_int16_array;
+    } else if (vm::vmisa<vm::Uint16Array>(array)) {
+      *type = napi_uint16_array;
+    } else if (vm::vmisa<vm::Int32Array>(array)) {
+      *type = napi_int32_array;
+    } else if (vm::vmisa<vm::Uint32Array>(array)) {
+      *type = napi_uint32_array;
+    } else if (vm::vmisa<vm::Float32Array>(array)) {
+      *type = napi_float32_array;
+    } else if (vm::vmisa<vm::Float64Array>(array)) {
+      *type = napi_float64_array;
+    } else {
+      return setLastError(napi_generic_failure, "Unknown TypedArray type");
+    }
+  }
 
-  // if (type != nullptr) {
-  //   if (value->IsInt8Array()) {
-  //     *type = napi_int8_array;
-  //   } else if (value->IsUint8Array()) {
-  //     *type = napi_uint8_array;
-  //   } else if (value->IsUint8ClampedArray()) {
-  //     *type = napi_uint8_clamped_array;
-  //   } else if (value->IsInt16Array()) {
-  //     *type = napi_int16_array;
-  //   } else if (value->IsUint16Array()) {
-  //     *type = napi_uint16_array;
-  //   } else if (value->IsInt32Array()) {
-  //     *type = napi_int32_array;
-  //   } else if (value->IsUint32Array()) {
-  //     *type = napi_uint32_array;
-  //   } else if (value->IsFloat32Array()) {
-  //     *type = napi_float32_array;
-  //   } else if (value->IsFloat64Array()) {
-  //     *type = napi_float64_array;
-  //   } else if (value->IsBigInt64Array()) {
-  //     *type = napi_bigint64_array;
-  //   } else if (value->IsBigUint64Array()) {
-  //     *type = napi_biguint64_array;
-  //   }
-  // }
+  if (length != nullptr) {
+    *length = array->getLength();
+  }
 
-  // if (length != nullptr) {
-  //   *length = array->Length();
-  // }
+  if (data != nullptr) {
+    *data = array->attached(&runtime_)
+        ? array->getBuffer(&runtime_)->getDataBlock() + array->getByteOffset()
+        : nullptr;
+  }
 
-  // v8::Local<v8::ArrayBuffer> buffer;
-  // if (data != nullptr || arraybuffer != nullptr) {
-  //   // Calling Buffer() may have the side effect of allocating the buffer,
-  //   // so only do this when it’s needed.
-  //   buffer = array->Buffer();
-  // }
+  if (arrayBuffer != nullptr) {
+    *arrayBuffer = array->attached(&runtime_)
+        ? addStackValue(
+              vm::HermesValue::encodeObjectValue(array->getBuffer(&runtime_)))
+        : (napi_value)&getPredefined(NapiPredefined::UndefinedValue);
+  }
 
-  // if (data != nullptr) {
-  //   *data = static_cast<uint8_t *>(buffer->GetBackingStore()->Data()) +
-  //       array->ByteOffset();
-  // }
+  if (byteOffset != nullptr) {
+    *byteOffset = array->getByteOffset();
+  }
 
-  // if (arraybuffer != nullptr) {
-  //   *arraybuffer = v8impl::JsValueFromV8LocalValue(buffer);
-  // }
-
-  // if (byte_offset != nullptr) {
-  //   *byte_offset = array->ByteOffset();
-  // }
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::createDataView(
