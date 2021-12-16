@@ -10,7 +10,6 @@
 // TODO: JS error throwing
 // TODO: Type Tag
 // TODO: External ArrayBuffer
-// TODO: Promise
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
@@ -888,6 +887,11 @@ struct NodeApiEnvironment {
   napi_status getVersion(uint32_t *result) noexcept;
 
   napi_status createPromise(
+      napi_value *promise,
+      napi_value *resolveFunction,
+      napi_value *rejectFunction) noexcept;
+
+  napi_status createPromise(
       napi_deferred *deferred,
       napi_value *result) noexcept;
 
@@ -898,6 +902,11 @@ struct NodeApiEnvironment {
   napi_status rejectDeferred(
       napi_deferred deferred,
       napi_value resolution) noexcept;
+
+  napi_status concludeDeferred(
+      napi_deferred deferred,
+      const char *propertyName,
+      napi_value result) noexcept;
 
   napi_status isPromise(napi_value value, bool *result) noexcept;
 
@@ -5179,22 +5188,66 @@ napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
 }
 
 napi_status NodeApiEnvironment::createPromise(
+    napi_value *promise,
+    napi_value *resolveFunction,
+    napi_value *rejectFunction) noexcept {
+  napi_value global;
+  napi_value promiseConstructor;
+  CHECK_NAPI(getGlobal(&global));
+  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
+
+  // The executor function is to be executed by the constructor during the
+  // process of constructing the new Promise object. The executor is custom code
+  // that ties an outcome to a promise. We return the resolveFunction and
+  // rejectFunction given to the executor. Since the execution is synchronous,
+  // we allocate executorData on the callstack.
+  struct ExecutorData {
+    static vm::CallResult<vm::HermesValue>
+    callback(void *context, vm::Runtime *runtime, vm::NativeArgs args) {
+      return (reinterpret_cast<ExecutorData *>(context))->callback(args);
+    }
+
+    vm::CallResult<vm::HermesValue> callback(const vm::NativeArgs &args) {
+      *resolve = env_->addStackValue(args.getArg(0));
+      *reject = env_->addStackValue(args.getArg(1));
+      return vm::HermesValue();
+    }
+
+    NodeApiEnvironment *env_{};
+    napi_value *resolve{};
+    napi_value *reject{};
+  } executorData{this, resolveFunction, rejectFunction};
+
+  napi_value nameValue{};
+  CHECK_NAPI(createStringUtf8("Promise", NAPI_AUTO_LENGTH, &nameValue));
+  auto nameRes = vm::stringToSymbolID(
+      &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
+  CHECK_STATUS(nameRes.getStatus());
+
+  auto executorFunction = vm::NativeFunction::createWithoutPrototype(
+      &runtime_, &executorData, &ExecutorData::callback, nameRes->get(), 2);
+  napi_value func = addStackValue(executorFunction.getHermesValue());
+  return newInstance(promiseConstructor, 1, &func, promise);
+}
+
+napi_status NodeApiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(deferred);
     CHECK_ARG(result);
 
-    // auto maybe = v8::Promise::Resolver::New(env->context());
-    // CHECK_MAYBE_EMPTY(env, maybe, napi_generic_failure);
+    napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
+    CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
+    CHECK_NAPI(createObject(&jsDeferred));
+    CHECK_NAPI(setNamedProperty(jsDeferred, "resolve", jsResolve));
+    CHECK_NAPI(setNamedProperty(jsDeferred, "reject", jsReject));
 
-    // auto v8_resolver = maybe.ToLocalChecked();
-    // auto v8_deferred = new v8impl::Persistent<v8::Value>();
-    // v8_deferred->Reset(env->isolate, v8_resolver);
-
-    // *deferred = v8impl::JsDeferredFromNodePersistent(v8_deferred);
-    // *promise = v8impl::JsValueFromV8LocalValue(v8_resolver->GetPromise());
-    // return GET_RETURN_STATUS(env);
+    CHECK_NAPI(StrongReference::create(
+        *this,
+        phv(jsDeferred),
+        reinterpret_cast<StrongReference **>(deferred)));
+    *result = jsPromise;
     return clearLastError();
   });
 }
@@ -5202,31 +5255,46 @@ napi_status NodeApiEnvironment::createPromise(
 napi_status NodeApiEnvironment::resolveDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
-  // TODO: implement
-  // return v8impl::ConcludeDeferred(env, deferred, resolution, true);
-  return napi_ok;
+  return concludeDeferred(deferred, "resolve", resolution);
 }
 
 napi_status NodeApiEnvironment::rejectDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
-  // TODO: implement
-  // return v8impl::ConcludeDeferred(env, deferred, resolution, false);
-  return napi_ok;
+  return concludeDeferred(deferred, "resolve", resolution);
+}
+
+napi_status NodeApiEnvironment::concludeDeferred(
+    napi_deferred deferred,
+    const char *propertyName,
+    napi_value result) noexcept {
+  CHECK_ARG(deferred);
+  CHECK_ARG(result);
+
+  Reference *ref = asReference(deferred);
+
+  const auto &jsDeferred = ref->value(*this);
+  napi_value resolver, callResult;
+  CHECK_NAPI(
+      getNamedProperty(addStackValue(jsDeferred), propertyName, &resolver));
+  CHECK_NAPI(callFunction(nullptr, resolver, 1, &result, &callResult));
+  Reference::deleteReference(
+      *this, ref, Reference::ReasonToDelete::ZeroRefCount);
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::isPromise(
     napi_value value,
-    bool *is_promise) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, is_promise);
+    bool *result) noexcept {
+  CHECK_ARG(value);
+  CHECK_ARG(result);
 
-  // *is_promise = v8impl::V8LocalValueFromJsValue(value)->IsPromise();
+  napi_value global;
+  napi_value promiseConstructor;
+  CHECK_NAPI(getGlobal(&global));
+  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
 
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  return instanceOf(value, promiseConstructor, result);
 }
 
 napi_status NodeApiEnvironment::createDate(
