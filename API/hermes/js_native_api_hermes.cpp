@@ -631,14 +631,16 @@ struct NodeApiEnvironment {
       const char *utf8Name,
       napi_value *result) noexcept;
 
-  napi_status
-  setElement(napi_value arr, uint32_t index, napi_value value) noexcept;
-
+  // Array functions
+  napi_status createArray(napi_value *result) noexcept;
+  napi_status createArray(size_t length, napi_value *result) noexcept;
+  napi_status isArray(napi_value value, bool *result) noexcept;
+  napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
   napi_status hasElement(napi_value arr, uint32_t index, bool *result) noexcept;
-
   napi_status
   getElement(napi_value arr, uint32_t index, napi_value *result) noexcept;
-
+  napi_status
+  setElement(napi_value arr, uint32_t index, napi_value value) noexcept;
   napi_status
   deleteElement(napi_value arr, uint32_t index, bool *result) noexcept;
 
@@ -651,20 +653,12 @@ struct NodeApiEnvironment {
 
   napi_status objectSeal(napi_value object) noexcept;
 
-  napi_status isArray(napi_value value, bool *result) noexcept;
-
-  napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
-
   napi_status
   strictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
 
   napi_status getPrototype(napi_value object, napi_value *result) noexcept;
 
   napi_status createObject(napi_value *result) noexcept;
-
-  napi_status createArray(napi_value *result) noexcept;
-
-  napi_status createArray(size_t length, napi_value *result) noexcept;
 
   napi_status createStringLatin1(
       const char *str,
@@ -3245,114 +3239,6 @@ napi_status NodeApiEnvironment::getNamedProperty(
   });
 }
 
-napi_status NodeApiEnvironment::setElement(
-    napi_value arr,
-    uint32_t index,
-    napi_value value) noexcept {
-  // TODO: implement
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(arr);
-    CHECK_ARG(value);
-
-    // TODO:
-    // if (LLVM_UNLIKELY(index >= size(arr))) {
-    //   throw makeJSError(
-    //       *this,
-    //       "setValueAtIndex: index ",
-    //       i,
-    //       " is out of bounds [0, ",
-    //       size(arr),
-    //       ")");
-    // }
-
-    auto h = arrayHandle(arr);
-    h->setElementAt(h, &runtime_, index, toHandle(value));
-
-    return clearLastError();
-  });
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // auto set_maybe = obj->Set(context, index, val);
-
-  // RETURN_STATUS_IF_FALSE(env, set_maybe.FromMaybe(false),
-  // napi_generic_failure);
-
-  // return GET_RETURN_STATUS(env);
-  // return napi_ok;
-}
-
-napi_status NodeApiEnvironment::hasElement(
-    napi_value object,
-    uint32_t index,
-    bool *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Maybe<bool> has_maybe = obj->Has(context, index);
-
-  // CHECK_MAYBE_NOTHING(env, has_maybe, napi_generic_failure);
-
-  // *result = has_maybe.FromMaybe(false);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::getElement(
-    napi_value object,
-    uint32_t index,
-    napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // auto get_maybe = obj->Get(context, index);
-
-  // CHECK_MAYBE_EMPTY(env, get_maybe, napi_generic_failure);
-
-  // *result = v8impl::JsValueFromV8LocalValue(get_maybe.ToLocalChecked());
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::deleteElement(
-    napi_value object,
-    uint32_t index,
-    bool *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-  // v8::Maybe<bool> delete_maybe = obj->Delete(context, index);
-  // CHECK_MAYBE_NOTHING(env, delete_maybe, napi_generic_failure);
-
-  // if (result != nullptr)
-  //   *result = delete_maybe.FromMaybe(false);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
-}
-
 napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
     const napi_property_descriptor *p,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
@@ -3481,34 +3367,6 @@ napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
   });
 }
 
-napi_status NodeApiEnvironment::isArray(
-    napi_value value,
-    bool *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_OBJECT_ARG(value);
-  CHECK_ARG(result);
-
-  *result = vm::vmisa<vm::JSArray>(*phv(value));
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::getArrayLength(
-    napi_value value,
-    uint32_t *result) noexcept {
-  return handleExceptions([&] {
-    auto res = vm::JSObject::getNamed_RJS(
-        toArrayHandle(value),
-        &runtime_,
-        vm::Predefined::getSymbolID(vm::Predefined::length));
-    CHECK_STATUS(res.getStatus());
-    if (!(*res)->isNumber()) {
-      return setLastError(napi_number_expected);
-    }
-    *result = static_cast<uint32_t>((*res)->getDouble());
-    return clearLastError();
-  });
-}
-
 napi_status NodeApiEnvironment::strictEquals(
     napi_value lhs,
     napi_value rhs,
@@ -3570,6 +3428,142 @@ napi_status NodeApiEnvironment::createArray(
     *result = addStackValue(res->getHermesValue());
     return clearLastError();
   });
+}
+
+napi_status NodeApiEnvironment::isArray(
+    napi_value value,
+    bool *result) noexcept {
+  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(result);
+
+  *result = vm::vmisa<vm::JSArray>(*phv(value));
+  return clearLastError();
+}
+
+napi_status NodeApiEnvironment::getArrayLength(
+    napi_value value,
+    uint32_t *result) noexcept {
+  return handleExceptions([&] {
+    auto res = vm::JSObject::getNamed_RJS(
+        toArrayHandle(value),
+        &runtime_,
+        vm::Predefined::getSymbolID(vm::Predefined::length));
+    CHECK_STATUS(res.getStatus());
+    if (!(*res)->isNumber()) {
+      return setLastError(napi_number_expected);
+    }
+    *result = static_cast<uint32_t>((*res)->getDouble());
+    return clearLastError();
+  });
+}
+
+napi_status NodeApiEnvironment::hasElement(
+    napi_value object,
+    uint32_t index,
+    bool *result) noexcept {
+  // TODO: implement
+  // NAPI_PREAMBLE(env);
+  // CHECK_ARG(env, result);
+
+  // v8::Local<v8::Context> context = env->context();
+  // v8::Local<v8::Object> obj;
+
+  // CHECK_TO_OBJECT(env, context, obj, object);
+
+  // v8::Maybe<bool> has_maybe = obj->Has(context, index);
+
+  // CHECK_MAYBE_NOTHING(env, has_maybe, napi_generic_failure);
+
+  // *result = has_maybe.FromMaybe(false);
+  // return GET_RETURN_STATUS(env);
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::getElement(
+    napi_value object,
+    uint32_t index,
+    napi_value *result) noexcept {
+  // TODO: implement
+  // NAPI_PREAMBLE(env);
+  // CHECK_ARG(env, result);
+
+  // v8::Local<v8::Context> context = env->context();
+  // v8::Local<v8::Object> obj;
+
+  // CHECK_TO_OBJECT(env, context, obj, object);
+
+  // auto get_maybe = obj->Get(context, index);
+
+  // CHECK_MAYBE_EMPTY(env, get_maybe, napi_generic_failure);
+
+  // *result = v8impl::JsValueFromV8LocalValue(get_maybe.ToLocalChecked());
+  // return GET_RETURN_STATUS(env);
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::setElement(
+    napi_value arr,
+    uint32_t index,
+    napi_value value) noexcept {
+  // TODO: implement
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(arr);
+    CHECK_ARG(value);
+
+    // TODO:
+    // if (LLVM_UNLIKELY(index >= size(arr))) {
+    //   throw makeJSError(
+    //       *this,
+    //       "setValueAtIndex: index ",
+    //       i,
+    //       " is out of bounds [0, ",
+    //       size(arr),
+    //       ")");
+    // }
+
+    auto h = arrayHandle(arr);
+    h->setElementAt(h, &runtime_, index, toHandle(value));
+
+    return clearLastError();
+  });
+  // NAPI_PREAMBLE(env);
+  // CHECK_ARG(env, value);
+
+  // v8::Local<v8::Context> context = env->context();
+  // v8::Local<v8::Object> obj;
+
+  // CHECK_TO_OBJECT(env, context, obj, object);
+
+  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
+  // auto set_maybe = obj->Set(context, index, val);
+
+  // RETURN_STATUS_IF_FALSE(env, set_maybe.FromMaybe(false),
+  // napi_generic_failure);
+
+  // return GET_RETURN_STATUS(env);
+  // return napi_ok;
+}
+
+napi_status NodeApiEnvironment::deleteElement(
+    napi_value object,
+    uint32_t index,
+    bool *result) noexcept {
+  // TODO: implement
+  // NAPI_PREAMBLE(env);
+
+  // v8::Local<v8::Context> context = env->context();
+  // v8::Local<v8::Object> obj;
+
+  // CHECK_TO_OBJECT(env, context, obj, object);
+  // v8::Maybe<bool> delete_maybe = obj->Delete(context, index);
+  // CHECK_MAYBE_NOTHING(env, delete_maybe, napi_generic_failure);
+
+  // if (result != nullptr)
+  //   *result = delete_maybe.FromMaybe(false);
+
+  // return GET_RETURN_STATUS(env);
+  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::createStringLatin1(
