@@ -564,7 +564,6 @@ struct NodeApiEnvironment {
       const vm::PinnedHermesValue *value) noexcept;
   static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
-  static vm::Handle<vm::JSArray> arrayHandle(napi_value value) noexcept;
   vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
@@ -3522,7 +3521,7 @@ napi_status NodeApiEnvironment::setElement(
     //       ")");
     // }
 
-    auto h = arrayHandle(arr);
+    auto h = toArrayHandle(arr);
     h->setElementAt(h, &runtime_, index, toHandle(value));
 
     return clearLastError();
@@ -4731,11 +4730,6 @@ vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
 vm::Handle<vm::HermesValue> NodeApiEnvironment::stringHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::HermesValue>::vmcast(phv(value));
-}
-
-vm::Handle<vm::JSArray> NodeApiEnvironment::arrayHandle(
-    napi_value value) noexcept {
-  return vm::Handle<vm::JSArray>::vmcast(phv(value));
 }
 
 vm::Handle<vm::HermesValue> NodeApiEnvironment::toHandle(
