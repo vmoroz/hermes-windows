@@ -4,6 +4,8 @@
 // TODO: Sync with latest code
 // TODO: Reorder the code
 // TODO: Better native error handling
+// TODO: report bug in JSDate::create - value is unused
+
 // TODO: define class
 // TODO: Finish callFunction
 // TODO: JS error throwing
@@ -12,7 +14,6 @@
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
-// TODO: report bug in JSDate::create - value is unused
 
 #define NAPI_EXPERIMENTAL
 
