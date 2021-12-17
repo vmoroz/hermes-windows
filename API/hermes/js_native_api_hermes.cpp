@@ -1076,7 +1076,9 @@ struct NodeApiEnvironment {
 
   napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
 
- public:
+  vm::Runtime &runtime() noexcept;
+
+ private:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
 #else
@@ -1103,7 +1105,6 @@ struct NodeApiEnvironment {
       static_cast<size_t>(NapiPredefined::PredefinedCount)>
       predefinedValues_{};
 
- public:
   NonMovableObjStack<vm::PinnedHermesValue> stackValues_;
   NonMovableObjStack<Marker> stackMarkers_;
   static constexpr uint32_t kEscapeableSentinelNativeValue = 0x35456789;
@@ -1117,7 +1118,6 @@ struct NodeApiEnvironment {
   int openHandleScopes_{};
   int openCallbackScopes_{};
 
- private:
   NodeApiEnvironment &env{*this};
 };
 
@@ -1828,8 +1828,8 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
 HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
   HFContext *hfc = reinterpret_cast<HFContext *>(context);
   NodeApiEnvironment &env = hfc->env_;
-  assert(runtime == &env.runtime_);
-  auto &stats = env.runtime_.getRuntimeStats();
+  assert(runtime == &env.runtime());
+  auto &stats = env.runtime().getRuntimeStats();
   const vm::instrumentation::RAIITimer timer{
       "Host Function", stats, stats.hostFunction};
 
@@ -2092,6 +2092,10 @@ napi_status NodeApiEnvironment::getReferenceValue(
   CHECK_ARG(result);
   *result = addStackValue(asReference(ref)->value(*this));
   return clearLastError();
+}
+
+vm::Runtime &NodeApiEnvironment::runtime() noexcept {
+  return runtime_;
 }
 
 struct StringBuilder {
