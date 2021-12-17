@@ -508,14 +508,6 @@ struct NodeApiEnvironment {
 
   vm::Handle<> toHandle(napi_value value) noexcept;
 
-  // TODO: implement - delete?
-  // v8::Isolate* const isolate;  // Shortcut for context()->GetIsolate()
-  // v8impl::Persistent<v8::Context> context_persistent;
-
-  // inline v8::Local<v8::Context> context() const {
-  //   return v8impl::PersistentToLocal::Strong(context_persistent);
-  // }
-
   napi_status incRefCount() noexcept;
   napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
@@ -542,8 +534,6 @@ struct NodeApiEnvironment {
       napi_finalize finalizeCallback,
       void *nativeData,
       void *finalizeHint) noexcept;
-
-  // v8impl::Persistent<v8::Value> last_exception;
 
   // We store references in two different lists, depending on whether they
   // have `napi_finalizer` callbacks, because we must first finalize the
