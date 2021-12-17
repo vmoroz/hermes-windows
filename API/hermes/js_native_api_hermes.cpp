@@ -8,7 +8,6 @@
 // TODO: review all object functions
 
 // TODO: Fix getting all properties
-// TODO: define class
 // TODO: Finish callFunction
 // TODO: JS error throwing
 // TODO: Type Tag
@@ -673,6 +672,15 @@ struct NodeApiEnvironment {
       const char16_t *str,
       size_t length,
       napi_value *result) noexcept;
+
+  napi_status createSymbolID(
+      const char *str,
+      size_t length,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
+
+  napi_status createSymbolID(
+      napi_value str,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
   napi_status createNumber(double value, napi_value *result) noexcept;
 
@@ -2580,191 +2588,50 @@ napi_status NodeApiEnvironment::defineClass(
     size_t propertyCount,
     const napi_property_descriptor *properties,
     napi_value *result) noexcept {
-  // TODO: implement
-  // return handleExceptions([&] {
-  //   CHECK_ARG(result);
-  //   CHECK_ARG(constructor);
-  //   if (propertyCount > 0) {
-  //     CHECK_ARG(properties);
-  //   }
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+    CHECK_ARG(constructor);
+    if (propertyCount > 0) {
+      CHECK_ARG(properties);
+    }
 
-  // v8::Isolate *isolate = env->isolate;
+    vm::MutableHandle<vm::SymbolID> name{&runtime_};
+    CHECK_NAPI(createSymbolID(utf8Name, length, &name));
+    CHECK_NAPI(newFunction(name.get(), constructor, callbackData, result));
 
-  // v8::EscapableHandleScope scope(isolate);
-  // v8::Local<v8::FunctionTemplate> tpl;
-  // CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //     env, constructor, callback_data, &tpl));
+    auto classHandle = runtime_.makeHandle<vm::JSObject>(*phv(*result));
+    auto prototypeHandle = runtime_.makeHandle(vm::JSObject::create(&runtime_));
+    napi_value prototype = addStackValue(prototypeHandle.getHermesValue());
+    vm::PropertyFlags pf;
+    pf.clear();
+    pf.enumerable = 0;
+    pf.writable = 1;
+    pf.configurable = 0;
+    CHECK_STATUS(vm::JSObject::defineNewOwnProperty(
+        classHandle,
+        &runtime_,
+        vm::Predefined::getSymbolID(vm::Predefined::prototype),
+        pf,
+        prototypeHandle));
+    pf.configurable = 1;
+    CHECK_STATUS(vm::JSObject::defineNewOwnProperty(
+        prototypeHandle,
+        &runtime_,
+        vm::Predefined::getSymbolID(vm::Predefined::constructor),
+        pf,
+        classHandle));
 
-  // v8::Local<v8::String> name_string;
-  // CHECK_NEW_FROM_UTF8_LEN(env, name_string, utf8name, length);
-  // tpl->SetClassName(name_string);
+    for (size_t i = 0; i < propertyCount; ++i) {
+      const napi_property_descriptor *p = properties + i;
+      if ((p->attributes & napi_static) != 0) {
+        CHECK_NAPI(defineProperties(*result, 1, p));
+      } else {
+        CHECK_NAPI(defineProperties(prototype, 1, p));
+      }
+    }
 
-  // size_t static_property_count = 0;
-  // for (size_t i = 0; i < property_count; i++) {
-  //   const napi_property_descriptor *p = properties + i;
-
-  //   if ((p->attributes & napi_static) != 0) {
-  //     // Static properties are handled separately below.
-  //     static_property_count++;
-  //     continue;
-  //   }
-
-  //   v8::Local<v8::Name> property_name;
-  //   CHECK_NAPI(v8impl::V8NameFromPropertyDescriptor(env, p,
-  //   &property_name));
-
-  //   v8::PropertyAttribute attributes =
-  //       v8impl::V8PropertyAttributesFromDescriptor(p);
-
-  //   // This code is similar to that in napi_define_properties(); the
-  //   // difference is it applies to a template instead of an object,
-  //   // and preferred PropertyAttribute for lack of PropertyDescriptor
-  //   // support on ObjectTemplate.
-  //   if (p->getter != nullptr || p->setter != nullptr) {
-  //     v8::Local<v8::FunctionTemplate> getter_tpl;
-  //     v8::Local<v8::FunctionTemplate> setter_tpl;
-  //     if (p->getter != nullptr) {
-  //       CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //           env, p->getter, p->data, &getter_tpl));
-  //     }
-  //     if (p->setter != nullptr) {
-  //       CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //           env, p->setter, p->data, &setter_tpl));
-  //     }
-
-  //     tpl->PrototypeTemplate()->SetAccessorProperty(
-  //         property_name,
-  //         getter_tpl,
-  //         setter_tpl,
-  //         attributes,
-  //         v8::AccessControl::DEFAULT);
-  //   } else if (p->method != nullptr) {
-  //     v8::Local<v8::FunctionTemplate> t;
-  //     CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //         env, p->method, p->data, &t, v8::Signature::New(isolate, tpl)));
-
-  //     tpl->PrototypeTemplate()->Set(property_name, t, attributes);
-  //   } else {
-  //     v8::Local<v8::Value> value =
-  //     v8impl::V8LocalValueFromJsValue(p->value);
-  //     tpl->PrototypeTemplate()->Set(property_name, value, attributes);
-  //   }
-  // }
-
-  // v8::Local<v8::Context> context = env->context();
-  // *result = v8impl::JsValueFromV8LocalValue(
-  //     scope.Escape(tpl->GetFunction(context).ToLocalChecked()));
-
-  // if (static_property_count > 0) {
-  //   std::vector<napi_property_descriptor> static_descriptors;
-  //   static_descriptors.reserve(static_property_count);
-
-  //   for (size_t i = 0; i < property_count; i++) {
-  //     const napi_property_descriptor *p = properties + i;
-  //     if ((p->attributes & napi_static) != 0) {
-  //       static_descriptors.push_back(*p);
-  //     }
-  //   }
-
-  //   CHECK_NAPI(napi_define_properties(
-  //       env, *result, static_descriptors.size(),
-  //       static_descriptors.data()));
-  // }
-
-  // return GET_RETURN_STATUS(env);
-  //  });
-
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-  // CHECK_ARG(env, constructor);
-
-  // if (property_count > 0) {
-  //   CHECK_ARG(env, properties);
-  // }
-
-  // v8::Isolate *isolate = env->isolate;
-
-  // v8::EscapableHandleScope scope(isolate);
-  // v8::Local<v8::FunctionTemplate> tpl;
-  // CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //     env, constructor, callback_data, &tpl));
-
-  // v8::Local<v8::String> name_string;
-  // CHECK_NEW_FROM_UTF8_LEN(env, name_string, utf8name, length);
-  // tpl->SetClassName(name_string);
-
-  // size_t static_property_count = 0;
-  // for (size_t i = 0; i < property_count; i++) {
-  //   const napi_property_descriptor *p = properties + i;
-
-  //   if ((p->attributes & napi_static) != 0) {
-  //     // Static properties are handled separately below.
-  //     static_property_count++;
-  //     continue;
-  //   }
-
-  //   v8::Local<v8::Name> property_name;
-  //   CHECK_NAPI(v8impl::V8NameFromPropertyDescriptor(env, p,
-  //   &property_name));
-
-  //   v8::PropertyAttribute attributes =
-  //       v8impl::V8PropertyAttributesFromDescriptor(p);
-
-  //   // This code is similar to that in napi_define_properties(); the
-  //   // difference is it applies to a template instead of an object,
-  //   // and preferred PropertyAttribute for lack of PropertyDescriptor
-  //   // support on ObjectTemplate.
-  //   if (p->getter != nullptr || p->setter != nullptr) {
-  //     v8::Local<v8::FunctionTemplate> getter_tpl;
-  //     v8::Local<v8::FunctionTemplate> setter_tpl;
-  //     if (p->getter != nullptr) {
-  //       CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //           env, p->getter, p->data, &getter_tpl));
-  //     }
-  //     if (p->setter != nullptr) {
-  //       CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //           env, p->setter, p->data, &setter_tpl));
-  //     }
-
-  //     tpl->PrototypeTemplate()->SetAccessorProperty(
-  //         property_name,
-  //         getter_tpl,
-  //         setter_tpl,
-  //         attributes,
-  //         v8::AccessControl::DEFAULT);
-  //   } else if (p->method != nullptr) {
-  //     v8::Local<v8::FunctionTemplate> t;
-  //     CHECK_NAPI(v8impl::FunctionCallbackWrapper::NewTemplate(
-  //         env, p->method, p->data, &t, v8::Signature::New(isolate, tpl)));
-
-  //     tpl->PrototypeTemplate()->Set(property_name, t, attributes);
-  //   } else {
-  //     v8::Local<v8::Value> value = v8impl::V8LocalValueFromJsValue(p->value);
-  //     tpl->PrototypeTemplate()->Set(property_name, value, attributes);
-  //   }
-  // }
-
-  // v8::Local<v8::Context> context = env->context();
-  // *result = v8impl::JsValueFromV8LocalValue(
-  //     scope.Escape(tpl->GetFunction(context).ToLocalChecked()));
-
-  // if (static_property_count > 0) {
-  //   std::vector<napi_property_descriptor> static_descriptors;
-  //   static_descriptors.reserve(static_property_count);
-
-  //   for (size_t i = 0; i < property_count; i++) {
-  //     const napi_property_descriptor *p = properties + i;
-  //     if ((p->attributes & napi_static) != 0) {
-  //       static_descriptors.push_back(*p);
-  //     }
-  //   }
-
-  //   CHECK_NAPI(napi_define_properties(
-  //       env, *result, static_descriptors.size(), static_descriptors.data()));
-  // }
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getPropertyNames(
@@ -3244,19 +3111,12 @@ napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
     const napi_property_descriptor *p,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   if (p->utf8name != nullptr) {
-    napi_value nameValue{};
-    CHECK_NAPI(createStringUtf8(p->utf8name, NAPI_AUTO_LENGTH, &nameValue));
-    ASSIGN_CHECKED(
-        *result,
-        vm::stringToSymbolID(
-            &runtime_, vm::createPseudoHandle(phv(nameValue)->getString())));
+    CHECK_NAPI(createSymbolID(p->utf8name, NAPI_AUTO_LENGTH, result));
   } else {
+    RETURN_STATUS_IF_FALSE(p->name, napi_name_expected);
     auto namePHV = *phv(p->name);
     if (namePHV.isString()) {
-      ASSIGN_CHECKED(
-          *result,
-          vm::stringToSymbolID(
-              &runtime_, vm::createPseudoHandle(namePHV.getString())));
+      CHECK_NAPI(createSymbolID(p->name, result));
     } else if (namePHV.isSymbol()) {
       *result = namePHV.getSymbol();
     } else {
@@ -3277,6 +3137,7 @@ napi_status NodeApiEnvironment::defineProperties(
       CHECK_ARG(properties);
     }
 
+    auto objHandle = toObjectHandle(object);
     for (size_t i = 0; i < propertyCount; ++i) {
       const napi_property_descriptor *p = &properties[i];
       vm::MutableHandle<vm::SymbolID> name{&runtime_};
@@ -3298,25 +3159,27 @@ napi_status NodeApiEnvironment::defineProperties(
         napi_value localSetter{};
 
         if (p->getter != nullptr) {
-          auto cr = vm::stringToSymbolID(
-              &runtime_, vm::StringPrimitive::createNoThrow(&runtime_, "get"));
-          CHECK_STATUS(cr.getStatus());
-          CHECK_NAPI(newFunction(cr->get(), p->getter, p->data, &localGetter));
+          CHECK_NAPI(newFunction(
+              vm::Predefined::getSymbolID(vm::Predefined::get),
+              p->getter,
+              p->data,
+              &localGetter));
         }
         if (p->setter != nullptr) {
-          auto cr = vm::stringToSymbolID(
-              &runtime_, vm::StringPrimitive::createNoThrow(&runtime_, "set"));
-          CHECK_STATUS(cr.getStatus());
-          CHECK_NAPI(newFunction(cr->get(), p->getter, p->data, &localSetter));
+          CHECK_NAPI(newFunction(
+              vm::Predefined::getSymbolID(vm::Predefined::set),
+              p->getter,
+              p->data,
+              &localSetter));
         }
 
         auto propRes = vm::PropertyAccessor::create(
             &runtime_,
-            vm::Handle<vm::Callable>::vmcast(phv(localGetter)),
-            vm::Handle<vm::Callable>::vmcast(phv(localSetter)));
+            runtime_.makeHandle<vm::Callable>(*phv(localGetter)),
+            runtime_.makeHandle<vm::Callable>(*phv(localSetter)));
         CHECK_STATUS(propRes.getStatus());
         CHECK_STATUS(vm::JSObject::defineOwnProperty(
-                         toObjectHandle(object),
+                         objHandle,
                          &runtime_,
                          name.get(),
                          dpFlags,
@@ -3327,7 +3190,7 @@ napi_status NodeApiEnvironment::defineProperties(
         napi_value method{};
         CHECK_NAPI(newFunction(name.get(), p->getter, p->data, &method));
         CHECK_STATUS(vm::JSObject::defineOwnProperty(
-                         toObjectHandle(object),
+                         objHandle,
                          &runtime_,
                          name.get(),
                          dpFlags,
@@ -3336,7 +3199,7 @@ napi_status NodeApiEnvironment::defineProperties(
                          .getStatus());
       } else {
         CHECK_STATUS(vm::JSObject::defineOwnProperty(
-                         toObjectHandle(object),
+                         objHandle,
                          &runtime_,
                          name.get(),
                          dpFlags,
@@ -3596,6 +3459,27 @@ napi_status NodeApiEnvironment::createStringUtf16(
     *result = addStackValue(*res);
     return clearLastError();
   });
+}
+
+napi_status NodeApiEnvironment::createSymbolID(
+    const char *str,
+    size_t length,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  napi_value strValue{};
+  CHECK_NAPI(createStringUtf8(str, length, &strValue));
+  CHECK_NAPI(createSymbolID(strValue, result));
+  return napi_ok;
+}
+
+napi_status NodeApiEnvironment::createSymbolID(
+    napi_value str,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  CHECK_STRING_ARG(str);
+  ASSIGN_CHECKED(
+      *result,
+      vm::stringToSymbolID(
+          &runtime_, vm::createPseudoHandle(phv(str)->getString())));
+  return napi_ok;
 }
 
 napi_status NodeApiEnvironment::createNumber(
