@@ -5,7 +5,9 @@
 // TODO: Reorder the code
 // TODO: Better native error handling
 // TODO: report bug in JSDate::create - value is unused
+// TODO: review all object functions
 
+// TODO: Fix getting all properties
 // TODO: define class
 // TODO: Finish callFunction
 // TODO: JS error throwing
