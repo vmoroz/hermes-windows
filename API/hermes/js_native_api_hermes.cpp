@@ -5,7 +5,6 @@
 // TODO: Reorder the code
 // TODO: Better native error handling
 // TODO: define class
-// TODO: Array functions
 // TODO: Finish callFunction
 // TODO: JS error throwing
 // TODO: Type Tag
@@ -635,13 +634,14 @@ struct NodeApiEnvironment {
   napi_status createArray(size_t length, napi_value *result) noexcept;
   napi_status isArray(napi_value value, bool *result) noexcept;
   napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
-  napi_status hasElement(napi_value arr, uint32_t index, bool *result) noexcept;
   napi_status
-  getElement(napi_value arr, uint32_t index, napi_value *result) noexcept;
+  hasElement(napi_value object, uint32_t index, bool *result) noexcept;
   napi_status
-  setElement(napi_value arr, uint32_t index, napi_value value) noexcept;
+  getElement(napi_value object, uint32_t index, napi_value *result) noexcept;
   napi_status
-  deleteElement(napi_value arr, uint32_t index, bool *result) noexcept;
+  setElement(napi_value object, uint32_t index, napi_value value) noexcept;
+  napi_status
+  deleteElement(napi_value object, uint32_t index, bool *result) noexcept;
 
   napi_status defineProperties(
       napi_value object,
@@ -3410,9 +3410,10 @@ napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
 napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    auto res = vm::JSArray::create(&runtime_, /*capacity:*/ 16, /*length:*/ 0);
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(res->getHermesValue());
+    ASSIGN_CHECKED(
+        auto arrHandle,
+        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0));
+    *result = addStackValue(arrHandle.getHermesValue());
     return clearLastError();
   });
 }
@@ -3422,9 +3423,10 @@ napi_status NodeApiEnvironment::createArray(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    auto res = vm::JSArray::create(&runtime_, length, length);
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(res->getHermesValue());
+    ASSIGN_CHECKED(
+        auto arrHandle,
+        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
+    *result = addStackValue(arrHandle.getHermesValue());
     return clearLastError();
   });
 }
@@ -3432,10 +3434,8 @@ napi_status NodeApiEnvironment::createArray(
 napi_status NodeApiEnvironment::isArray(
     napi_value value,
     bool *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_OBJECT_ARG(value);
+  CHECK_ARG(value);
   CHECK_ARG(result);
-
   *result = vm::vmisa<vm::JSArray>(*phv(value));
   return clearLastError();
 }
@@ -3444,14 +3444,16 @@ napi_status NodeApiEnvironment::getArrayLength(
     napi_value value,
     uint32_t *result) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(value);
+    CHECK_ARG(result);
+    auto arrayHandle = vm::Handle<vm::JSArray>::vmcast_or_null(phv(value));
+    RETURN_STATUS_IF_FALSE(arrayHandle, napi_array_expected);
     auto res = vm::JSObject::getNamed_RJS(
-        toArrayHandle(value),
+        arrayHandle,
         &runtime_,
         vm::Predefined::getSymbolID(vm::Predefined::length));
     CHECK_STATUS(res.getStatus());
-    if (!(*res)->isNumber()) {
-      return setLastError(napi_number_expected);
-    }
+    RETURN_STATUS_IF_FALSE((*res)->isNumber(), napi_number_expected);
     *result = static_cast<uint32_t>((*res)->getDouble());
     return clearLastError();
   });
@@ -3461,108 +3463,73 @@ napi_status NodeApiEnvironment::hasElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Maybe<bool> has_maybe = obj->Has(context, index);
-
-  // CHECK_MAYBE_NOTHING(env, has_maybe, napi_generic_failure);
-
-  // *result = has_maybe.FromMaybe(false);
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(result);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_CHECKED(
+        *result,
+        vm::JSObject::hasComputed(
+            runtime_.makeHandle<vm::JSObject>(obj),
+            &runtime_,
+            runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index))));
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getElement(
     napi_value object,
     uint32_t index,
     napi_value *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // auto get_maybe = obj->Get(context, index);
-
-  // CHECK_MAYBE_EMPTY(env, get_maybe, napi_generic_failure);
-
-  // *result = v8impl::JsValueFromV8LocalValue(get_maybe.ToLocalChecked());
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(result);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    auto res = vm::JSObject::getComputed_RJS(
+        runtime_.makeHandle<vm::JSObject>(obj),
+        &runtime_,
+        runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index)));
+    CHECK_STATUS(res.getStatus());
+    *result = addStackValue(res->get());
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::setElement(
-    napi_value arr,
+    napi_value object,
     uint32_t index,
     napi_value value) noexcept {
-  // TODO: implement
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(arr);
-    CHECK_ARG(value);
-
-    // TODO:
-    // if (LLVM_UNLIKELY(index >= size(arr))) {
-    //   throw makeJSError(
-    //       *this,
-    //       "setValueAtIndex: index ",
-    //       i,
-    //       " is out of bounds [0, ",
-    //       size(arr),
-    //       ")");
-    // }
-
-    auto h = toArrayHandle(arr);
-    h->setElementAt(h, &runtime_, index, toHandle(value));
-
+    CHECK_ARG(object);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    auto res = vm::JSObject::putComputed_RJS(
+        runtime_.makeHandle<vm::JSObject>(obj),
+        &runtime_,
+        runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index)),
+        runtime_.makeHandle(*phv(value)));
+    CHECK_STATUS(res.getStatus());
     return clearLastError();
   });
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, value);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // auto set_maybe = obj->Set(context, index, val);
-
-  // RETURN_STATUS_IF_FALSE(env, set_maybe.FromMaybe(false),
-  // napi_generic_failure);
-
-  // return GET_RETURN_STATUS(env);
-  // return napi_ok;
 }
 
 napi_status NodeApiEnvironment::deleteElement(
     napi_value object,
     uint32_t index,
     bool *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-
-  // CHECK_TO_OBJECT(env, context, obj, object);
-  // v8::Maybe<bool> delete_maybe = obj->Delete(context, index);
-  // CHECK_MAYBE_NOTHING(env, delete_maybe, napi_generic_failure);
-
-  // if (result != nullptr)
-  //   *result = delete_maybe.FromMaybe(false);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_CHECKED(
+        auto res,
+        vm::JSObject::deleteComputed(
+            runtime_.makeHandle<vm::JSObject>(obj),
+            &runtime_,
+            runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index))));
+    if (result != nullptr) {
+      *result = res;
+    }
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::createStringLatin1(
