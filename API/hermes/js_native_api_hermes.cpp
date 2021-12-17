@@ -45,7 +45,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <climits> // INT_MAX
 #include <cmath>
 #include <vector>
 
@@ -3541,7 +3540,9 @@ napi_status NodeApiEnvironment::createStringLatin1(
     CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+        (length == NAPI_AUTO_LENGTH) ||
+            length <= std::numeric_limits<int32_t>::max(),
+        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char>::length(str);
     }
@@ -3560,7 +3561,9 @@ napi_status NodeApiEnvironment::createStringUtf8(
     CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+        (length == NAPI_AUTO_LENGTH) ||
+            length <= std::numeric_limits<int32_t>::max(),
+        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char>::length(str);
     }
@@ -3579,7 +3582,9 @@ napi_status NodeApiEnvironment::createStringUtf16(
     CHECK_ARG(str);
     CHECK_ARG(result);
     RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) || length <= INT_MAX, napi_invalid_arg);
+        (length == NAPI_AUTO_LENGTH) ||
+            length <= std::numeric_limits<int32_t>::max(),
+        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char16_t>::length(str);
     }
