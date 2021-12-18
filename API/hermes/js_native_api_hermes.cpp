@@ -460,6 +460,7 @@ enum class NapiPredefined {
   TrueValue,
   FalseValue,
   ExternalValueSymbol,
+  CodeSymbol,
   PredefinedCount // a special value that must be last in the enum
 };
 
@@ -1973,6 +1974,10 @@ NodeApiEnvironment::NodeApiEnvironment(
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
               "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
+  setPredefined(
+      NapiPredefined::CodeSymbol,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().createNotUniquedLazySymbol("code")));
 }
 
 NodeApiEnvironment::~NodeApiEnvironment() {
@@ -3826,22 +3831,32 @@ napi_status NodeApiEnvironment::throwError(
 
 napi_status NodeApiEnvironment::throwTypeError(
     const char *code,
-    const char *msg) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
+    const char *message) noexcept {
+  return handleExceptions([&] {
+    ASSIGN_CHECKED(auto messageHV, stringHVFromUtf8(message));
+    auto messageHandle = runtime_.makeHandle(messageHV);
+    ASSIGN_CHECKED(auto codeHV, stringHVFromUtf8(code));
+    auto codeHandle = runtime_.makeHandle(codeHV);
 
-  // v8::Isolate *isolate = env->isolate;
-  // v8::Local<v8::String> str;
-  // CHECK_NEW_FROM_UTF8(env, str, msg);
+    auto errorObj = runtime_.makeHandle(vm::JSError::create(
+        &runtime_,
+        runtime_.makeHandle<vm::JSObject>(runtime_.TypeErrorPrototype)));
+    CHECK_STATUS(vm::JSError::recordStackTrace(errorObj, &runtime_));
+    CHECK_STATUS(vm::JSError::setupStack(errorObj, &runtime_));
+    CHECK_STATUS(vm::JSError::setMessage(errorObj, &runtime_, messageHandle));
+    CHECK_STATUS(vm::JSObject::putNamed_RJS(
+                     errorObj,
+                     &runtime_,
+                     getPredefined(NapiPredefined::CodeSymbol).getSymbol(),
+                     codeHandle)
+                     .getStatus());
 
-  // v8::Local<v8::Value> error_obj = v8::Exception::TypeError(str);
-  // CHECK_NAPI(set_error_code(env, error_obj, nullptr, code));
+    runtime_.setThrownValue(errorObj.getHermesValue());
 
-  // isolate->ThrowException(error_obj);
-  // // any VM calls after this point and before returning
-  // // to the javascript invoker will fail
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    // any VM calls after this point and before returning
+    // to the javascript invoker will fail
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::throwRangeError(
