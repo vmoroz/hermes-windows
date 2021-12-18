@@ -8,7 +8,6 @@
 // TODO: review all object functions
 
 // TODO: Fix getting all properties
-// TODO: Finish callFunction
 // TODO: JS error throwing
 // TODO: Type Tag
 // TODO: External ArrayBuffer
@@ -3732,17 +3731,12 @@ napi_status NodeApiEnvironment::callFunction(
     if (argCount > 0) {
       CHECK_ARG(args);
     }
-    vm::Handle<vm::Callable> handle =
-        vm::Handle<vm::Callable>::vmcast(phv(func));
+    auto handle = runtime_.makeHandle<vm::Callable>(*phv(func));
     if (argCount > std::numeric_limits<uint32_t>::max() ||
         !runtime_.checkAvailableStack((uint32_t)argCount)) {
-      LOG_EXCEPTION_CAUSE(
-          "NodeApiEnvironment::CallFunction: Unable to call function: stack overflow");
-      // TODO: implement
-      // throw jsi::JSINativeException(
-      //    "NodeApiEnvironment::CallFunction: Unable to call function: stack
-      //    overflow");
-      return setLastError(napi_generic_failure);
+      return setLastError(
+          napi_generic_failure,
+          "NodeApiEnvironment::callFunction: Unable to call function: stack overflow");
     }
 
     auto &stats = runtime_.getRuntimeStats();
@@ -3765,31 +3759,12 @@ napi_status NodeApiEnvironment::callFunction(
     auto callRes = vm::Callable::call(handle, &runtime_);
     CHECK_STATUS(callRes.getStatus());
 
-    *result = addStackValue(callRes->get());
+    if (result) {
+      RETURN_STATUS_IF_FALSE(!callRes->get().isEmpty(), napi_generic_failure);
+      *result = addStackValue(callRes->get());
+    }
     return clearLastError();
   });
-
-  // v8::Local<v8::Value> v8recv = v8impl::V8LocalValueFromJsValue(recv);
-
-  // v8::Local<v8::Function> v8func;
-  // CHECK_TO_FUNCTION(env, v8func, func);
-
-  // auto maybe = v8func->Call(
-  //     context,
-  //     v8recv,
-  //     argc,
-  //     reinterpret_cast<v8::Local<v8::Value> *>(const_cast<napi_value
-  //     *>(argv)));
-
-  // if (try_catch.HasCaught()) {
-  //   return napi_set_last_error(env, napi_pending_exception);
-  // } else {
-  //   if (result != nullptr) {
-  //     CHECK_MAYBE_EMPTY(env, maybe, napi_generic_failure);
-  //     *result = v8impl::JsValueFromV8LocalValue(maybe.ToLocalChecked());
-  //   }
-  //   return napi_clear_last_error(env);
-  // }
 }
 
 napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
