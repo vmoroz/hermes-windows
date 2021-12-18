@@ -4617,9 +4617,8 @@ void NodeApiEnvironment::callIntoModule(TLambda &&call) noexcept {
   CRASH_IF_FALSE(openHandleScopesBefore == openHandleScopes_);
   CRASH_IF_FALSE(openCallbackScopesBefore == openCallbackScopes_);
   if (!lastException_.isEmpty()) {
-    // TODO:
-    // handle_exception(this, last_exception.Get(this->isolate));
-    // last_exception.Reset();
+    runtime_.setThrownValue(lastException_);
+    lastException_ = EmptyHermesValue;
   }
 }
 
