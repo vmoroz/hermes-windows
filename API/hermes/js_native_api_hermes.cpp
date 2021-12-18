@@ -723,6 +723,10 @@ struct NodeApiEnvironment {
   napi_status getGlobal(napi_value *result) noexcept;
 
   napi_status throwError(napi_value error) noexcept;
+  napi_status throwError(
+      const char *code,
+      const char *message,
+      const vm::PinnedHermesValue &prototype) noexcept;
   napi_status throwError(const char *code, const char *message) noexcept;
   napi_status throwTypeError(const char *code, const char *message) noexcept;
   napi_status throwRangeError(const char *code, const char *message) noexcept;
@@ -3796,60 +3800,37 @@ napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
 }
 
 napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // CHECK_ARG(env, error);
-
-  // v8::Isolate *isolate = env->isolate;
-
-  // isolate->ThrowException(v8impl::V8LocalValueFromJsValue(error));
-  // // any VM calls after this point and before returning
-  // // to the javascript invoker will fail
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(error);
+  runtime_.setThrownValue(*phv(error));
+  // any VM calls after this point and before returning
+  // to the javascript invoker will fail
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::throwError(
     const char *code,
-    const char *msg) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-
-  // v8::Isolate *isolate = env->isolate;
-  // v8::Local<v8::String> str;
-  // CHECK_NEW_FROM_UTF8(env, str, msg);
-
-  // v8::Local<v8::Value> error_obj = v8::Exception::Error(str);
-  // CHECK_NAPI(set_error_code(env, error_obj, nullptr, code));
-
-  // isolate->ThrowException(error_obj);
-  // // any VM calls after this point and before returning
-  // // to the javascript invoker will fail
-  // return napi_clear_last_error(env);
-  return napi_ok;
-}
-
-napi_status NodeApiEnvironment::throwTypeError(
-    const char *code,
-    const char *message) noexcept {
+    const char *message,
+    const vm::PinnedHermesValue &prototype) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(message);
     ASSIGN_CHECKED(auto messageHV, stringHVFromUtf8(message));
     auto messageHandle = runtime_.makeHandle(messageHV);
-    ASSIGN_CHECKED(auto codeHV, stringHVFromUtf8(code));
-    auto codeHandle = runtime_.makeHandle(codeHV);
 
     auto errorObj = runtime_.makeHandle(vm::JSError::create(
-        &runtime_,
-        runtime_.makeHandle<vm::JSObject>(runtime_.TypeErrorPrototype)));
+        &runtime_, runtime_.makeHandle<vm::JSObject>(prototype)));
     CHECK_STATUS(vm::JSError::recordStackTrace(errorObj, &runtime_));
     CHECK_STATUS(vm::JSError::setupStack(errorObj, &runtime_));
     CHECK_STATUS(vm::JSError::setMessage(errorObj, &runtime_, messageHandle));
-    CHECK_STATUS(vm::JSObject::putNamed_RJS(
-                     errorObj,
-                     &runtime_,
-                     getPredefined(NapiPredefined::CodeSymbol).getSymbol(),
-                     codeHandle)
-                     .getStatus());
+    if (code) {
+      ASSIGN_CHECKED(auto codeHV, stringHVFromUtf8(code));
+      auto codeHandle = runtime_.makeHandle(codeHV);
+      CHECK_STATUS(vm::JSObject::putNamed_RJS(
+                       errorObj,
+                       &runtime_,
+                       getPredefined(NapiPredefined::CodeSymbol).getSymbol(),
+                       codeHandle)
+                       .getStatus());
+    }
 
     runtime_.setThrownValue(errorObj.getHermesValue());
 
@@ -3859,39 +3840,31 @@ napi_status NodeApiEnvironment::throwTypeError(
   });
 }
 
+napi_status NodeApiEnvironment::throwError(
+    const char *code,
+    const char *message) noexcept {
+  return throwError(code, message, runtime_.ErrorPrototype);
+}
+
+napi_status NodeApiEnvironment::throwTypeError(
+    const char *code,
+    const char *message) noexcept {
+  return throwError(code, message, runtime_.TypeErrorPrototype);
+}
+
 napi_status NodeApiEnvironment::throwRangeError(
     const char *code,
-    const char *msg) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-
-  // v8::Isolate *isolate = env->isolate;
-  // v8::Local<v8::String> str;
-  // CHECK_NEW_FROM_UTF8(env, str, msg);
-
-  // v8::Local<v8::Value> error_obj = v8::Exception::RangeError(str);
-  // CHECK_NAPI(set_error_code(env, error_obj, nullptr, code));
-
-  // isolate->ThrowException(error_obj);
-  // // any VM calls after this point and before returning
-  // // to the javascript invoker will fail
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    const char *message) noexcept {
+  return throwError(code, message, runtime_.RangeErrorPrototype);
 }
 
 napi_status NodeApiEnvironment::isError(
     napi_value value,
     bool *result) noexcept {
-  // TODO: implement
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  // CHECK_ARG(env, value);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
-  // *result = val->IsNativeError();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  *result = vm::vmisa<vm::JSError>(*phv(value));
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getNumberValue(
