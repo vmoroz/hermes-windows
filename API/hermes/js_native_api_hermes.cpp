@@ -8,7 +8,6 @@
 // TODO: review all object functions
 
 // TODO: Fix getting all properties
-// TODO: External ArrayBuffer
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
@@ -4664,25 +4663,51 @@ napi_status NodeApiEnvironment::createArrayBuffer(
   });
 }
 
+struct ExternalBuffer : Buffer {
+  ExternalBuffer(
+      NodeApiEnvironment &env,
+      void *externalData,
+      size_t byteLength,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : Buffer(reinterpret_cast<uint8_t *>(externalData), byteLength),
+        env_(env),
+        finalizer_(
+            FinalizingReferenceFactory<FinalizingAnonymousReference>::create(
+                externalData,
+                finalizeCallback,
+                finalizeHint)) {}
+
+  ~ExternalBuffer() noexcept override {
+    env_.addToFinalizerQueue(finalizer_);
+  }
+
+ private:
+  NodeApiEnvironment &env_;
+  FinalizingAnonymousReference *finalizer_;
+};
+
 napi_status NodeApiEnvironment::createExternalArrayBuffer(
     void *externalData,
     size_t byteLength,
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_value *result) noexcept {
-  // TODO: implement
-  // // The API contract here is that the cleanup function runs on the JS
-  // thread,
-  // // and is able to use napi_env. Implementing that properly is hard, so
-  // use the
-  // // `Buffer` variant for easier implementation.
-  // napi_value buffer;
-  // CHECK_NAPI(napi_create_external_buffer(
-  //     env, byte_length, external_data, finalize_cb, finalize_hint,
-  //     &buffer));
-  // return napi_get_typedarray_info(
-  //     env, buffer, nullptr, nullptr, nullptr, result, nullptr);
-  return napi_ok;
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+
+    auto buffer = vm::JSArrayBuffer::create(
+        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
+    // Add result to the local values before allocating buffer to ensure
+    // GC-safety.
+    *result = addStackValue(buffer.getHermesValue());
+
+    auto externalBuffer = std::make_unique<ExternalBuffer>(
+        env, externalData, byteLength, finalizeCallback, finalizeHint);
+    buffer->setExternalBuffer(&runtime_, std::move(externalBuffer));
+
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getArrayBufferInfo(
