@@ -61,6 +61,12 @@ class JSArrayBuffer final : public JSObject {
   ExecutionStatus
   createDataBlock(Runtime *runtime, size_type size, bool zero = true);
 
+  /// Sets data block to the external buffer for this JSArrayBuffer to hold.
+  /// Replaces the currently used data block.
+  void setExternalBuffer(
+      Runtime *runtime,
+      std::unique_ptr<Buffer> externalBuffer);
+
   /// Retrieves a pointer to the held buffer.
   /// \return A pointer to the buffer owned by this object. This can be null
   ///   if the ArrayBuffer is empty.
@@ -97,6 +103,7 @@ class JSArrayBuffer final : public JSObject {
  private:
   uint8_t *data_;
   size_type size_;
+  std::unique_ptr<Buffer> externalBuffer_;
   bool attached_;
 
  public:

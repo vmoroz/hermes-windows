@@ -165,22 +165,29 @@ JSArrayBuffer::JSArrayBuffer(
 
 void JSArrayBuffer::_finalizeImpl(GCCell *cell, GC *gc) {
   auto *self = vmcast<JSArrayBuffer>(cell);
-  // Need to untrack the native memory that may have been tracked by snapshots.
-  gc->getIDTracker().untrackNative(self->data_);
-  gc->debitExternalMemory(self, self->size_);
-  free(self->data_);
+  if (LLVM_UNLIKELY(self->externalBuffer_)) {
+    self->externalBuffer_.reset();
+    self->data_ = nullptr;
+    self->size_ = 0;
+  } else {
+    // Need to untrack the native memory that may have been tracked by
+    // snapshots.
+    gc->getIDTracker().untrackNative(self->data_);
+    gc->debitExternalMemory(self, self->size_);
+    free(self->data_);
+  }
   self->~JSArrayBuffer();
 }
 
 size_t JSArrayBuffer::_mallocSizeImpl(GCCell *cell) {
   const auto *buffer = vmcast<JSArrayBuffer>(cell);
-  return buffer->size_;
+  return !buffer->externalBuffer_ ? buffer->size_ : 0;
 }
 
 gcheapsize_t JSArrayBuffer::_externalMemorySizeImpl(
     hermes::vm::GCCell const *cell) {
   const auto *buffer = vmcast<JSArrayBuffer>(cell);
-  return buffer->size_;
+  return !buffer->externalBuffer_ ? buffer->size_ : 0;
 }
 
 void JSArrayBuffer::_snapshotAddEdgesImpl(
@@ -188,7 +195,7 @@ void JSArrayBuffer::_snapshotAddEdgesImpl(
     GC *gc,
     HeapSnapshot &snap) {
   auto *const self = vmcast<JSArrayBuffer>(cell);
-  if (!self->data_) {
+  if (!self->data_ || self->externalBuffer_) {
     return;
   }
   // While this is an internal edge, it is to a native node which is not
@@ -205,7 +212,7 @@ void JSArrayBuffer::_snapshotAddNodesImpl(
     GC *gc,
     HeapSnapshot &snap) {
   auto *const self = vmcast<JSArrayBuffer>(cell);
-  if (!self->data_) {
+  if (!self->data_ || self->externalBuffer_) {
     return;
   }
   // Add the native node before the JSArrayBuffer node.
@@ -219,7 +226,11 @@ void JSArrayBuffer::_snapshotAddNodesImpl(
 }
 
 void JSArrayBuffer::detach(GC *gc) {
-  if (data_) {
+  if (LLVM_UNLIKELY(externalBuffer_)) {
+    externalBuffer_.reset();
+    data_ = nullptr;
+    size_ = 0;
+  } else if (data_) {
     gc->debitExternalMemory(this, size_);
     free(data_);
     data_ = nullptr;
@@ -263,6 +274,18 @@ JSArrayBuffer::createDataBlock(Runtime *runtime, size_type size, bool zero) {
     size_ = size;
     runtime->getHeap().creditExternalMemory(this, size);
     return ExecutionStatus::RETURNED;
+  }
+}
+
+void JSArrayBuffer::setExternalBuffer(
+    Runtime *runtime,
+    std::unique_ptr<Buffer> externalBuffer) {
+  detach(&runtime->getHeap());
+  externalBuffer_ = std::move(externalBuffer);
+  attached_ = true;
+  if (externalBuffer_) {
+    data_ = const_cast<uint8_t *>(externalBuffer_->data());
+    size_ = externalBuffer_->size();
   }
 }
 
