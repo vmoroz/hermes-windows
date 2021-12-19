@@ -8,7 +8,6 @@
 // TODO: review all object functions
 
 // TODO: Fix getting all properties
-// TODO: Type Tag
 // TODO: External ArrayBuffer
 // TODO: adjustExternalMemory
 // TODO: Unique strings
@@ -912,9 +911,9 @@ struct NodeApiEnvironment {
 
   napi_status getInstanceData(void **nativeData) noexcept;
 
-  napi_status detachArrayBuffer(napi_value arraybuffer) noexcept;
+  napi_status detachArrayBuffer(napi_value arrayBuffer) noexcept;
   napi_status isDetachedArrayBuffer(
-      napi_value arraybuffer,
+      napi_value arrayBuffer,
       bool *result) noexcept;
 
   // Extensions
@@ -5166,41 +5165,23 @@ napi_status NodeApiEnvironment::getInstanceData(void **nativeData) noexcept {
 }
 
 napi_status NodeApiEnvironment::detachArrayBuffer(
-    napi_value arraybuffer) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, arraybuffer);
-
-  // v8::Local<v8::Value> value =
-  // v8impl::V8LocalValueFromJsValue(arraybuffer); RETURN_STATUS_IF_FALSE(
-  //     env, value->IsArrayBuffer(), napi_arraybuffer_expected);
-
-  // v8::Local<v8::ArrayBuffer> it = value.As<v8::ArrayBuffer>();
-  // RETURN_STATUS_IF_FALSE(
-  //     env, it->IsDetachable(), napi_detachable_arraybuffer_expected);
-
-  // it->Detach();
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+    napi_value arrayBuffer) noexcept {
+  CHECK_ARG(arrayBuffer);
+  auto buffer = vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
+  buffer->detach(&runtime_.getHeap());
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::isDetachedArrayBuffer(
-    napi_value arraybuffer,
+    napi_value arrayBuffer,
     bool *result) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, arraybuffer);
-  // CHECK_ARG(env, result);
-
-  // v8::Local<v8::Value> value =
-  // v8impl::V8LocalValueFromJsValue(arraybuffer);
-
-  // *result = value->IsArrayBuffer() &&
-  //     value.As<v8::ArrayBuffer>()->GetBackingStore()->Data() == nullptr;
-
-  // return napi_clear_last_error(env);
-  return napi_ok;
+  CHECK_ARG(arrayBuffer);
+  CHECK_ARG(result);
+  auto buffer = vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
+  *result = buffer->attached();
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::runScript(
