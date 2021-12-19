@@ -130,7 +130,7 @@ using ::hermes::hermesLog;
 #define ASSIGN_CHECKED_IMPL(var, expr, tempSuffix)    \
   auto TEMP_VARNAME(tempSuffix) = (expr);             \
   CHECK_STATUS(TEMP_VARNAME(tempSuffix).getStatus()); \
-  var = *TEMP_VARNAME(tempSuffix);
+  var = std::move(*TEMP_VARNAME(tempSuffix));
 
 #define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
 
@@ -459,6 +459,7 @@ enum class NapiPredefined {
   FalseValue,
   ExternalValueSymbol,
   CodeSymbol,
+  TypeTagSymbol,
   PredefinedCount // a special value that must be last in the enum
 };
 
@@ -1968,6 +1969,11 @@ NodeApiEnvironment::NodeApiEnvironment(
       NapiPredefined::CodeSymbol,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol("code")));
+  setPredefined(
+      NapiPredefined::TypeTagSymbol,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().createNotUniquedLazySymbol(
+              "napi.typeTag.026ae0ec-b391-49da-a935-0cab733ab615")));
 }
 
 NodeApiEnvironment::~NodeApiEnvironment() {
@@ -4195,67 +4201,55 @@ napi_status NodeApiEnvironment::createExternal(
 napi_status NodeApiEnvironment::typeTagObject(
     napi_value object,
     const napi_type_tag *typeTag) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-  // CHECK_TO_OBJECT_WITH_PREAMBLE(env, context, obj, object);
-  // CHECK_ARG_WITH_PREAMBLE(env, type_tag);
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(typeTag);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
+    ASSIGN_CHECKED(
+        auto hasTag, hasPrivate(objHandle, NapiPredefined::TypeTagSymbol));
+    RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
-  // auto key = NAPI_PRIVATE_KEY(context, type_tag);
-  // auto maybe_has = obj->HasPrivate(context, key);
-  // CHECK_MAYBE_NOTHING_WITH_PREAMBLE(env, maybe_has, napi_generic_failure);
-  // RETURN_STATUS_IF_FALSE_WITH_PREAMBLE(
-  //     env, !maybe_has.FromJust(), napi_invalid_arg);
+    auto tagBuffer = vm::JSArrayBuffer::create(
+        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
+    // Create tagBufferHandle for the GC-safety before creating data block.
+    auto tagBufferHandle =
+        runtime_.makeHandle<vm::JSArrayBuffer>(tagBuffer.get());
+    CHECK_STATUS(tagBuffer->createDataBlock(&runtime_, 16));
 
-  // auto tag = v8::BigInt::NewFromWords(
-  //     context, 0, 2, reinterpret_cast<const uint64_t *>(type_tag));
-  // CHECK_MAYBE_EMPTY_WITH_PREAMBLE(env, tag, napi_generic_failure);
+    auto source = reinterpret_cast<const uint8_t *>(typeTag);
+    std::copy(source, source + 16, tagBuffer->getDataBlock());
 
-  // auto maybe_set = obj->SetPrivate(context, key, tag.ToLocalChecked());
-  // CHECK_MAYBE_NOTHING_WITH_PREAMBLE(env, maybe_set, napi_generic_failure);
-  // RETURN_STATUS_IF_FALSE_WITH_PREAMBLE(
-  //     env, maybe_set.FromJust(), napi_generic_failure);
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    CHECK_STATUS(setPrivate(
+                     objHandle,
+                     NapiPredefined::TypeTagSymbol,
+                     tagBuffer.getHermesValue())
+                     .getStatus());
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::checkObjectTypeTag(
     napi_value object,
     const napi_type_tag *typeTag,
     bool *result) noexcept {
-  // TODO: implement
-  // NAPI_PREAMBLE(env);
-  // v8::Local<v8::Context> context = env->context();
-  // v8::Local<v8::Object> obj;
-  // CHECK_TO_OBJECT_WITH_PREAMBLE(env, context, obj, object);
-  // CHECK_ARG_WITH_PREAMBLE(env, type_tag);
-  // CHECK_ARG_WITH_PREAMBLE(env, result);
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(typeTag);
+    CHECK_ARG(result);
+    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
+    ASSIGN_CHECKED(
+        auto tagHV, getPrivate(objHandle, NapiPredefined::TypeTagSymbol));
+    auto tagBuffer =
+        vm::vmcast_or_null<vm::JSArrayBuffer>(tagHV.getHermesValue());
+    RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
 
-  // auto maybe_value =
-  //     obj->GetPrivate(context, NAPI_PRIVATE_KEY(context, type_tag));
-  // CHECK_MAYBE_EMPTY_WITH_PREAMBLE(env, maybe_value, napi_generic_failure);
-  // v8::Local<v8::Value> val = maybe_value.ToLocalChecked();
-
-  // // We consider the type check to have failed unless we reach the line
-  // below
-  // // where we set whether the type check succeeded or not based on the
-  // // comparison of the two type tags.
-  // *result = false;
-  // if (val->IsBigInt()) {
-  //   int sign;
-  //   int size = 2;
-  //   napi_type_tag tag;
-  //   val.As<v8::BigInt>()->ToWordsArray(
-  //       &sign, &size, reinterpret_cast<uint64_t *>(&tag));
-  //   if (size == 2 && sign == 0)
-  //     *result = (tag.lower == type_tag->lower && tag.upper ==
-  //     type_tag->upper);
-  // }
-
-  // return GET_RETURN_STATUS(env);
-  return napi_ok;
+    auto objTagBuffer = tagBuffer->getDataBlock();
+    auto source = reinterpret_cast<const uint8_t *>(typeTag);
+    *result = std::equal(source, source + 16, objTagBuffer, objTagBuffer + 16);
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getValueExternal(
