@@ -2616,6 +2616,15 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   // TODO: implement
+
+  // TODO: Implement following the prototype chain
+  // TODO: Unify applying filters
+  // TODO: Use big storage to collect keys
+  // TODO: Implement collecting symbols
+  // TODO: Implement collecting strings
+  // TODO: Convert numbers to strings when needed
+  // TODO: Coerce to object first
+  // TODO: Implement fast path for for..in  
   return handleExceptions([&] {
     CHECK_ARG(result);
     CHECK_OBJECT_ARG(object);
