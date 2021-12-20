@@ -87,7 +87,7 @@ function Get-VCVarsParam($plat = "x64", $arch = "win32") {
         $args_ = "$args_ $SDKVersion"
     }
 
-return $args_
+    return $args_
 }
 
 function Get-CMakeConfiguration($config) {
