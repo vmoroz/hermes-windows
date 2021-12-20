@@ -451,6 +451,8 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4275")
   # C4646: function declared with 'noreturn' has non-void return type
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4646")
+  # C4312: 'reinterpret_cast': conversion from 'X' to 'hermes::vm::GCCell *' of greater size
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4312")
   # Parallelize build
   if (HERMES_MSVC_MP)
     add_definitions( /MP )

@@ -4,13 +4,13 @@
 // TODO: Sync with latest code
 // TODO: Reorder the code
 // TODO: Better native error handling
-// TODO: report bug in JSDate::create - value is unused
 // TODO: review all object functions
 
-// TODO: Fix getting all properties
+// TODO: Implement getting all properties
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
+// TODO: use extended message for errors
 
 #define NAPI_EXPERIMENTAL
 
@@ -405,7 +405,7 @@ struct CallbackInfo final {
       : context_(context), hvArgs_(hvArgs) {}
 
   void Args(napi_value *args, size_t *argCount) noexcept {
-    *args = napiValue(hvArgs_.begin());
+    // TODO: fix    *args = napiValue(hvArgs_.begin());
     *argCount = hvArgs_.getArgCount();
   }
 
@@ -510,8 +510,10 @@ struct NodeApiEnvironment {
   napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
 
+  vm::WeakRoot<vm::JSObject> createWeakRoot(vm::JSObject *object) noexcept;
+
   const vm::PinnedHermesValue &lockWeakObject(
-      vm::WeakRef<vm::HermesValue> &weakRef) noexcept;
+      vm::WeakRoot<vm::JSObject> &weakRoot) noexcept;
 
   template <typename TLambda>
   void callIntoModule(TLambda &&call) noexcept;
@@ -535,6 +537,7 @@ struct NodeApiEnvironment {
   int openCallbackScopeCount_{};
   InstanceData *instanceData_{};
 
+  static vm::JSObject *getObject(const vm::HermesValue &value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
       const vm::PinnedHermesValue *value) noexcept;
@@ -1056,10 +1059,6 @@ struct NodeApiEnvironment {
       napi_value value,
       napi_ext_ref *result) noexcept;
 
-  napi_status createWeakRefSlot(
-      const vm::PinnedHermesValue &value,
-      vm::WeakRefSlot **result) noexcept;
-
   napi_status incReference(napi_ext_ref ref) noexcept;
 
   napi_status decReference(napi_ext_ref ref) noexcept;
@@ -1075,7 +1074,8 @@ struct NodeApiEnvironment {
   std::shared_ptr<vm::Runtime> rt_;
 #endif
   vm::Runtime &runtime_;
-#ifdef HERMES_ENABLE_DEBUGGER
+// TODO: fix #ifdef HERMES_ENABLE_DEBUGGER
+#if 0
   friend class debugger::Debugger;
   std::unique_ptr<debugger::Debugger> debugger_;
 #endif
@@ -1251,7 +1251,7 @@ struct Reference : LinkedList<Reference>::Item {
     return nullptr;
   }
 
-  virtual vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+  virtual vm::WeakRoot<vm::JSObject> *getGCWeakRoot(
       NodeApiEnvironment & /*env*/) noexcept {
     return nullptr;
   }
@@ -1270,10 +1270,10 @@ struct Reference : LinkedList<Reference>::Item {
   static void getGCWeakRoots(
       NodeApiEnvironment &env,
       LinkedList<Reference> &list,
-      vm::WeakRefAcceptor &acceptor) noexcept {
+      vm::WeakRootAcceptor &acceptor) noexcept {
     list.forEach([&](Reference *ref) {
-      if (vm::WeakRef<vm::HermesValue> *weakRef = ref->getGCWeakRoot(env)) {
-        acceptor.accept(*weakRef);
+      if (vm::WeakRoot<vm::JSObject> *weakRoot = ref->getGCWeakRoot(env)) {
+        acceptor.acceptWeak(*weakRoot);
       }
     });
   }
@@ -1400,24 +1400,23 @@ struct WeakReference final : AtomicRefCountReference {
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
       WeakReference **result) noexcept {
-    CHECK_ARG(value);
+    CHECK_OBJECT_ARG(value);
     CHECK_ARG(result);
-    vm::WeakRefSlot *weakRefSlot{};
-    CHECK_NAPI(env.createWeakRefSlot(*value, &weakRefSlot));
-    *result = new WeakReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
+    *result = new WeakReference(
+        env.createWeakRoot(NodeApiEnvironment::getObject(*value)));
     env.addGCRoot(*result);
     return env.clearLastError();
   }
 
   const vm::PinnedHermesValue &value(
       NodeApiEnvironment &env) noexcept override {
-    return env.lockWeakObject(weakRef_);
+    return env.lockWeakObject(weakRoot_);
   }
 
-  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+  vm::WeakRoot<vm::JSObject> *getGCWeakRoot(
       NodeApiEnvironment &env) noexcept override {
     if (refCount() > 0) {
-      return &weakRef_;
+      return &weakRoot_;
     } else {
       deleteReference(env, this, ReasonToDelete::ZeroRefCount);
       return nullptr;
@@ -1425,14 +1424,14 @@ struct WeakReference final : AtomicRefCountReference {
   }
 
  protected:
-  WeakReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
-      : weakRef_(weakRef) {}
+  WeakReference(vm::WeakRoot<vm::JSObject> weakRoot) noexcept
+      : weakRoot_(weakRoot) {}
 
  private:
-  vm::WeakRef<vm::HermesValue> weakRef_;
+  vm::WeakRoot<vm::JSObject> weakRoot_;
 };
 
-// Keep vm::PinnedHermesValue when ref count > 0 or vm::WeakRef<vm::HermesValue>
+// Keep vm::PinnedHermesValue when ref count > 0 or vm::WeakRoot<vm::JSObject>
 // when ref count == 0. The ref count is not atomic and must be changed only
 // from the JS thread.
 struct ComplexReference : Reference {
@@ -1443,13 +1442,12 @@ struct ComplexReference : Reference {
       ComplexReference **result) noexcept {
     CHECK_OBJECT_ARG(value);
     CHECK_ARG(result);
-    if (initialRefCount > 0) {
-      *result = new ComplexReference(initialRefCount, *value);
-    } else {
-      vm::WeakRefSlot *weakRefSlot{};
-      CHECK_NAPI(env.createWeakRefSlot(*value, &weakRefSlot));
-      *result = new ComplexReference(vm::WeakRef<vm::HermesValue>(weakRefSlot));
-    }
+    *result = new ComplexReference(
+        initialRefCount,
+        *value,
+        initialRefCount == 0
+            ? env.createWeakRoot(NodeApiEnvironment::getObject(*value))
+            : vm::WeakRoot<vm::JSObject>{});
     env.addGCRoot(*result);
     return env.clearLastError();
   }
@@ -1457,7 +1455,7 @@ struct ComplexReference : Reference {
   napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
     if (refCount_ == 0) {
-      value_ = env.lockWeakObject(weakRef_);
+      value_ = env.lockWeakObject(weakRoot_);
     }
     CRASH_IF_FALSE(++refCount_ >= MaxRefCount && "The ref count is too big.");
     result = refCount_;
@@ -1472,13 +1470,11 @@ struct ComplexReference : Reference {
       return napi_ok;
     }
     if (--refCount_ == 0) {
-      vm::WeakRefSlot *weakRefSlot{};
-      // The weakRefSlot is nullptr if value_ became Unknown in previous bounce
-      // from zero.
       if (value_.isObject()) {
-        CHECK_NAPI(env.createWeakRefSlot(value_, &weakRefSlot));
+        weakRoot_ = env.createWeakRoot(NodeApiEnvironment::getObject(value_));
+      } else {
+        weakRoot_ = vm::WeakRoot<vm::JSObject>{};
       }
-      weakRef_ = vm::WeakRef<vm::HermesValue>{weakRefSlot};
     }
     result = refCount_;
     return env.clearLastError();
@@ -1489,7 +1485,7 @@ struct ComplexReference : Reference {
     if (refCount_ > 0) {
       return value_;
     } else {
-      return env.lockWeakObject(weakRef_);
+      return env.lockWeakObject(weakRoot_);
     }
   }
 
@@ -1498,20 +1494,17 @@ struct ComplexReference : Reference {
     return (refCount_ > 0) ? &value_ : nullptr;
   }
 
-  vm::WeakRef<vm::HermesValue> *getGCWeakRoot(
+  vm::WeakRoot<vm::JSObject> *getGCWeakRoot(
       NodeApiEnvironment & /*env*/) noexcept override {
-    return (refCount_ == 0 && weakRef_.unsafeGetSlot() != nullptr) ? &weakRef_
-                                                                   : nullptr;
+    return (refCount_ == 0 && weakRoot_) ? &weakRoot_ : nullptr;
   }
 
  protected:
   ComplexReference(
       uint32_t initialRefCount,
-      const vm::PinnedHermesValue &value) noexcept
-      : refCount_(initialRefCount), value_(value) {}
-
-  ComplexReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
-      : weakRef_(weakRef) {}
+      const vm::PinnedHermesValue &value,
+      vm::WeakRoot<vm::JSObject> weakRoot) noexcept
+      : refCount_(initialRefCount), value_(value), weakRoot_(weakRoot) {}
 
   uint32_t refCount() const noexcept {
     return refCount_;
@@ -1519,10 +1512,8 @@ struct ComplexReference : Reference {
 
  private:
   uint32_t refCount_{0};
-  union {
-    vm::PinnedHermesValue value_;
-    vm::WeakRef<vm::HermesValue> weakRef_;
-  };
+  vm::PinnedHermesValue value_;
+  vm::WeakRoot<vm::JSObject> weakRoot_;
 
   static constexpr uint32_t MaxRefCount =
       std::numeric_limits<uint32_t>::max() / 2;
@@ -1718,17 +1709,16 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
       FinalizingComplexReference **result) noexcept {
     CHECK_OBJECT_ARG(value);
     CHECK_ARG(result);
-    if (initialRefCount > 0) {
-      *result = FinalizingReferenceFactory<FinalizingComplexReference>::create(
-          nativeData, finalizeCallback, finalizeHint, initialRefCount, *value);
-    } else {
-      vm::WeakRefSlot *weakRefSlot{};
-      CHECK_NAPI(env.createWeakRefSlot(*value, &weakRefSlot));
-      *result = FinalizingReferenceFactory<FinalizingComplexReference>::create(
-          nativeData,
-          finalizeCallback,
-          finalizeHint,
-          vm::WeakRef<vm::HermesValue>(weakRefSlot));
+    *result = FinalizingReferenceFactory<FinalizingComplexReference>::create(
+        nativeData,
+        finalizeCallback,
+        finalizeHint,
+        initialRefCount,
+        *value,
+        initialRefCount == 0
+            ? env.createWeakRoot(NodeApiEnvironment::getObject(*value))
+            : vm::WeakRoot<vm::JSObject>{});
+    if (initialRefCount == 0) {
       env.addObjectFinalizer(value, *result);
     }
     env.addFinalizingGCRoot(*result);
@@ -1759,13 +1749,7 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   }
 
  protected:
-  FinalizingComplexReference(
-      uint32_t initialRefCount,
-      const vm::PinnedHermesValue &value) noexcept
-      : ComplexReference(initialRefCount, value) {}
-
-  FinalizingComplexReference(vm::WeakRef<vm::HermesValue> weakRef) noexcept
-      : ComplexReference(weakRef) {}
+  using ComplexReference::ComplexReference;
 
   bool startDeleting(NodeApiEnvironment &env, ReasonToDelete reason) noexcept
       override {
@@ -1905,7 +1889,7 @@ NodeApiEnvironment::NodeApiEnvironment(
     }
   });
   runtime_.addCustomWeakRootsFunction(
-      [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
+      [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
         Reference::getGCWeakRoots(*this, gcRoots_, acceptor);
         Reference::getGCWeakRoots(*this, finalizingGCRoots_, acceptor);
       });
@@ -2056,20 +2040,6 @@ napi_status NodeApiEnvironment::createWeakReference(
     napi_ext_ref *result) noexcept {
   return WeakReference::create(
       *this, phv(value), reinterpret_cast<WeakReference **>(result));
-}
-
-// TODO: move next to helper methods
-napi_status NodeApiEnvironment::createWeakRefSlot(
-    const vm::PinnedHermesValue &value,
-    vm::WeakRefSlot **result) noexcept {
-  RETURN_STATUS_IF_FALSE(value.isObject(), napi_object_expected);
-  CHECK_ARG(result);
-  return handleExceptions([&] {
-    vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-    *result = vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), value)
-                  .unsafeGetSlot();
-    return clearLastError();
-  });
 }
 
 napi_status NodeApiEnvironment::incReference(napi_ext_ref ref) noexcept {
@@ -2359,16 +2329,17 @@ napi_status NodeApiEnvironment::genericFailure(
   return napi_generic_failure;
 }
 
+vm::WeakRoot<vm::JSObject> NodeApiEnvironment::createWeakRoot(
+    vm::JSObject *object) noexcept {
+  return vm::WeakRoot<vm::JSObject>(object, &runtime_);
+}
+
 const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
-    vm::WeakRef<vm::HermesValue> &weakRef) noexcept {
-  vm::WeakRefLock lock{runtime_.getHeap().weakRefMutex()};
-  const auto optValue = weakRef.unsafeGetOptional(&runtime_.getHeap());
-  if (!optValue) {
-    return getPredefined(NapiPredefined::UndefinedValue);
+    vm::WeakRoot<vm::JSObject> &weakRoot) noexcept {
+  if (const auto ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
+    return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
   }
-  CRASH_IF_FALSE(optValue.getValue().isObject() && "Object reference expected");
-  stackValues_.emplaceBack(optValue.getValue());
-  return stackValues_.back();
+  return getPredefined(NapiPredefined::UndefinedValue);
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
@@ -2644,8 +2615,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_filter keyFilter,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
-  // TODO: review and complete
+  // TODO: implement
   return handleExceptions([&] {
+#if 0
     CHECK_ARG(result);
     CHECK_OBJECT_ARG(object);
     RETURN_STATUS_IF_FALSE(
@@ -2944,6 +2916,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     }
 
     *result = addStackValue(array.getHermesValue());
+#endif
     return clearLastError();
   });
 }
@@ -4507,6 +4480,11 @@ napi_status NodeApiEnvironment::newInstance(
   });
 }
 
+vm::JSObject *NodeApiEnvironment::getObject(
+    const vm::HermesValue &value) noexcept {
+  return reinterpret_cast<vm::JSObject *>(value.getObject());
+}
+
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::JSObject>::vmcast(phv(value));
@@ -5111,14 +5089,7 @@ napi_status NodeApiEnvironment::createDate(
   return handleExceptions([&] {
     CHECK_ARG(result);
     auto dateHandle = vm::JSDate::create(
-        &runtime_,
-        /*unused because of a bug*/ dateTime,
-        toObjectHandle(&runtime_.datePrototype));
-    // Set the value explicitly to work around the bug.
-    vm::JSDate::setPrimitiveValue(
-        dateHandle.get(),
-        &runtime_,
-        vm::SmallHermesValue::encodeNumberValue(dateTime, &runtime_));
+        &runtime_, dateTime, toObjectHandle(&runtime_.datePrototype));
     *result = addStackValue(dateHandle.getHermesValue());
     return clearLastError();
   });
@@ -5140,16 +5111,9 @@ napi_status NodeApiEnvironment::getDateValue(
   return handleExceptions([&] {
     CHECK_ARG(value);
     CHECK_ARG(result);
-    const vm::PinnedHermesValue *hv = phv(value);
-    RETURN_STATUS_IF_FALSE(
-        hv->isObject() && vm::vmisa<vm::JSDate>(*hv), napi_date_expected);
-    auto dateHandle = vm::Handle<vm::JSDate>::vmcast(hv);
-    vm::SmallHermesValue shv = vm::JSDate::getPrimitiveValue(dateHandle.get());
-    if (shv.isNumber()) {
-      *result = shv.getNumber(&runtime_);
-    } else {
-      *result = std::numeric_limits<double>::quiet_NaN();
-    }
+    vm::JSDate* date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
+    RETURN_STATUS_IF_FALSE(date, napi_date_expected);
+    *result = date->getPrimitiveValue();
     return clearLastError();
   });
 }
