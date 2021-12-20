@@ -11,11 +11,9 @@
 #include "hermes/AST/Context.h"
 #include "hermes/IR/IR.h"
 #include "hermes/IR/IRBuilder.h"
-#include "hermes/Support/OSCompat.h"
 
 using namespace hermes;
 
-using hermes::oscompat::to_string;
 using llvh::cast;
 using llvh::dyn_cast;
 using llvh::isa;
@@ -457,7 +455,7 @@ StoreOwnPropertyInst *IRBuilder::createStoreOwnPropertyInst(
 StoreNewOwnPropertyInst *IRBuilder::createStoreNewOwnPropertyInst(
     Value *storedValue,
     Value *object,
-    LiteralString *property,
+    Literal *property,
     PropEnumerable isEnumerable) {
   auto *inst = new StoreNewOwnPropertyInst(
       storedValue,
@@ -869,6 +867,17 @@ GetBuiltinClosureInst *IRBuilder::createGetBuiltinClosureInst(
   return inst;
 }
 
+#ifdef HERMES_RUN_WASM
+CallIntrinsicInst *IRBuilder::createCallIntrinsicInst(
+    WasmIntrinsics::Enum intrinsicsIndex,
+    ArrayRef<Value *> arguments) {
+  auto *inst =
+      new CallIntrinsicInst(getLiteralNumber(intrinsicsIndex), arguments);
+  insert(inst);
+  return inst;
+}
+#endif
+
 HBCCallDirectInst *IRBuilder::createHBCCallDirectInst(
     Function *callee,
     Value *thisValue,
@@ -905,6 +914,13 @@ HBCAllocObjectFromBufferInst *IRBuilder::createHBCAllocObjectFromBufferInst(
     uint32_t size) {
   auto *inst =
       new HBCAllocObjectFromBufferInst(M->getLiteralNumber(size), prop_map);
+  insert(inst);
+  return inst;
+}
+
+AllocObjectLiteralInst *IRBuilder::createAllocObjectLiteralInst(
+    const AllocObjectLiteralInst::ObjectPropertyMap &propMap) {
+  auto *inst = new AllocObjectLiteralInst(propMap);
   insert(inst);
   return inst;
 }

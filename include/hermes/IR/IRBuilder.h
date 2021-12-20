@@ -17,6 +17,7 @@
 #include "hermes/FrontEndDefs/Builtins.h"
 #include "hermes/IR/IR.h"
 #include "hermes/IR/Instrs.h"
+#include "hermes/Optimizer/Wasm/WasmIntrinsics.h"
 
 namespace hermes {
 
@@ -336,7 +337,7 @@ class IRBuilder {
   StoreNewOwnPropertyInst *createStoreNewOwnPropertyInst(
       Value *storedValue,
       Value *object,
-      LiteralString *property,
+      Literal *property,
       PropEnumerable isEnumerable);
 
   StoreGetterSetterInst *createStoreGetterSetterInst(
@@ -377,6 +378,9 @@ class IRBuilder {
   AllocObjectInst *createAllocObjectInst(
       uint32_t size,
       Value *parent = nullptr);
+
+  AllocObjectLiteralInst *createAllocObjectLiteralInst(
+      const AllocObjectLiteralInst::ObjectPropertyMap &propMap);
 
   AllocArrayInst *createAllocArrayInst(
       LiteralNumber *sizeHint,
@@ -507,6 +511,12 @@ class IRBuilder {
 
   GetBuiltinClosureInst *createGetBuiltinClosureInst(
       BuiltinMethod::Enum builtinIndex);
+
+#ifdef HERMES_RUN_WASM
+  CallIntrinsicInst *createCallIntrinsicInst(
+      WasmIntrinsics::Enum intrinsicsIndex,
+      ArrayRef<Value *> arguments);
+#endif
 
   HBCCallDirectInst *createHBCCallDirectInst(
       Function *callee,

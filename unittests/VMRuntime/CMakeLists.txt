@@ -12,7 +12,6 @@ set(CMAKE_UNITY_BUILD OFF)
 set(RTSources
   AlignedHeapSegmentTest.cpp
   AlignedStorageTest.cpp
-  Array.cpp
   ArrayTest.cpp
   ArrayStorageTest.cpp
   BytecodeProviderTest.cpp
@@ -26,8 +25,6 @@ set(RTSources
   DateUtilTest.cpp
   DecoratedObjectTest.cpp
   DictPropertyMapTest.cpp
-  ExtStringForTest.cpp
-  ExternalMemAccountingTest.cpp
   GCBasicsTest.cpp
   GCFinalizerTest.cpp
   GCFragmentationTest.cpp
@@ -39,9 +36,6 @@ set(RTSources
   GCOOMTest.cpp
   GCReturnUnusedMemoryTest.cpp
   GCSanitizeHandlesTest.cpp
-  GCSegmentAddressIndexTest.cpp
-  GCSegmentRangeTest.cpp
-  GCSizingTest.cpp
   HeapSnapshotTest.cpp
   HermesValueTest.cpp
   HiddenClassTest.cpp
@@ -62,7 +56,6 @@ set(RTSources
   RuntimeConfigTest.cpp
   SamplingHeapProfilerTest.cpp
   SegmentedArrayTest.cpp
-  SerializerTest.cpp
   SmallHermesValueTest.cpp
   SmallXStringTest.cpp
   StaticBuiltinsTest.cpp
@@ -93,9 +86,6 @@ target_link_libraries(HermesVMRuntimeTests
   hermesParser
   hermesSupport
   dtoa
-  ${CORE_FOUNDATION}
  )
-
-hermes_link_icu(HermesVMRuntimeTests)
 
 add_subdirectory(Instrumentation)

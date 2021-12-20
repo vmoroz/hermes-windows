@@ -133,10 +133,8 @@ class StringPrimitive : public VariableSizeRuntimeCell {
   /// Concatenation resulting in this size or larger will use
   /// BufferedStringPrimitive. We want to ensure that they satisfy the
   /// requirements for external strings.
-  /// NOTE: we want to use std::max(256, EXTERNAL_STRING_MIN_SIZE) here, but it
-  /// is not constexpr yet in C++11.
   static constexpr uint32_t CONCAT_STRING_MIN_SIZE =
-      256 > EXTERNAL_STRING_MIN_SIZE ? 256 : EXTERNAL_STRING_MIN_SIZE;
+      std::max(256u, EXTERNAL_STRING_MIN_SIZE);
 
   static bool classof(const GCCell *cell) {
     return kindInRange(
@@ -423,6 +421,18 @@ class DynamicStringPrimitive final
   friend class llvh::TrailingObjects<DynamicStringPrimitive<T, Uniqued>, T>;
   friend class StringBuilder;
   friend class StringPrimitive;
+  friend void DynamicASCIIStringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
+  friend void DynamicUTF16StringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
+  friend void DynamicUniquedASCIIStringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
+  friend void DynamicUniquedUTF16StringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
   using OptSymbolStringPrimitive<Uniqued>::isExternalLength;
   using OptSymbolStringPrimitive<Uniqued>::getStringLength;
 
@@ -438,14 +448,6 @@ class DynamicStringPrimitive final
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  template <typename, bool>
-  friend void serializeDynamicStringImpl(Serializer &s, const GCCell *cell);
-
-  template <typename, bool>
-  friend void deserializeDynamicStringImpl(Deserializer &d);
-#endif
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == DynamicStringPrimitive::getCellKind();
   }
@@ -525,11 +527,12 @@ class ExternalStringPrimitive final : public SymbolStringPrimitive {
       Runtime *runtime,
       Handle<StringPrimitive> leftHnd,
       Handle<StringPrimitive> rightHnd);
-
-#ifdef UNIT_TEST
-  // Test version needs access.
-  friend class ExtStringForTest;
-#endif
+  friend void ExternalASCIIStringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
+  friend void ExternalUTF16StringPrimitiveBuildMeta(
+      const GCCell *,
+      Metadata::Builder &);
 
   using Ref = llvh::ArrayRef<T>;
   using StdString = std::basic_string<T>;
@@ -543,14 +546,6 @@ class ExternalStringPrimitive final : public SymbolStringPrimitive {
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  template <typename>
-  friend void serializeExternalStringImpl(Serializer &s, const GCCell *cell);
-
-  template <typename>
-  friend void deserializeExternalStringImpl(Deserializer &d);
-#endif
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == ExternalStringPrimitive::getCellKind();
   }
@@ -670,14 +665,6 @@ class BufferedStringPrimitive final : public StringPrimitive {
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  template <typename>
-  friend void serializeConcatStringImpl(Serializer &s, const GCCell *cell);
-
-  template <typename>
-  friend void deserializeConcatStringImpl(Deserializer &d);
-#endif
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == BufferedStringPrimitive::getCellKind();
   }
@@ -806,7 +793,6 @@ const VTable DynamicStringPrimitive<T, Uniqued>::vt = VTable(
     nullptr,
     nullptr,
     nullptr,
-    nullptr,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::String,
         DynamicStringPrimitive<T, Uniqued>::_snapshotNameImpl,
@@ -831,7 +817,6 @@ const VTable ExternalStringPrimitive<T>::vt = VTable(
     nullptr, // markWeak.
     ExternalStringPrimitive<T>::_mallocSizeImpl,
     nullptr,
-    nullptr,
     ExternalStringPrimitive<T>::_externalMemorySizeImpl,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::String,
@@ -850,7 +835,6 @@ const VTable BufferedStringPrimitive<T>::vt = VTable(
     nullptr, // finalize.
     nullptr, // markWeak.
     nullptr, // mallocSize
-    nullptr,
     nullptr,
     nullptr, // externalMemorySize
     VTable::HeapSnapshotMetadata{

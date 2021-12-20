@@ -13,15 +13,18 @@ param(
     [String]$ToolsConfiguration = @("release"), # Platform used for building tools when cross compiling
     
     [ValidateSet("debug", "release")]
-    [String[]]$Configuration = @("release"),
+    [String[]]$Configuration = @("debug"),
     
     [ValidateSet("win32", "uwp")]
     [String]$AppPlatform = "uwp",
+
+    # e.g. "10.0.17763.0"
+    [String]$SDKVersion = "",
    
     [switch]$RunTests,
     [switch]$Incremental,
     [switch]$UseVS,
-    [switch]$TagSource
+    [switch]$ConfigureOnly
 )
 
 function Find-Path($exename) {
@@ -80,13 +83,17 @@ function Get-VCVarsParam($plat = "x64", $arch = "win32") {
         $args_ = "$args_ uwp"
     }
 
+    if($SDKVersion) {
+        $args_ = "$args_ $SDKVersion"
+    }
+
     return $args_
 }
 
 function Get-CMakeConfiguration($config) {
     $val = switch ($config)
     {
-        "debug" {"Debug"}
+        "debug" {"FastDebug"}
         "release" {"Release"}
         default {"Debug"}
     }
@@ -135,7 +142,7 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
     Push-Location $buildPath
 
     $genCall = ('cmake {0}' -f ($genArgs -Join ' ')) + " $SourcesPath";
-    Write-Host $genCall | Out-Null
+    Write-Host $genCall
     $ninjaCmd = "ninja"
 
     foreach ( $target in $targets )
@@ -143,7 +150,7 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
         $ninjaCmd = $ninjaCmd + " " + $target
     }
 
-    Write-Output $ninjaCmd | Out-Null
+    Write-Host $ninjaCmd
 
     # See https://developercommunity.visualstudio.com/content/problem/257260/vcvarsallbat-reports-the-input-line-is-too-long-if.html
     $Bug257260 = $false
@@ -152,6 +159,10 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
         Invoke-Environment $VCVARS_PATH (Get-VCVarsParam $Platform $AppPlatform)
         Invoke-Expression $genCall
         
+        if($ConfigureOnly.IsPresent){
+            exit 0;
+        }
+
         if($UseVS.IsPresent) {
             exit  1;
         } else {
@@ -159,9 +170,17 @@ function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $increme
         }
 
     } else {
-        $Cmd = "`"$VCVARS_PATH`" $(Get-VCVarsParam $Platform $AppPlatform) && $genCall 2>&1 && ${ninjaCmd}"
-        Write-Output "Command: $Cmd" | Out-Null
-        cmd /c $Cmd
+        $GenCmd = "`"$VCVARS_PATH`" $(Get-VCVarsParam $Platform $AppPlatform) && $genCall 2>&1"
+        Write-Host "Command: $GenCmd"
+        cmd /c $GenCmd
+
+        if($ConfigureOnly.IsPresent){
+            exit 0;
+        }
+
+        $NinjaCmd = "`"$VCVARS_PATH`" $(Get-VCVarsParam $Platform $AppPlatform) && ${ninjaCmd} 2>&1"
+        Write-Host "Command: $NinjaCmd"
+        cmd /c $NinjaCmd
     }
 
     Pop-Location
@@ -201,10 +220,21 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
         $genArgs += '-DHERMES_MSVC_CHECKED_ITERATORS=ON'
     }
 
+    $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=ON'
+
+    if ($AppPlatform -eq "uwp") {
+        # Link against default ICU libraries in Windows 10.
+        $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=OFF'
+    } else {
+        # Use our custom WinGlob/NLS based implementation of unicode stubs, to avoid depending on the runtime ICU library.
+        $genArgs += '-DHERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB=ON'
+    }
+
+
     if ($AppPlatform -eq "uwp") {
         $genArgs += '-DCMAKE_CXX_STANDARD=17'
         $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
-        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.15063"'
+        $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.17763.0"'
         $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 
@@ -248,13 +278,13 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
         $WithHermesDebugger = $False
         Invoke-Dll-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
 
-#        $CheckedStlIterators = $False
-#        $WithHermesDebugger = $True
-#        Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
+        $CheckedStlIterators = $False
+        $WithHermesDebugger = $True
+        Invoke-Dll-Build $SourcesPath $buildPathWithDebugger $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
 
-#        $CheckedStlIterators = $True
-#        $WithHermesDebugger = $True
-#        Invoke-Dll-Build $SourcesPath $buildPathWithDebuggerAndCheckedIter $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
+        $CheckedStlIterators = $True
+        $WithHermesDebugger = $True
+        Invoke-Dll-Build $SourcesPath $buildPathWithDebuggerAndCheckedIter $compilerAndToolsBuildPath $Platform $Configuration $AppPlatform $RNDIR $FOLLYDIR $BOOSTDIR $Incremental.IsPresent $WithHermesDebugger $CheckedStlIterators
 
     } else {
         $WithHermesDebugger = $True
@@ -281,26 +311,26 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
             New-Item -ItemType "directory" -Path $finalOutputPathWithCheckedIterDebugger | Out-Null
         }
 
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.dll" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.lib" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.pdb" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.dll" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.lib" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\hermes\hermes.pdb" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
 
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebuggerAndCheckedIter\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithCheckedIterDebugger -force | Out-Null
 
         $finalOutputPathWithDebugger = Join-Path $finalOutputPath "debugger"
         if (!(Test-Path -Path $finalOutputPathWithDebugger)) {
             New-Item -ItemType "directory" -Path $finalOutputPathWithDebugger | Out-Null
         }
 
-#        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\hermes\hermes.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
 
-#        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
-#        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.dll" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.lib" -Destination $finalOutputPathWithDebugger -force | Out-Null
+        Copy-Item "$buildPathWithDebugger\API\inspector\hermesinspector.pdb" -Destination $finalOutputPathWithDebugger -force | Out-Null
     } else {
         Copy-Item "$buildPath\API\hermes\hermes.dll" -Destination $finalOutputPath -force | Out-Null
         Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
@@ -438,17 +468,6 @@ function Prepare-NugetPackage($SourcesPath, $WorkSpacePath, $OutputPath, $Platfo
     $npmPackage | Set-Content "$OutputPath\version"
 }
 
-function Tag-SourceRepo($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Configuration, $AppPlatform) {
-    $npmPackage = (Get-Content (Join-Path $SourcesPath "npm\package.json") | Out-String | ConvertFrom-Json).version
-
-    $tagName = "v$npmPackage"
-    $tagMessage = "Hermes build for react native for windows versioned $npmPackage"
-
-    git config --global user.email "anandrag@microsoft.com"
-    git config --global user.name "anandrag"
-
-    git tag -a $tagName -m "$tagMessage"
-}
 
 $StartTime = (Get-Date)
 
@@ -488,10 +507,6 @@ foreach ($Plat in $Platform) {
 }
 
 Prepare-NugetPackage -SourcesPath $SourcesPath -WorkSpacePath $WorkSpacePath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlatform
-
-if($TagSource.IsPresent) {
-    Tag-SourceRepo  -SourcesPath $SourcesPath -WorkSpacePath $WorkSpacePath -OutputPath $OutputPath -Platform $Plat -Configuration $Config -AppPlatform $AppPlatform
-}
 
 $elapsedTime = $(get-date) - $StartTime
 $totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)

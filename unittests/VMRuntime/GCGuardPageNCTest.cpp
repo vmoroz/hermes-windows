@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#if defined(HERMESVM_GC_NONCONTIG_GENERATIONAL)
+#ifndef HERMESVM_GC_MALLOC
 
 #include "gtest/gtest.h"
 
@@ -26,8 +26,7 @@ TEST(GCGuardPageNCTest, ObjectUnderflow) {
 
   // Use an mmap-based storage for this test.
   std::unique_ptr<StorageProvider> provider = StorageProvider::mmapProvider();
-  auto runtime =
-      DummyRuntime::create(getMetadataTable(), kGCConfig, std::move(provider));
+  auto runtime = DummyRuntime::create(kGCConfig, std::move(provider));
   DummyRuntime &rt = *runtime;
 
   // Allocate the first cell in the segment and try to write directly before it.
@@ -41,4 +40,4 @@ TEST(GCGuardPageNCTest, ObjectUnderflow) {
 
 } // namespace
 
-#endif // HERMESVM_GC_NONCONTIG_GENERATIONAL
+#endif // !HERMESVM_GC_MALLOC

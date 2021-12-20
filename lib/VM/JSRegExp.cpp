@@ -17,9 +17,6 @@
 #include "hermes/VM/Runtime-inline.h"
 #include "hermes/VM/StringView.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 
@@ -33,7 +30,6 @@ const ObjectVTable JSRegExp::vt{
         JSRegExp::_finalizeImpl,
         nullptr,
         JSRegExp::_mallocSizeImpl,
-        nullptr,
         nullptr,
         nullptr, // externalMemorySize
         VTable::HeapSnapshotMetadata{
@@ -54,68 +50,32 @@ const ObjectVTable JSRegExp::vt{
 void RegExpBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSRegExp>());
   ObjectBuildMeta(cell, mb);
+  const auto *self = static_cast<const JSRegExp *>(cell);
+  mb.setVTable(&JSRegExp::vt.base);
+  mb.addField(&self->pattern_);
 }
 
-#ifdef HERMESVM_SERIALIZE
-JSRegExp::JSRegExp(Deserializer &d) : JSObject(d, &vt.base) {
-  uint32_t size = d.readInt<uint32_t>();
-  initializeBytecode(d.readArrayRef<uint8_t>(size), d.getRuntime());
-  // bytecode_ is tracked by IDTracker for heapsnapshot. We should do
-  // relocation for it.
-  d.endObject(bytecode_);
-
-  d.readData(&syntaxFlags_, sizeof(syntaxFlags_));
-}
-
-void RegExpSerialize(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const JSRegExp>(cell);
-  JSObject::serializeObjectImpl(s, cell, JSObject::numOverlapSlots<JSRegExp>());
-  s.writeInt<uint32_t>(self->bytecodeSize_);
-  s.writeData(self->bytecode_, self->bytecodeSize_);
-  // bytecode_ is tracked by IDTracker for heapsnapshot. We should do
-  // relocation for it.
-  s.endObject(self->bytecode_);
-
-  s.writeData(&self->syntaxFlags_, sizeof(self->syntaxFlags_));
-
-  s.endObject(cell);
-}
-
-void RegExpDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::RegExpKind && "Expected RegExp");
-  auto *cell = d.getRuntime()->makeAFixed<JSRegExp, HasFinalizer::Yes>(d);
-  d.endObject(cell);
-}
-#endif
-
-Handle<JSRegExp> JSRegExp::create(
+PseudoHandle<JSRegExp> JSRegExp::create(
     Runtime *runtime,
     Handle<JSObject> parentHandle) {
   auto *cell = runtime->makeAFixed<JSRegExp, HasFinalizer::Yes>(
       runtime,
       parentHandle,
       runtime->getHiddenClassForPrototype(
-          *parentHandle,
-          numOverlapSlots<JSRegExp>() + ANONYMOUS_PROPERTY_SLOTS));
-  auto selfHandle = JSObjectInit::initToHandle(runtime, cell);
-
-  JSObject::setDirectSlotValue<patternPropIndex()>(
-      *selfHandle,
-      SmallHermesValue::encodeStringValue(
-          runtime->getPredefinedString(Predefined::emptyString), runtime),
-      &runtime->getHeap());
-
-  return selfHandle;
+          *parentHandle, numOverlapSlots<JSRegExp>()));
+  return JSObjectInit::initToPseudoHandle(runtime, cell);
 }
 
-void JSRegExp::initializeProperties(
+void JSRegExp::initialize(
     Handle<JSRegExp> selfHandle,
     Runtime *runtime,
-    Handle<StringPrimitive> pattern) {
-  JSObject::setDirectSlotValue<patternPropIndex()>(
-      *selfHandle,
-      SmallHermesValue::encodeStringValue(*pattern, runtime),
-      &runtime->getHeap());
+    Handle<StringPrimitive> pattern,
+    Handle<StringPrimitive> flags,
+    llvh::ArrayRef<uint8_t> bytecode) {
+  assert(
+      pattern && flags &&
+      "Null pattern and/or flags passed to JSRegExp::initialize");
+  selfHandle->pattern_.set(runtime, *pattern, &runtime->getHeap());
 
   DefinePropertyFlags dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
   dpf.enumerable = 0;
@@ -131,6 +91,8 @@ void JSRegExp::initializeProperties(
   assert(
       res != ExecutionStatus::EXCEPTION && *res &&
       "defineOwnProperty() failed");
+
+  selfHandle->initializeBytecode(bytecode);
 }
 
 ExecutionStatus JSRegExp::initialize(
@@ -151,12 +113,15 @@ ExecutionStatus JSRegExp::initialize(
   // Fast path to avoid recompiling the RegExp if the flags match
   if (LLVM_LIKELY(
           sflags->toByte() == getSyntaxFlags(otherHandle.get()).toByte())) {
-    initializeProperties(selfHandle, runtime, pattern);
-    selfHandle->syntaxFlags_ = *sflags;
-    return selfHandle->initializeBytecode(
-        {otherHandle->bytecode_, otherHandle->bytecodeSize_}, runtime);
+    initialize(
+        selfHandle,
+        runtime,
+        pattern,
+        flags,
+        {otherHandle->bytecode_, otherHandle->bytecodeSize_});
+    return ExecutionStatus::RETURNED;
   }
-  return initialize(selfHandle, runtime, pattern, flags, llvh::None);
+  return initialize(selfHandle, runtime, pattern, flags);
 }
 
 /// ES11 21.2.3.2.2 RegExpInitialize ( obj, pattern, flags )
@@ -164,57 +129,47 @@ ExecutionStatus JSRegExp::initialize(
     Handle<JSRegExp> selfHandle,
     Runtime *runtime,
     Handle<StringPrimitive> pattern,
-    Handle<StringPrimitive> flags,
-    OptValue<llvh::ArrayRef<uint8_t>> bytecode) {
+    Handle<StringPrimitive> flags) {
   assert(
       pattern && flags &&
       "Null pattern and/or flags passed to JSRegExp::initialize");
-  initializeProperties(selfHandle, runtime, pattern);
+  llvh::SmallVector<char16_t, 6> flagsText16;
+  flags->appendUTF16String(flagsText16);
 
-  if (bytecode) {
-    return selfHandle->initializeBytecode(*bytecode, runtime);
-  } else {
-    llvh::SmallVector<char16_t, 6> flagsText16;
-    flags->appendUTF16String(flagsText16);
+  llvh::SmallVector<char16_t, 16> patternText16;
+  pattern->appendUTF16String(patternText16);
 
-    llvh::SmallVector<char16_t, 16> patternText16;
-    pattern->appendUTF16String(patternText16);
+  // Build the regex.
+  regex::Regex<regex::UTF16RegexTraits> regex(patternText16, flagsText16);
 
-    // Build the regex.
-    regex::Regex<regex::UTF16RegexTraits> regex(patternText16, flagsText16);
-
-    if (!regex.valid()) {
-      return runtime->raiseSyntaxError(
-          TwineChar16("Invalid RegExp: ") +
-          regex::constants::messageForError(regex.getError()));
-    }
-    // The regex is valid. Compile and store its bytecode.
-    auto bytecode = regex.compile();
-    return selfHandle->initializeBytecode(bytecode, runtime);
+  if (!regex.valid()) {
+    return runtime->raiseSyntaxError(
+        TwineChar16("Invalid RegExp: ") +
+        regex::constants::messageForError(regex.getError()));
   }
+  // The regex is valid. Compile and store its bytecode.
+  auto bytecode = regex.compile();
+  initialize(selfHandle, runtime, pattern, flags, bytecode);
+  return ExecutionStatus::RETURNED;
 }
 
-ExecutionStatus JSRegExp::initializeBytecode(
-    llvh::ArrayRef<uint8_t> bytecode,
-    Runtime *runtime) {
+void JSRegExp::initializeBytecode(llvh::ArrayRef<uint8_t> bytecode) {
   size_t sz = bytecode.size();
-  if (sz > std::numeric_limits<decltype(bytecodeSize_)>::max()) {
-    return runtime->raiseRangeError("RegExp size overflow");
-  }
+  assert(
+      sz <= std::numeric_limits<uint32_t>::max() &&
+      "Bytecode size cannot exceed 32 bits");
   auto header =
       reinterpret_cast<const regex::RegexBytecodeHeader *>(bytecode.data());
   syntaxFlags_ = regex::SyntaxFlags::fromByte(header->syntaxFlags);
   bytecodeSize_ = sz;
   bytecode_ = (uint8_t *)checkedMalloc(sz);
   memcpy(bytecode_, bytecode.data(), sz);
-  return ExecutionStatus::RETURNED;
 }
 
 PseudoHandle<StringPrimitive> JSRegExp::getPattern(
     JSRegExp *self,
     PointerBase *base) {
-  return createPseudoHandle(
-      JSObject::getDirectSlotValue<patternPropIndex()>(self).getString(base));
+  return createPseudoHandle(self->pattern_.get(base));
 }
 
 template <typename CharT, typename Traits>
@@ -386,7 +341,7 @@ CallResult<HermesValue> JSRegExp::escapePattern(
         result.append(isBackslashed ? "/" : "\\/");
         break;
 
-      // Escape line terminators. See ES5.1 7.3.
+        // Escape line terminators. See ES5.1 7.3.
       case u'\n':
         result.append(isBackslashed ? "n" : "\\n");
         break;
@@ -425,5 +380,3 @@ CallResult<HermesValue> JSRegExp::escapePattern(
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

@@ -21,6 +21,7 @@
 #include "hermes/VM/JSGenerator.h"
 #include "hermes/VM/JSProxy.h"
 #include "hermes/VM/JSRegExp.h"
+#include "hermes/VM/JSTypedArray.h"
 #include "hermes/VM/Operations.h"
 #include "hermes/VM/Profiler.h"
 #include "hermes/VM/Profiler/CodeCoverageProfiler.h"
@@ -30,7 +31,6 @@
 #include "hermes/VM/StringPrimitive.h"
 #include "hermes/VM/StringView.h"
 
-#include "llvh/ADT/SmallSet.h"
 #include "llvh/Support/Debug.h"
 #include "llvh/Support/Format.h"
 #include "llvh/Support/raw_ostream.h"
@@ -156,7 +156,7 @@ CallResult<PseudoHandle<JSGenerator>> Interpreter::createGenerator_RJS(
   }
 
   auto generatorFunction = runtime->makeHandle(vmcast<JSGeneratorFunction>(
-      runtime->getCurrentFrame().getCalleeClosure()));
+      runtime->getCurrentFrame().getCalleeClosureUnsafe()));
 
   auto prototypeProp = JSObject::getNamed_RJS(
       generatorFunction,
@@ -511,129 +511,124 @@ ExecutionStatus Interpreter::putByValTransient_RJS(
   return putByIdTransient_RJS(runtime, base, **idRes, value, strictMode);
 }
 
-CallResult<PseudoHandle<>> Interpreter::createObjectFromBuffer(
+static Handle<HiddenClass> getHiddenClassForBuffer(
     Runtime *runtime,
     CodeBlock *curCodeBlock,
     unsigned numLiterals,
-    unsigned keyBufferIndex,
-    unsigned valBufferIndex) {
-  // Fetch any cached hidden class first.
-  auto *runtimeModule = curCodeBlock->getRuntimeModule();
-  const llvh::Optional<Handle<HiddenClass>> optCachedHiddenClassHandle =
-      runtimeModule->findCachedLiteralHiddenClass(
-          runtime, keyBufferIndex, numLiterals);
-  // Create a new object using the built-in constructor or cached hidden class.
-  // Note that the built-in constructor is empty, so we don't actually need to
-  // call it.
-  auto obj = runtime->makeHandle(
-      optCachedHiddenClassHandle.hasValue()
-          ? JSObject::create(runtime, optCachedHiddenClassHandle.getValue())
-          : JSObject::create(runtime, numLiterals));
+    unsigned keyBufferIndex) {
+  RuntimeModule *runtimeModule = curCodeBlock->getRuntimeModule();
+  if (auto clazzOpt = runtimeModule->findCachedLiteralHiddenClass(
+          runtime, keyBufferIndex, numLiterals))
+    return *clazzOpt;
 
-  MutableHandle<> tmpHandleKey(runtime);
-  MutableHandle<> tmpHandleVal(runtime);
-  auto &gcScope = *runtime->getTopGCScope();
-  auto marker = gcScope.createMarker();
+  MutableHandle<> tmpHandleKey{runtime};
+  MutableHandle<HiddenClass> clazz =
+      runtime->makeMutableHandle(runtime->getHiddenClassForPrototypeRaw(
+          vmcast<JSObject>(runtime->objectPrototype),
+          JSObject::numOverlapSlots<JSObject>()));
 
-  auto genPair = curCodeBlock->getObjectBufferIter(
-      keyBufferIndex, valBufferIndex, numLiterals);
-  auto keyGen = genPair.first;
-  auto valGen = genPair.second;
+  GCScopeMarkerRAII marker{runtime};
+  auto keyGen =
+      curCodeBlock->getObjectBufferKeyIter(keyBufferIndex, numLiterals);
+  while (keyGen.hasNext()) {
+    auto key = keyGen.get(runtime);
+    SymbolID sym = [&] {
+      if (key.isSymbol())
+        return ID(key.getSymbol().unsafeGetIndex());
 
-  if (optCachedHiddenClassHandle.hasValue()) {
-    uint32_t propIndex = 0;
-    // keyGen should always have the same amount of elements as valGen
-    while (valGen.hasNext()) {
-#ifndef NDEBUG
-      {
-        // keyGen points to an element in the key buffer, which means it will
-        // only ever generate a Number or a Symbol. This means it will never
-        // allocate memory, and it is safe to not use a Handle.
-        SymbolID stringIdResult{};
-        auto key = keyGen.get(runtime);
-        if (key.isSymbol()) {
-          stringIdResult = ID(key.getSymbol().unsafeGetIndex());
-        } else {
-          tmpHandleKey = HermesValue::encodeDoubleValue(key.getNumber());
-          auto idRes = valueToSymbolID(runtime, tmpHandleKey);
-          assert(
-              idRes != ExecutionStatus::EXCEPTION &&
-              "valueToIdentifier() failed for uint32_t value");
-          stringIdResult = **idRes;
-        }
-        NamedPropertyDescriptor desc;
-        auto pos = HiddenClass::findProperty(
-            optCachedHiddenClassHandle.getValue(),
-            runtime,
-            stringIdResult,
-            PropertyFlags::defaultNewNamedPropertyFlags(),
-            desc);
-        assert(
-            pos &&
-            "Should find this property in cached hidden class property table.");
-        assert(
-            desc.slot == propIndex &&
-            "propIndex should be the same as recorded in hidden class table.");
-      }
-#endif
-      // Explicitly make sure valGen.get() is called before obj.get() so that
-      // any allocation in valGen.get() won't invalidate the raw pointer
-      // retruned from obj.get().
-      auto val = valGen.get(runtime);
-      auto shv = SmallHermesValue::encodeHermesValue(val, runtime);
-      // We made this object, it's not a Proxy.
-      JSObject::setNamedSlotValueUnsafe(obj.get(), runtime, propIndex, shv);
-      gcScope.flushToMarker(marker);
-      ++propIndex;
-    }
-  } else {
-    // keyGen should always have the same amount of elements as valGen
-    while (keyGen.hasNext()) {
-      // keyGen points to an element in the key buffer, which means it will
-      // only ever generate a Number or a Symbol. This means it will never
-      // allocate memory, and it is safe to not use a Handle.
-      auto key = keyGen.get(runtime);
-      tmpHandleVal = valGen.get(runtime);
-      if (key.isSymbol()) {
-        auto stringIdResult = ID(key.getSymbol().unsafeGetIndex());
-        if (LLVM_UNLIKELY(
-                JSObject::defineNewOwnProperty(
-                    obj,
-                    runtime,
-                    stringIdResult,
-                    PropertyFlags::defaultNewNamedPropertyFlags(),
-                    tmpHandleVal) == ExecutionStatus::EXCEPTION)) {
-          return ExecutionStatus::EXCEPTION;
-        }
-      } else {
-        tmpHandleKey = HermesValue::encodeDoubleValue(key.getNumber());
-        if (LLVM_UNLIKELY(
-                !JSObject::defineOwnComputedPrimitive(
-                     obj,
-                     runtime,
-                     tmpHandleKey,
-                     DefinePropertyFlags::getDefaultNewPropertyFlags(),
-                     tmpHandleVal)
-                     .getValue())) {
-          return ExecutionStatus::EXCEPTION;
-        }
-      }
-      gcScope.flushToMarker(marker);
-    }
+      assert(key.isNumber() && "Key must be symbol or number");
+      tmpHandleKey = key;
+      // Note that since this handle has been created, the associated symbol
+      // will be automatically kept alive until we flush the marker.
+      // valueToSymbolID cannot fail because the key is known to be uint32.
+      Handle<SymbolID> symHandle = *valueToSymbolID(runtime, tmpHandleKey);
+      return *symHandle;
+    }();
+    auto addResult = HiddenClass::addProperty(
+        clazz, runtime, sym, PropertyFlags::defaultNewNamedPropertyFlags());
+    clazz = addResult->first;
+    marker.flush();
   }
-  tmpHandleKey.clear();
-  tmpHandleVal.clear();
 
-  // Hidden class in dictionary mode can't be shared.
-  HiddenClass *const clazz = obj->getClass(runtime);
-  if (!optCachedHiddenClassHandle.hasValue() && !clazz->isDictionary()) {
+  if (LLVM_LIKELY(!clazz->isDictionary())) {
     assert(
         numLiterals == clazz->getNumProperties() &&
         "numLiterals should match hidden class property count.");
     assert(
         clazz->getNumProperties() < 256 &&
         "cached hidden class should have property count less than 256");
-    runtimeModule->tryCacheLiteralHiddenClass(runtime, keyBufferIndex, clazz);
+    runtimeModule->tryCacheLiteralHiddenClass(runtime, keyBufferIndex, *clazz);
+  }
+
+  return {clazz};
+}
+
+CallResult<PseudoHandle<>> Interpreter::createObjectFromBuffer(
+    Runtime *runtime,
+    CodeBlock *curCodeBlock,
+    unsigned numLiterals,
+    unsigned keyBufferIndex,
+    unsigned valBufferIndex) {
+  // Create a new object using the built-in constructor or cached hidden class.
+  // Note that the built-in constructor is empty, so we don't actually need to
+  // call it.
+  auto clazz = getHiddenClassForBuffer(
+      runtime, curCodeBlock, numLiterals, keyBufferIndex);
+  auto obj = runtime->makeHandle(JSObject::create(runtime, clazz));
+
+  auto valGen =
+      curCodeBlock->getObjectBufferValueIter(valBufferIndex, numLiterals);
+
+#ifndef NDEBUG
+  auto keyGen =
+      curCodeBlock->getObjectBufferKeyIter(keyBufferIndex, numLiterals);
+#endif
+
+  uint32_t propIndex = 0;
+  // keyGen should always have the same amount of elements as valGen
+  while (valGen.hasNext()) {
+#ifndef NDEBUG
+    {
+      GCScopeMarkerRAII marker{runtime};
+      // keyGen points to an element in the key buffer, which means it will
+      // only ever generate a Number or a Symbol. This means it will never
+      // allocate memory, and it is safe to not use a Handle.
+      SymbolID stringIdResult{};
+      auto key = keyGen.get(runtime);
+      if (key.isSymbol()) {
+        stringIdResult = ID(key.getSymbol().unsafeGetIndex());
+      } else {
+        auto keyHandle = runtime->makeHandle(
+            HermesValue::encodeDoubleValue(key.getNumber()));
+        auto idRes = valueToSymbolID(runtime, keyHandle);
+        assert(
+            idRes != ExecutionStatus::EXCEPTION &&
+            "valueToIdentifier() failed for uint32_t value");
+        stringIdResult = **idRes;
+      }
+      NamedPropertyDescriptor desc;
+      auto pos = HiddenClass::findProperty(
+          clazz,
+          runtime,
+          stringIdResult,
+          PropertyFlags::defaultNewNamedPropertyFlags(),
+          desc);
+      assert(
+          pos &&
+          "Should find this property in cached hidden class property table.");
+      assert(
+          desc.slot == propIndex &&
+          "propIndex should be the same as recorded in hidden class table.");
+    }
+#endif
+    // Explicitly make sure valGen.get() is called before obj.get() so that
+    // any allocation in valGen.get() won't invalidate the raw pointer
+    // returned from obj.get().
+    auto val = valGen.get(runtime);
+    auto shv = SmallHermesValue::encodeHermesValue(val, runtime);
+    // We made this object, it's not a Proxy.
+    JSObject::setNamedSlotValueUnsafe(obj.get(), runtime, propIndex, shv);
+    ++propIndex;
   }
 
   return createPseudoHandle(HermesValue::encodeObjectValue(*obj));
@@ -724,7 +719,8 @@ static void printDebugInfo(
     if (operandType == OperandType::Reg8 || operandType == OperandType::Reg32) {
       // Print the register value, if source.
       if (i != 0 || decoded.meta.numOperands == 1)
-        dbgs() << "=" << DumpHermesValue(REG(value.integer));
+        dbgs() << "="
+               << DumpHermesValue(REG(static_cast<uint32_t>(value.integer)));
     }
   }
 
@@ -753,34 +749,49 @@ LLVM_ATTRIBUTE_ALWAYS_INLINE
 static inline const Inst *nextInstCall(const Inst *ip) {
   HERMES_SLOW_ASSERT(isCallType(ip->opCode) && "ip is not of call type");
 
-  // The following is written to elicit compares instead of table lookup.
-  // The idea is to present code like so:
-  //   if (opcode <= 70) return ip + 4;
-  //   if (opcode <= 71) return ip + 4;
-  //   if (opcode <= 72) return ip + 4;
-  //   if (opcode <= 73) return ip + 5;
-  //   if (opcode <= 74) return ip + 5;
-  //   ...
-  // and the compiler will retain only compares where the result changes (here,
-  // 72 and 74). This allows us to compute the next instruction using three
-  // compares, instead of a naive compare-per-call type (or lookup table).
-  //
-  // Statically verify that increasing call opcodes correspond to monotone
-  // instruction sizes; this enables the compiler to do a better job optimizing.
-  constexpr bool callSizesMonotoneIncreasing = monotoneIncreasing(
+  // To avoid needing a large lookup table or switchcase, the following packs
+  // information about the size of each call opcode into a uint32_t. Each call
+  // type is represented with two bits, representing how much larger it is than
+  // the smallest call instruction.
+  // If we used 64 bits, we could fit the actual size of each call, without
+  // needing the offset, and this may be necessary if new call instructions are
+  // added in the future. For now however, due to limitations on loading large
+  // immediates in ARM, it is significantly more efficient to use a uint32_t
+  // than a uint64_t.
+  constexpr auto firstCall = std::min({
+#define DEFINE_RET_TARGET(name) static_cast<uint8_t>(OpCode::name),
+#include "hermes/BCGen/HBC/BytecodeList.def"
+  });
+  constexpr auto lastCall = std::max({
+#define DEFINE_RET_TARGET(name) static_cast<uint8_t>(OpCode::name),
+#include "hermes/BCGen/HBC/BytecodeList.def"
+  });
+  constexpr auto minSize = std::min({
 #define DEFINE_RET_TARGET(name) sizeof(inst::name##Inst),
 #include "hermes/BCGen/HBC/BytecodeList.def"
-      SIZE_MAX // sentinel avoiding a trailing comma.
-  );
-  static_assert(
-      callSizesMonotoneIncreasing,
-      "Call instruction sizes are not monotone increasing");
-
-#define DEFINE_RET_TARGET(name)   \
-  if (ip->opCode <= OpCode::name) \
-    return NEXTINST(name);
+  });
+  constexpr auto maxSize = std::max({
+#define DEFINE_RET_TARGET(name) sizeof(inst::name##Inst),
 #include "hermes/BCGen/HBC/BytecodeList.def"
-  llvm_unreachable("Not a call type");
+  });
+
+  constexpr uint32_t W = 2;
+  constexpr uint32_t mask = (1 << W) - 1;
+
+  static_assert(llvh::isUInt<W>(maxSize - minSize), "Size range too large.");
+  static_assert((lastCall - firstCall + 1) * W <= 32, "Too many call opcodes.");
+
+  constexpr uint32_t callSizes = 0
+#define DEFINE_RET_TARGET(name)             \
+  |                                         \
+      ((sizeof(inst::name##Inst) - minSize) \
+       << (((uint8_t)OpCode::name - firstCall) * W))
+#include "hermes/BCGen/HBC/BytecodeList.def"
+      ;
+#undef DEFINE_RET_TARGET
+
+  const uint8_t offset = static_cast<uint8_t>(ip->opCode) - firstCall;
+  return IPADD(((callSizes >> (offset * W)) & mask) + minSize);
 }
 
 CallResult<HermesValue> Runtime::interpretFunctionImpl(
@@ -1734,7 +1745,7 @@ tailCall:
 
       CASE(CompleteGenerator) {
         auto *innerFn = vmcast<GeneratorInnerFunction>(
-            runtime->getCurrentFrame().getCalleeClosure());
+            runtime->getCurrentFrame().getCalleeClosureUnsafe());
         innerFn->setState(GeneratorInnerFunction::State::Completed);
         ip = NEXTINST(CompleteGenerator);
         DISPATCH;
@@ -1755,7 +1766,7 @@ tailCall:
 
       CASE(StartGenerator) {
         auto *innerFn = vmcast<GeneratorInnerFunction>(
-            runtime->getCurrentFrame().getCalleeClosure());
+            runtime->getCurrentFrame().getCalleeClosureUnsafe());
         if (innerFn->getState() ==
             GeneratorInnerFunction::State::SuspendedStart) {
           nextIP = NEXTINST(StartGenerator);
@@ -1770,7 +1781,7 @@ tailCall:
 
       CASE(ResumeGenerator) {
         auto *innerFn = vmcast<GeneratorInnerFunction>(
-            runtime->getCurrentFrame().getCalleeClosure());
+            runtime->getCurrentFrame().getCalleeClosureUnsafe());
         O1REG(ResumeGenerator) = innerFn->getResult().unboxToHV(runtime);
         O2REG(ResumeGenerator) = HermesValue::encodeBoolValue(
             innerFn->getAction() == GeneratorInnerFunction::Action::Return);
@@ -2282,9 +2293,9 @@ tailCall:
         }
         gcScope.flushToSmallCount(KEEP_HANDLES);
 #endif
-        auto clazzGCPtr = obj->getClassGCPtr();
+        CompressedPointer clazzPtr{obj->getClassGCPtr()};
 #ifndef NDEBUG
-        if (clazzGCPtr.get(runtime)->isDictionary())
+        if (vmcast<HiddenClass>(clazzPtr.get(runtime))->isDictionary())
           ++NumGetByIdDict;
 #else
         (void)NumGetByIdDict;
@@ -2292,7 +2303,7 @@ tailCall:
 
         // If we have a cache hit, reuse the cached offset and immediately
         // return the property.
-        if (LLVM_LIKELY(cacheEntry->clazz == clazzGCPtr.getStorageType())) {
+        if (LLVM_LIKELY(cacheEntry->clazz == clazzPtr)) {
           ++NumGetByIdCacheHits;
           CAPTURE_IP(
               O1REG(GetById) =
@@ -2314,18 +2325,18 @@ tailCall:
 
           // cacheIdx == 0 indicates no caching so don't update the cache in
           // those cases.
-          auto *clazz = clazzGCPtr.getNonNull(runtime);
+          HiddenClass *clazz =
+              vmcast<HiddenClass>(clazzPtr.getNonNull(runtime));
           if (LLVM_LIKELY(!clazz->isDictionaryNoCache()) &&
               LLVM_LIKELY(cacheIdx != hbc::PROPERTY_CACHING_DISABLED)) {
 #ifdef HERMES_SLOW_DEBUG
-            if (cacheEntry->clazz &&
-                cacheEntry->clazz != clazzGCPtr.getStorageType())
+            if (cacheEntry->clazz && cacheEntry->clazz != clazzPtr)
               ++NumGetByIdCacheEvicts;
 #else
             (void)NumGetByIdCacheEvicts;
 #endif
             // Cache the class, id and property slot.
-            cacheEntry->clazz = clazzGCPtr.getStorageType();
+            cacheEntry->clazz = clazzPtr;
             cacheEntry->slot = desc.slot;
           }
 
@@ -2350,8 +2361,7 @@ tailCall:
           // having no properties and therefore cannot contain the property.
           // This check does not belong here, it should be merged into
           // tryGetOwnNamedDescriptorFast().
-          if (parent &&
-              cacheEntry->clazz == parent->getClassGCPtr().getStorageType() &&
+          if (parent && cacheEntry->clazz == parent->getClassGCPtr() &&
               LLVM_LIKELY(!obj->isLazy())) {
             ++NumGetByIdProtoHits;
             // We've already checked that this isn't a Proxy.
@@ -2477,10 +2487,10 @@ tailCall:
         }
         gcScope.flushToSmallCount(KEEP_HANDLES);
 #endif
-        auto clazzGCPtr = obj->getClassGCPtr();
+        CompressedPointer clazzPtr{obj->getClassGCPtr()};
         // If we have a cache hit, reuse the cached offset and immediately
         // return the property.
-        if (LLVM_LIKELY(cacheEntry->clazz == clazzGCPtr.getStorageType())) {
+        if (LLVM_LIKELY(cacheEntry->clazz == clazzPtr)) {
           ++NumPutByIdCacheHits;
           CAPTURE_IP(
               JSObject::setNamedSlotValueUnsafe<PropStorage::Inline::Yes>(
@@ -2500,18 +2510,18 @@ tailCall:
 
           // cacheIdx == 0 indicates no caching so don't update the cache in
           // those cases.
-          auto *clazz = clazzGCPtr.getNonNull(runtime);
+          HiddenClass *clazz =
+              vmcast<HiddenClass>(clazzPtr.getNonNull(runtime));
           if (LLVM_LIKELY(!clazz->isDictionary()) &&
               LLVM_LIKELY(cacheIdx != hbc::PROPERTY_CACHING_DISABLED)) {
 #ifdef HERMES_SLOW_DEBUG
-            if (cacheEntry->clazz &&
-                cacheEntry->clazz != clazzGCPtr.getStorageType())
+            if (cacheEntry->clazz && cacheEntry->clazz != clazzPtr)
               ++NumPutByIdCacheEvicts;
 #else
             (void)NumPutByIdCacheEvicts;
 #endif
             // Cache the class and property slot.
-            cacheEntry->clazz = clazzGCPtr.getStorageType();
+            cacheEntry->clazz = clazzPtr;
             cacheEntry->slot = desc.slot;
           }
 
@@ -3310,7 +3320,9 @@ tailCall:
       CASE(CreateRegExp) {
         {
           // Create the RegExp object.
-          CAPTURE_IP_ASSIGN(auto re, JSRegExp::create(runtime));
+          CAPTURE_IP(
+              O1REG(CreateRegExp) = JSRegExp::create(runtime).getHermesValue());
+          auto re = Handle<JSRegExp>::vmcast(&O1REG(CreateRegExp));
           // Initialize the regexp.
           CAPTURE_IP_ASSIGN(
               auto pattern,
@@ -3326,14 +3338,8 @@ tailCall:
               auto bytecode,
               curCodeBlock->getRuntimeModule()->getRegExpBytecodeFromRegExpID(
                   ip->iCreateRegExp.op4));
-          CAPTURE_IP_ASSIGN(
-              auto initRes,
+          CAPTURE_IP(
               JSRegExp::initialize(re, runtime, pattern, flags, bytecode));
-          if (LLVM_UNLIKELY(initRes == ExecutionStatus::EXCEPTION)) {
-            goto exception;
-          }
-          // Done, return the new object.
-          O1REG(CreateRegExp) = re.getHermesValue();
         }
         gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(CreateRegExp);
@@ -3472,6 +3478,121 @@ tailCall:
         ip = NEXTINST(IteratorClose);
         DISPATCH;
       }
+
+#ifdef HERMES_RUN_WASM
+      // Asm.js/Wasm Intrinsics
+      CASE(Add32) {
+        O1REG(Add32) = HermesValue::encodeDoubleValue((
+            int32_t)(int64_t)(O2REG(Add32).getNumber() + O3REG(Add32).getNumber()));
+        ip = NEXTINST(Add32);
+        DISPATCH;
+      }
+      CASE(Sub32) {
+        O1REG(Sub32) = HermesValue::encodeDoubleValue((
+            int32_t)(int64_t)(O2REG(Sub32).getNumber() - O3REG(Sub32).getNumber()));
+        ip = NEXTINST(Sub32);
+        DISPATCH;
+      }
+      CASE(Mul32) {
+        // Signedness matters for multiplication, but low 32 bits are the same
+        // regardless of signedness.
+        const uint32_t arg0 = (uint32_t)(int32_t)(O2REG(Mul32).getNumber());
+        const uint32_t arg1 = (uint32_t)(int32_t)(O3REG(Mul32).getNumber());
+        O1REG(Mul32) = HermesValue::encodeDoubleValue((int32_t)(arg0 * arg1));
+        ip = NEXTINST(Mul32);
+        DISPATCH;
+      }
+      CASE(Divi32) {
+        const int32_t arg0 = (int32_t)(O2REG(Divi32).getNumber());
+        const int32_t arg1 = (int32_t)(O3REG(Divi32).getNumber());
+        O1REG(Divi32) = HermesValue::encodeDoubleValue(arg0 / arg1);
+        ip = NEXTINST(Divi32);
+        DISPATCH;
+      }
+      CASE(Divu32) {
+        const uint32_t arg0 = (uint32_t)(int32_t)(O2REG(Divu32).getNumber());
+        const uint32_t arg1 = (uint32_t)(int32_t)(O3REG(Divu32).getNumber());
+        O1REG(Divu32) = HermesValue::encodeDoubleValue((int32_t)(arg0 / arg1));
+        ip = NEXTINST(Divu32);
+        DISPATCH;
+      }
+
+      CASE(Loadi8) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadi8));
+        int8_t *basePtr = reinterpret_cast<int8_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadi8).getNumber());
+        O1REG(Loadi8) = HermesValue::encodeNumberValue(basePtr[addr]);
+        ip = NEXTINST(Loadi8);
+        DISPATCH;
+      }
+      CASE(Loadu8) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadu8));
+        uint8_t *basePtr = reinterpret_cast<uint8_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadu8).getNumber());
+        O1REG(Loadu8) = HermesValue::encodeNumberValue(basePtr[addr]);
+        ip = NEXTINST(Loadu8);
+        DISPATCH;
+      }
+      CASE(Loadi16) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadi16));
+        int16_t *basePtr = reinterpret_cast<int16_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadi16).getNumber());
+        O1REG(Loadi16) = HermesValue::encodeNumberValue(basePtr[addr >> 1]);
+        ip = NEXTINST(Loadi16);
+        DISPATCH;
+      }
+      CASE(Loadu16) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadu16));
+        uint16_t *basePtr = reinterpret_cast<uint16_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadu16).getNumber());
+        O1REG(Loadu16) = HermesValue::encodeNumberValue(basePtr[addr >> 1]);
+        ip = NEXTINST(Loadu16);
+        DISPATCH;
+      }
+      CASE(Loadi32) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadi32));
+        int32_t *basePtr = reinterpret_cast<int32_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadi32).getNumber());
+        O1REG(Loadi32) = HermesValue::encodeNumberValue(basePtr[addr >> 2]);
+        ip = NEXTINST(Loadi32);
+        DISPATCH;
+      }
+      CASE(Loadu32) {
+        auto *mem = vmcast<JSTypedArrayBase>(O2REG(Loadu32));
+        uint32_t *basePtr = reinterpret_cast<uint32_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O3REG(Loadu32).getNumber());
+        O1REG(Loadu32) =
+            HermesValue::encodeNumberValue((int32_t)(basePtr[addr >> 2]));
+        ip = NEXTINST(Loadu32);
+        DISPATCH;
+      }
+
+      CASE(Store8) {
+        auto *mem = vmcast<JSTypedArrayBase>(O1REG(Store8));
+        int8_t *basePtr = reinterpret_cast<int8_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O2REG(Store8).getNumber());
+        basePtr[addr] = (int8_t)(int32_t)(O3REG(Store8).getNumber());
+        ip = NEXTINST(Store8);
+        DISPATCH;
+      }
+      CASE(Store16) {
+        auto *mem = vmcast<JSTypedArrayBase>(O1REG(Store16));
+        int16_t *basePtr = reinterpret_cast<int16_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O2REG(Store16).getNumber());
+        basePtr[addr >> 1] = (int16_t)(int32_t)(O3REG(Store16).getNumber());
+        ip = NEXTINST(Store16);
+        DISPATCH;
+      }
+      CASE(Store32) {
+        auto *mem = vmcast<JSTypedArrayBase>(O1REG(Store32));
+        int32_t *basePtr = reinterpret_cast<int32_t *>(mem->begin(runtime));
+        const uint32_t addr = (uint32_t)(int32_t)(O2REG(Store32).getNumber());
+        basePtr[addr >> 2] = (int32_t)(O3REG(Store32).getNumber());
+        // A nop for now.
+        ip = NEXTINST(Store32);
+        DISPATCH;
+      }
+#endif
 
       CASE(_last) {
         hermes_fatal("Invalid opcode _last");

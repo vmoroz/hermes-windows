@@ -273,6 +273,12 @@ void initGlobalObject(Runtime *runtime, const JSLibFlags &jsLibFlags) {
   DefinePropertyFlags normalDPF =
       DefinePropertyFlags::getNewNonEnumerableFlags();
 
+  // Not enumerable, not writable but configurable.
+  DefinePropertyFlags configurableOnlyPDF =
+      DefinePropertyFlags::getDefaultNewPropertyFlags();
+  configurableOnlyPDF.enumerable = 0;
+  configurableOnlyPDF.writable = 0;
+
   /// Clear the configurable flag.
   DefinePropertyFlags clearConfigurableDPF{};
   clearConfigurableDPF.setConfigurable = 1;
@@ -356,8 +362,8 @@ void initGlobalObject(Runtime *runtime, const JSLibFlags &jsLibFlags) {
       Handle<JSObject>::vmcast(&runtime->functionPrototype),
       runtime,
       Predefined::getSymbolID(Predefined::length),
-      clearConfigurableDPF,
-      Runtime::getUndefinedValue()));
+      configurableOnlyPDF,
+      Runtime::getZeroValue()));
 
   // [[ThrowTypeError]].
   auto throwTypeErrorFunction = NativeFunction::create(
@@ -594,10 +600,9 @@ void initGlobalObject(Runtime *runtime, const JSLibFlags &jsLibFlags) {
   runtime->typedArrayBaseConstructor =
       createTypedArrayBaseConstructor(runtime).getHermesValue();
 
-#define TYPED_ARRAY(name, type)                                             \
-  runtime->name##ArrayConstructor =                                         \
-      createTypedArrayConstructor<type, CellKind::name##ArrayKind>(runtime) \
-          .getHermesValue();                                                \
+#define TYPED_ARRAY(name, type)                                 \
+  runtime->name##ArrayConstructor =                             \
+      create##name##ArrayConstructor(runtime).getHermesValue(); \
   gcScope.clearAllHandles();
 #include "hermes/VM/TypedArrays.def"
 
@@ -761,7 +766,7 @@ void initGlobalObject(Runtime *runtime, const JSLibFlags &jsLibFlags) {
       createInstrumentObject(runtime)));
 #endif
 
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
   // Define the global Intl object
   // TODO T65916424: Consider how we can move this somewhere more modular.
 

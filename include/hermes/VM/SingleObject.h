@@ -20,10 +20,6 @@ class SingleObject final : public JSObject {
   using Super = JSObject;
   static const ObjectVTable vt;
 
-#ifdef HERMESVM_SERIALIZE
-  SingleObject(Deserializer &d, const VTable *vt);
-#endif
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == kind;
   }
@@ -36,8 +32,7 @@ class SingleObject final : public JSObject {
         runtime,
         parentHandle,
         runtime->getHiddenClassForPrototype(
-            *parentHandle,
-            numOverlapSlots<SingleObject>() + ANONYMOUS_PROPERTY_SLOTS));
+            *parentHandle, numOverlapSlots<SingleObject>()));
     return JSObjectInit::initToHermesValue(runtime, cell);
   }
 

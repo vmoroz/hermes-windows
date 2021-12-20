@@ -13,9 +13,6 @@
 #include "hermes/VM/Operations.h"
 #include "hermes/VM/PropertyAccessor.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 
@@ -25,6 +22,10 @@ namespace vm {
 void ArrayImplBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<ArrayImpl>());
   ObjectBuildMeta(cell, mb);
+  const auto *self = static_cast<const ArrayImpl *>(cell);
+  // This edge has to be called "elements" in order for Chrome to attribute
+  // the size of the indexed storage as part of total usage of "JS Arrays".
+  mb.addField("elements", &self->indexedStorage_);
 }
 
 void ArrayImpl::_snapshotAddEdgesImpl(
@@ -56,23 +57,6 @@ void ArrayImpl::_snapshotAddEdgesImpl(
     snap.addIndexedEdge(HeapSnapshot::EdgeType::Element, i, elemID.getValue());
   }
 }
-
-#ifdef HERMESVM_SERIALIZE
-ArrayImpl::ArrayImpl(Deserializer &d, const VTable *vt) : JSObject(d, vt) {
-  beginIndex_ = d.readInt<uint32_t>();
-  endIndex_ = d.readInt<uint32_t>();
-}
-
-void serializeArrayImpl(
-    Serializer &s,
-    const GCCell *cell,
-    unsigned overlapSlots) {
-  auto *self = vmcast<const ArrayImpl>(cell);
-  JSObject::serializeObjectImpl(s, cell, overlapSlots);
-  s.writeInt<uint32_t>(self->beginIndex_);
-  s.writeInt<uint32_t>(self->endIndex_);
-}
-#endif
 
 bool ArrayImpl::_haveOwnIndexedImpl(
     JSObject *selfObj,
@@ -369,7 +353,6 @@ const ObjectVTable Arguments::vt{
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
         nullptr, // externalMemorySize
         VTable::HeapSnapshotMetadata{
             HeapSnapshot::NodeType::Object,
@@ -389,22 +372,8 @@ const ObjectVTable Arguments::vt{
 void ArgumentsBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<Arguments>());
   ArrayImplBuildMeta(cell, mb);
+  mb.setVTable(&Arguments::vt.base);
 }
-
-#ifdef HERMESVM_SERIALIZE
-Arguments::Arguments(Deserializer &d) : ArrayImpl(d, &vt.base) {}
-
-void ArgumentsSerialize(Serializer &s, const GCCell *cell) {
-  serializeArrayImpl(s, cell, JSObject::numOverlapSlots<Arguments>());
-  s.endObject(cell);
-}
-
-void ArgumentsDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::ArgumentsKind && "Expected Arguments");
-  auto *cell = d.getRuntime()->makeAFixed<Arguments>(d);
-  d.endObject(cell);
-}
-#endif
 
 CallResult<Handle<Arguments>> Arguments::create(
     Runtime *runtime,
@@ -412,8 +381,7 @@ CallResult<Handle<Arguments>> Arguments::create(
     Handle<Callable> curFunction,
     bool strictMode) {
   auto clazz = runtime->getHiddenClassForPrototype(
-      runtime->objectPrototypeRawPtr,
-      numOverlapSlots<Arguments>() + ANONYMOUS_PROPERTY_SLOTS);
+      runtime->objectPrototypeRawPtr, numOverlapSlots<Arguments>());
   auto obj = runtime->makeAFixed<Arguments>(
       runtime, Handle<JSObject>::vmcast(&runtime->objectPrototype), clazz);
   auto selfHandle = JSObjectInit::initToHandle(runtime, obj);
@@ -499,7 +467,6 @@ const ObjectVTable JSArray::vt{
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
         nullptr, // externalMemorySize
         VTable::HeapSnapshotMetadata{
             HeapSnapshot::NodeType::Object,
@@ -519,28 +486,14 @@ const ObjectVTable JSArray::vt{
 void ArrayBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSArray>());
   ArrayImplBuildMeta(cell, mb);
+  mb.setVTable(&JSArray::vt.base);
 }
-
-#ifdef HERMESVM_SERIALIZE
-JSArray::JSArray(Deserializer &d, const VTable *vt) : ArrayImpl(d, vt) {}
-
-void ArraySerialize(Serializer &s, const GCCell *cell) {
-  serializeArrayImpl(s, cell, JSObject::numOverlapSlots<JSArray>());
-  s.endObject(cell);
-}
-
-void ArrayDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::ArrayKind && "Expected Array");
-  auto *cell = d.getRuntime()->makeAFixed<JSArray>(d, &JSArray::vt.base);
-  d.endObject(cell);
-}
-#endif
 
 Handle<HiddenClass> JSArray::createClass(
     Runtime *runtime,
     Handle<JSObject> prototypeHandle) {
   Handle<HiddenClass> classHandle = runtime->getHiddenClassForPrototype(
-      *prototypeHandle, numOverlapSlots<JSArray>() + ANONYMOUS_PROPERTY_SLOTS);
+      *prototypeHandle, numOverlapSlots<JSArray>());
 
   PropertyFlags pf{};
   pf.enumerable = 0;
@@ -584,7 +537,6 @@ CallResult<Handle<JSArray>> JSArray::create(
           runtime, prototypeHandle, classHandle, GCPointerBase::NoBarriers()));
 
   // Only allocate the storage if capacity is not zero.
-  StorageType *indexedStorage = nullptr;
   if (capacity) {
     if (LLVM_UNLIKELY(capacity > StorageType::maxElements()))
       return runtime->raiseRangeError("Out of memory for array elements");
@@ -592,11 +544,8 @@ CallResult<Handle<JSArray>> JSArray::create(
     if (arrRes == ExecutionStatus::EXCEPTION) {
       return ExecutionStatus::EXCEPTION;
     }
-    indexedStorage = arrRes->get();
+    self->setIndexedStorage(runtime, arrRes->get(), &runtime->getHeap());
   }
-  // Note that if there is no indexed storage, we still need to explicitly set
-  // this to null, because JSObjectInit defaults it to undefined.
-  self->setIndexedStorage(runtime, indexedStorage, &runtime->getHeap());
   auto shv = SmallHermesValue::encodeNumberValue(length, runtime);
   putLength(self.get(), runtime, shv);
 
@@ -778,32 +727,9 @@ void ArrayIteratorBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSArrayIterator>());
   ObjectBuildMeta(cell, mb);
   const auto *self = static_cast<const JSArrayIterator *>(cell);
+  mb.setVTable(&JSArrayIterator::vt.base);
   mb.addField("iteratedObject", &self->iteratedObject_);
 }
-
-#ifdef HERMESVM_SERIALIZE
-JSArrayIterator::JSArrayIterator(Deserializer &d) : JSObject(d, &vt.base) {
-  d.readRelocation(&iteratedObject_, RelocationKind::GCPointer);
-  nextIndex_ = d.readInt<uint64_t>();
-  iterationKind_ = (IterationKind)d.readInt<uint8_t>();
-}
-
-void ArrayIteratorSerialize(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const JSArrayIterator>(cell);
-  JSObject::serializeObjectImpl(
-      s, cell, JSObject::numOverlapSlots<JSArrayIterator>());
-  s.writeRelocation(self->iteratedObject_.get(s.getRuntime()));
-  s.writeInt<uint64_t>(self->nextIndex_);
-  s.writeInt<uint8_t>((uint8_t)self->iterationKind_);
-  s.endObject(cell);
-}
-
-void ArrayIteratorDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::ArrayIteratorKind && "Expected ArrayIterator");
-  auto *cell = d.getRuntime()->makeAFixed<JSArrayIterator>(d);
-  d.endObject(cell);
-}
-#endif
 
 PseudoHandle<JSArrayIterator> JSArrayIterator::create(
     Runtime *runtime,
@@ -811,7 +737,7 @@ PseudoHandle<JSArrayIterator> JSArrayIterator::create(
     IterationKind iterationKind) {
   auto proto = Handle<JSObject>::vmcast(&runtime->arrayIteratorPrototype);
   auto clazz = runtime->getHiddenClassForPrototype(
-      *proto, numOverlapSlots<JSArrayIterator>() + ANONYMOUS_PROPERTY_SLOTS);
+      *proto, numOverlapSlots<JSArrayIterator>());
   auto *obj = runtime->makeAFixed<JSArrayIterator>(
       runtime, proto, clazz, array, iterationKind);
   return JSObjectInit::initToPseudoHandle(runtime, obj);
@@ -919,5 +845,3 @@ CallResult<HermesValue> JSArrayIterator::nextElement(
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

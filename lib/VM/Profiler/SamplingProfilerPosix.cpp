@@ -51,8 +51,6 @@ void SamplingProfiler::GlobalProfiler::registerRuntime(
   profilers_.insert(profiler);
 #ifndef _MSC_VER
   threadLocalProfiler_.set(profiler);
-#else
-  threadLocalProfiler_ = profiler;
 #endif
 }
 
@@ -67,8 +65,6 @@ void SamplingProfiler::GlobalProfiler::unregisterRuntime(
 
 #ifndef _MSC_VER
   threadLocalProfiler_.set(nullptr);
-#else
-  threadLocalProfiler_ = nullptr;
 #endif
 }
 
@@ -122,7 +118,12 @@ bool SamplingProfiler::GlobalProfiler::unregisterSignalHandler() {
 }
 #endif
 
+#ifndef _MSC_VER
 void SamplingProfiler::GlobalProfiler::profilingSignalHandler(int signo) {
+#else
+void SamplingProfiler::GlobalProfiler::profilingSignalHandler(
+    SamplingProfiler *profiler) {
+#endif
   // Ensure that writes made on the timer thread before setting this flag are
   // correctly acquired.
 #ifndef _MSC_VER
@@ -138,7 +139,7 @@ void SamplingProfiler::GlobalProfiler::profilingSignalHandler(int signo) {
 #ifndef _MSC_VER
   auto *localProfiler = profilerInstance->threadLocalProfiler_.get();
 #else
-  auto *localProfiler = profilerInstance->threadLocalProfiler_;
+  auto *localProfiler = profiler;
 #endif
   auto *curThreadRuntime = localProfiler->runtime_;
   if (curThreadRuntime == nullptr) {
@@ -194,6 +195,7 @@ bool SamplingProfiler::GlobalProfiler::sampleStack() {
     (void)domainCapacityBefore;
 
 #ifndef _MSC_VER
+    // WINDOWS:: TODO:: Investigate whether this synchronization is required on Windows.
     // Guarantee that the runtime thread will not proceed until it has acquired
     // the updates to domains_.
     handlerSyncFlag_.store(true, std::memory_order_release);
@@ -201,15 +203,21 @@ bool SamplingProfiler::GlobalProfiler::sampleStack() {
     // Signal target runtime thread to sample stack.
     pthread_kill(targetThreadId, SIGPROF);
 #else
+    // Suspend the runtime thread.
     DWORD prevSuspendCount = SuspendThread(targetThreadHandle);
     if (prevSuspendCount == -1) {
       return true;
     }
     assert(prevSuspendCount == 0);
 
+    // Get the thread context. This call ensure that the thread suspension is completed.
     CONTEXT context;
     GetThreadContext(targetThreadHandle, &context);
-    profilingSignalHandler(0);
+
+    // Collect samples.
+    profilingSignalHandler(localProfiler);
+
+    // Resume runtime thread.
     prevSuspendCount = ResumeThread(targetThreadHandle);
     assert(prevSuspendCount == 1);
 #endif
@@ -231,16 +239,14 @@ bool SamplingProfiler::GlobalProfiler::sampleStack() {
         localProfiler->domains_.capacity() == domainCapacityBefore &&
         "Must not dynamically allocate in signal handler");
 
-    if (sampledStackDepth_ > 0) {
-      assert(
-          sampledStackDepth_ <= sampleStorage_.stack.size() &&
-          "How can we sample more frames than storage?");
-      localProfiler->sampledStacks_.emplace_back(
-          sampleStorage_.tid,
-          sampleStorage_.timeStamp,
-          sampleStorage_.stack.begin(),
-          sampleStorage_.stack.begin() + sampledStackDepth_);
-    }
+    assert(
+        sampledStackDepth_ <= sampleStorage_.stack.size() &&
+        "How can we sample more frames than storage?");
+    localProfiler->sampledStacks_.emplace_back(
+        sampleStorage_.tid,
+        sampleStorage_.timeStamp,
+        sampleStorage_.stack.begin(),
+        sampleStorage_.stack.begin() + sampledStackDepth_);
   }
   return true;
 }
@@ -301,7 +307,7 @@ uint32_t SamplingProfiler::walkRuntimeStack(
         registerDomain(module->getDomainForSamplingProfiler());
     } else if (
         auto *nativeFunction =
-            dyn_vmcast_or_null<NativeFunction>(frame.getCalleeClosure())) {
+            dyn_vmcast<NativeFunction>(frame.getCalleeClosureUnsafe())) {
       frameStorage.kind = vmisa<FinalizableNativeFunction>(nativeFunction)
           ? StackFrame::FrameKind::FinalizableNativeFunction
           : StackFrame::FrameKind::NativeFunction;
@@ -510,7 +516,7 @@ void SamplingProfiler::dumpChromeTrace(llvh::raw_ostream &OS) {
 #ifndef _MSC_VER
 auto pid = getpid();
 #else
-  auto pid = GetCurrentProcessId();
+auto pid = GetCurrentProcessId();
 #endif
 
   ChromeTraceSerializer serializer(

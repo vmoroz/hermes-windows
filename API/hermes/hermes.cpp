@@ -21,7 +21,7 @@
 #include "hermes/Platform/Logging.h"
 #include "hermes/Public/RuntimeConfig.h"
 #include "hermes/SourceMap/SourceMapParser.h"
-#include "hermes/Support/Algorithms.h"
+#include "hermes/Support/JSONEmitter.h"
 #include "hermes/Support/SimpleDiagHandler.h"
 #include "hermes/Support/UTF16Stream.h"
 #include "hermes/Support/UTF8.h"
@@ -29,10 +29,8 @@
 #include "hermes/VM/Debugger/Debugger.h"
 #include "hermes/VM/GC.h"
 #include "hermes/VM/HostModel.h"
-#include "hermes/VM/IdentifierTable.h"
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
-#include "hermes/VM/JSError.h"
 #include "hermes/VM/JSLib.h"
 #include "hermes/VM/JSLib/RuntimeCommonStorage.h"
 #include "hermes/VM/JSLib/RuntimeJSONUtils.h"
@@ -58,6 +56,10 @@
 #include <mutex>
 #include <system_error>
 #include <unordered_map>
+
+#if defined(_WIN32)
+#include <werapi.h>
+#endif
 
 #ifdef HERMESJSI_ON_STACK
 #include <future>
@@ -262,6 +264,17 @@ struct HermesStringImpl : public IHermesString {
   ~HermesStringImpl() {}
 };
 
+// Recording timing stats for every JS<->C++ transition has some overhead, so
+// applications where such transitions are extremely frequent may want to define
+// the HERMESJSI_DISABLE_STATS_TIMER symbol to save this overhead.
+#ifdef HERMESJSI_DISABLE_STATS_TIMER
+#define STATS_TIMER(rt, desc, field)
+#else
+#define STATS_TIMER(rt, desc, field)              \
+  auto &_stats = (rt).runtime_.getRuntimeStats(); \
+  const vm::instrumentation::RAIITimer _timer{desc, _stats, _stats.field};
+#endif
+
 class HermesRuntimeImpl final : public HermesRuntime,
                                 private InstallHermesFatalErrorHandler,
                                 private jsi::Instrumentation {
@@ -337,13 +350,13 @@ class HermesRuntimeImpl final : public HermesRuntime,
           }
         });
     runtime_.addCustomWeakRootsFunction(
-        [this](vm::GC *, vm::WeakRefAcceptor &acceptor) {
+        [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
           for (auto it = weakHermesValues_->begin();
                it != weakHermesValues_->end();) {
             if (it->get() == 0) {
               it = weakHermesValues_->erase(it);
             } else {
-              acceptor.accept(it->wr);
+              acceptor.acceptWeak(it->wr);
               ++it;
             }
           }
@@ -455,9 +468,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
   };
 
   struct WeakRefPointerValue final : CountedPointerValue {
-    WeakRefPointerValue(vm::WeakRef<vm::HermesValue> _wr) : wr(_wr) {}
+    WeakRefPointerValue(vm::WeakRoot<vm::JSObject> _wr) : wr(_wr) {}
 
-    vm::WeakRef<vm::HermesValue> wr;
+    vm::WeakRoot<vm::JSObject> wr;
   };
 
   HermesPointerValue *clone(const Runtime::PointerValue *pv) {
@@ -479,7 +492,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return make<T>(&(hermesValues_->front()));
   }
 
-  jsi::WeakObject addWeak(::hermes::vm::WeakRef<vm::HermesValue> wr) {
+  jsi::WeakObject addWeak(::hermes::vm::WeakRoot<vm::JSObject> wr) {
     weakHermesValues_->emplace_front(wr);
     return make<jsi::WeakObject>(&(weakHermesValues_->front()));
   }
@@ -684,7 +697,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return ::hermes::vm::Handle<::hermes::vm::JSArrayBuffer>::vmcast(&phv(arr));
   }
 
-  static ::hermes::vm::WeakRef<vm::HermesValue> &wrhv(jsi::Pointer &pointer) {
+  static ::hermes::vm::WeakRoot<vm::JSObject> &weakRoot(jsi::Pointer &pointer) {
     assert(
         dynamic_cast<WeakRefPointerValue *>(getPointerValue(pointer)) &&
         "Pointer does not contain a WeakRefPointerValue");
@@ -864,9 +877,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
         : rt_(rt), ho_(ho) {}
 
     vm::CallResult<vm::HermesValue> get(vm::SymbolID id) override {
-      auto &stats = rt_.runtime_.getRuntimeStats();
-      const vm::instrumentation::RAIITimer timer{
-          "HostObject.get", stats, stats.hostFunction};
+      STATS_TIMER(rt_, "HostObject.get", hostFunction);
       jsi::PropNameID sym =
           rt_.add<jsi::PropNameID>(vm::HermesValue::encodeSymbolValue(id));
       jsi::Value ret;
@@ -900,9 +911,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
 
     vm::CallResult<bool> set(vm::SymbolID id, vm::HermesValue value) override {
-      auto &stats = rt_.runtime_.getRuntimeStats();
-      const vm::instrumentation::RAIITimer timer{
-          "HostObject.set", stats, stats.hostFunction};
+      STATS_TIMER(rt_, "HostObject.set", hostFunction);
       jsi::PropNameID sym =
           rt_.add<jsi::PropNameID>(vm::HermesValue::encodeSymbolValue(id));
       try {
@@ -934,9 +943,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
 
     vm::CallResult<vm::Handle<vm::JSArray>> getHostPropertyNames() override {
-      auto &stats = rt_.runtime_.getRuntimeStats();
-      const vm::instrumentation::RAIITimer timer{
-          "HostObject.getHostPropertyNames", stats, stats.hostFunction};
+      STATS_TIMER(rt_, "HostObject.getHostPropertyNames", hostFunction);
       try {
         auto names = ho_->getPropertyNames(rt_);
 
@@ -986,9 +993,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       HFContext *hfc = reinterpret_cast<HFContext *>(context);
       HermesRuntimeImpl &rt = hfc->hermesRuntimeImpl;
       assert(runtime == &rt.runtime_);
-      auto &stats = rt.runtime_.getRuntimeStats();
-      const vm::instrumentation::RAIITimer timer{
-          "Host Function", stats, stats.hostFunction};
+      STATS_TIMER(rt, "Host Function", hostFunction);
 
       llvh::SmallVector<jsi::Value, 8> apiArgs;
       for (vm::HermesValue hv : hvArgs) {
@@ -1069,6 +1074,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
     std::list<T> values;
   };
+
+  inline std::shared_ptr<vm::CrashManager> getCrashManager() noexcept {
+    return crashMgr_;
+  }
+
+  std::string getCallStackNoAlloc() {
+    return rt_->getCallStackNoAlloc();
+  }
 
  protected:
   /// Helper function that is parameterized over the type of context being
@@ -1419,7 +1432,7 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
     const std::shared_ptr<const jsi::Buffer> &sourceMapBuf,
     std::string sourceURL) {
   std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
-  auto buffer = std::make_unique<BufferAdapter>(std::move(jsiBuffer));
+  auto buffer = std::make_unique<BufferAdapter>(jsiBuffer);
   vm::RuntimeModuleFlags runtimeFlags{};
   runtimeFlags.persistent = true;
 
@@ -1472,6 +1485,15 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
     os << " Buffer size " << bufSize << " starts with: ";
     for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
       os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
+    std::string bufferModes = "";
+    for (const auto &mode : ::hermes::oscompat::get_vm_protect_modes(
+             jsiBuffer->data(), jsiBuffer->size())) {
+      // We only expect one match, but if there are multiple, we want to know.
+      bufferModes += mode;
+    }
+    if (!bufferModes.empty()) {
+      os << " and has protection mode(s): " << bufferModes;
+    }
     LOG_EXCEPTION_CAUSE(
         "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
     throw jsi::JSINativeException(
@@ -1494,9 +1516,7 @@ jsi::Value HermesRuntimeImpl::evaluatePreparedJavaScript(
     assert(
         dynamic_cast<const HermesPreparedJavaScript *>(js.get()) &&
         "js must be an instance of HermesPreparedJavaScript");
-    auto &stats = runtime_.getRuntimeStats();
-    const vm::instrumentation::RAIITimer timer{
-        "Evaluate JS", stats, stats.evaluateJS};
+    STATS_TIMER(*this, "Evaluate JS", evaluateJS);
     const auto *hermesPrep =
         static_cast<const HermesPreparedJavaScript *>(js.get());
     vm::GCScope gcScope(&runtime_);
@@ -1887,22 +1907,18 @@ jsi::Array HermesRuntimeImpl::getPropertyNames(const jsi::Object &obj) {
 
 jsi::WeakObject HermesRuntimeImpl::createWeakObject(const jsi::Object &obj) {
   return maybeRethrow([&] {
-    vm::WeakRefLock lk{runtime_.getHeap().weakRefMutex()};
-    return addWeak(vm::WeakRef<vm::HermesValue>(&runtime_.getHeap(), phv(obj)));
+    return addWeak(vm::WeakRoot<vm::JSObject>(
+        static_cast<vm::JSObject *>(phv(obj).getObject()), &runtime_));
   });
 }
 
 jsi::Value HermesRuntimeImpl::lockWeakObject(jsi::WeakObject &wo) {
-  vm::WeakRefLock lk{runtime_.getHeap().weakRefMutex()};
-  vm::WeakRef<vm::HermesValue> &wr = wrhv(wo);
-  const auto optValue = wr.unsafeGetOptional(&runtime_.getHeap());
-  if (!optValue) {
-    return jsi::Value();
-  }
-  assert(
-      optValue.getValue().isObject() &&
-      "jsi::WeakObject referent is not an Object");
-  return add<jsi::Object>(optValue.getValue());
+  vm::WeakRoot<vm::JSObject> &wr = weakRoot(wo);
+
+  if (const auto ptr = wr.get(&runtime_, &runtime_.getHeap()))
+    return add<jsi::Object>(vm::HermesValue::encodeObjectValue(ptr));
+
+  return jsi::Value();
 }
 
 jsi::Array HermesRuntimeImpl::createArray(size_t length) {
@@ -2030,9 +2046,7 @@ jsi::Value HermesRuntimeImpl::call(
           "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     }
 
-    auto &stats = runtime_.getRuntimeStats();
-    const vm::instrumentation::RAIITimer timer{
-        "Incoming Function", stats, stats.incomingFunction};
+    STATS_TIMER(*this, "Incoming Function", incomingFunction);
     vm::ScopedNativeCallFrame newFrame{
         &runtime_,
         static_cast<uint32_t>(count),
@@ -2071,11 +2085,8 @@ jsi::Value HermesRuntimeImpl::callAsConstructor(
           "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     }
 
-    auto &stats = runtime_.getRuntimeStats();
-    const vm::instrumentation::RAIITimer timer{
-        "Incoming Function: Call As Constructor",
-        stats,
-        stats.incomingFunction};
+    STATS_TIMER(
+        *this, "Incoming Function: Call As Constructor", incomingFunction);
 
     // We follow es5 13.2.2 [[Construct]] here. Below F == func.
     // 13.2.2.5:
@@ -2346,6 +2357,146 @@ std::unique_ptr<jsi::ThreadSafeRuntime> makeThreadSafeHermesRuntime(
 /// Glue code enabling the Debugger to produce a jsi::Value from a HermesValue.
 jsi::Value debugger::Debugger::jsiValueFromHermesValue(vm::HermesValue hv) {
   return impl(runtime_)->valueFromHermesValue(hv);
+}
+#endif
+
+#if defined(_WIN32)
+class CrashManagerImpl : public vm::CrashManager {
+ public:
+  void registerMemory(void *mem, size_t length) override {
+    if (length > WER_MAX_MEM_BLOCK_SIZE) { // Hermes thinks we should save the whole block, but WER allows 64K max
+      _largeMemBlocks[(intptr_t)mem] = length;
+
+      auto pieceCount = length / WER_MAX_MEM_BLOCK_SIZE;
+      for (auto i = 0; i < pieceCount; i++) {
+        WerRegisterMemoryBlock((char*)mem + i*WER_MAX_MEM_BLOCK_SIZE, WER_MAX_MEM_BLOCK_SIZE);
+      }
+
+      WerRegisterMemoryBlock((char*)mem + pieceCount*WER_MAX_MEM_BLOCK_SIZE, length - pieceCount*WER_MAX_MEM_BLOCK_SIZE);
+    } else {
+      WerRegisterMemoryBlock(mem, static_cast<DWORD>(length));
+    }
+  }
+
+  void unregisterMemory(void *mem) override {
+    if (_largeMemBlocks.find((intptr_t)mem) != _largeMemBlocks.end()) {
+      // This memory was larger than what WER supports so we split it up into chunks of size WER_MAX_MEM_BLOCK_SIZE
+      auto pieceCount = _largeMemBlocks[(intptr_t)mem] / WER_MAX_MEM_BLOCK_SIZE;
+      for (auto i = 0; i < pieceCount; i++) {
+        WerUnregisterMemoryBlock((char*)mem + i*WER_MAX_MEM_BLOCK_SIZE);
+      }
+
+      WerUnregisterMemoryBlock((char*)mem + pieceCount*WER_MAX_MEM_BLOCK_SIZE);
+
+      _largeMemBlocks.erase((intptr_t)mem);
+    } else {
+      WerUnregisterMemoryBlock(mem);
+    }
+  }
+
+  void setCustomData(const char *key, const char *val) override {
+    auto strKey = Utf8ToUtf16(key);
+    auto strValue = Utf8ToUtf16(val);
+    WerRegisterCustomMetadata(strKey.c_str(), strValue.c_str());
+  }
+
+  void removeCustomData(const char *key) override {
+    auto strKey = Utf8ToUtf16(key);
+    WerUnregisterCustomMetadata(strKey.c_str());
+  }
+
+  void setContextualCustomData(const char *key, const char *val) override {
+    std::wstringstream sstream;
+    sstream << "TID" << std::this_thread::get_id() << Utf8ToUtf16(key);
+
+    auto strKey = sstream.str();
+    // WER expects valid XML element names, Hermes embeds ':' characters that need to be replaced
+    std::replace(strKey.begin(), strKey.end(), L':', L'_');
+
+    auto strValue = Utf8ToUtf16(val);
+    WerRegisterCustomMetadata(strKey.c_str(), strValue.c_str());
+  }
+
+  void removeContextualCustomData(const char *key) override {
+    std::wstringstream sstream;
+    sstream << "TID" << std::this_thread::get_id() << Utf8ToUtf16(key);
+
+    auto strKey = sstream.str();
+    // WER expects valid XML element names, Hermes embeds ':' characters that need to be replaced
+    std::replace(strKey.begin(), strKey.end(), L':', L'_');
+
+    WerUnregisterCustomMetadata(strKey.c_str());
+  }
+
+  CallbackKey registerCallback(CallbackFunc cb) override {
+    CallbackKey key = static_cast<CallbackKey>((intptr_t)std::addressof(cb));
+    _callbacks.insert({key, std::move(cb)});
+    return key;
+  }
+
+  void unregisterCallback(CallbackKey key) override {
+    _callbacks.erase(static_cast<size_t>(key));
+  }
+
+  void setHeapInfo(const HeapInformation &heapInfo) override {
+    _lastHeapInformation = heapInfo;
+  }
+
+  void crashHandler(int fd) const noexcept {
+    for (const auto &cb : _callbacks) {
+      cb.second(fd);
+    }
+  }
+
+private:
+  std::wstring Utf8ToUtf16(const char *s) {
+    size_t strLength = strnlen_s(s, 64); // 64 is maximum key length for WerRegisterCustomMetadata
+    size_t requiredSize = 0;
+
+    if (strLength != 0) {
+      mbstowcs_s(&requiredSize, nullptr, 0, s, strLength);
+
+      if (requiredSize != 0) {
+        std::wstring buffer;
+        buffer.resize(requiredSize + sizeof(wchar_t));
+
+        if (mbstowcs_s(&requiredSize, &buffer[0], requiredSize, s, strLength) ==
+            0) {
+          return buffer;
+        }
+      }
+    }
+
+    return std::wstring();
+  }
+
+  HeapInformation _lastHeapInformation;
+  std::map<CallbackKey, CallbackFunc> _callbacks;
+  std::map<intptr_t, size_t> _largeMemBlocks;
+};
+
+std::unique_ptr<HermesRuntime> makeHermesRuntimeWithWER() {
+  auto cm = std::make_shared<CrashManagerImpl>();
+  return makeHermesRuntime(vm::RuntimeConfig::Builder().withCrashMgr(cm).build());
+}
+
+void hermesCrashHandler(HermesRuntime &runtime, int fd) {
+  // Run all callbacks registered to the crash manager
+  auto crashManager = impl(&runtime)->getCrashManager();
+  if (crashManager) {
+    if (auto *crashManagerImpl = dynamic_cast<CrashManagerImpl*>(crashManager.get())) {
+      crashManagerImpl->crashHandler(fd);
+    }
+  }
+
+  // Also serialize the current callstack
+  auto callstack = impl(&runtime)->getCallStackNoAlloc();
+  llvh::raw_fd_ostream jsonStream(fd, false);
+  ::hermes::JSONEmitter json(jsonStream);
+  json.openDict();
+  json.emitKeyValue("callstack", callstack);
+  json.closeDict();
+  json.endJSONL();
 }
 #endif
 

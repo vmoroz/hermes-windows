@@ -18,6 +18,7 @@
 #include <jsi/jsi.h>
 #include <unordered_map>
 
+// Patch to avoid Compiler Warning (level 2) C4275
 #ifndef HERMES_EXPORT
 #ifdef _MSC_VER
 #ifdef CREATE_SHARED_LIBRARY
@@ -60,6 +61,8 @@ class Debugger;
 
 class HermesRuntimeImpl;
 
+// This class wraps an std::string created within the hermes dll, to be safely consumed outside the hermes dll.
+// Used to consume release flavored hermes dll in the debug flavored RNW.
 struct IHermesString {
   virtual const char* c_str() = 0;
   virtual ~IHermesString(){};
@@ -253,6 +256,12 @@ HERMES_EXPORT std::unique_ptr<jsi::ThreadSafeRuntime>
 makeThreadSafeHermesRuntime(
     const ::hermes::vm::RuntimeConfig &runtimeConfig =
         ::hermes::vm::RuntimeConfig());
+
+#if defined(_WIN32)
+HERMES_EXPORT std::unique_ptr<HermesRuntime> __cdecl makeHermesRuntimeWithWER();
+HERMES_EXPORT void __cdecl hermesCrashHandler(HermesRuntime &runtime, int fd);
+#endif
+
 } // namespace hermes
 } // namespace facebook
 

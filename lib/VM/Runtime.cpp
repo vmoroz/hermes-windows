@@ -30,11 +30,9 @@
 #include "hermes/VM/JSLib/RuntimeCommonStorage.h"
 #include "hermes/VM/MockedEnvironment.h"
 #include "hermes/VM/Operations.h"
-#include "hermes/VM/PointerBase.h"
 #include "hermes/VM/PredefinedStringIDs.h"
 #include "hermes/VM/Profiler/CodeCoverageProfiler.h"
 #include "hermes/VM/Profiler/SamplingProfiler.h"
-#include "hermes/VM/RuntimeModule-inline.h"
 #include "hermes/VM/StackFrame-inline.h"
 #include "hermes/VM/StackTracesTree.h"
 #include "hermes/VM/StringView.h"
@@ -85,9 +83,9 @@ std::shared_ptr<Runtime> Runtime::create(const RuntimeConfig &runtimeConfig) {
 CallResult<PseudoHandle<>> Runtime::getNamed(
     Handle<JSObject> obj,
     PropCacheID id) {
-  auto clazzGCPtr = obj->getClassGCPtr();
+  CompressedPointer clazzPtr{obj->getClassGCPtr()};
   auto *cacheEntry = &fixedPropCache_[static_cast<int>(id)];
-  if (LLVM_LIKELY(cacheEntry->clazz == clazzGCPtr.getStorageType())) {
+  if (LLVM_LIKELY(cacheEntry->clazz == clazzPtr)) {
     // The slot is cached, so it is safe to use the Internal function.
     return createPseudoHandle(
         JSObject::getNamedSlotValueUnsafe<PropStorage::Inline::Yes>(
@@ -102,10 +100,10 @@ CallResult<PseudoHandle<>> Runtime::getNamed(
           JSObject::tryGetOwnNamedDescriptorFast(*obj, this, sym, desc)) &&
       !desc.flags.accessor && desc.flags.writable &&
       !desc.flags.internalSetter) {
-    auto *clazz = clazzGCPtr.getNonNull(this);
+    HiddenClass *clazz = vmcast<HiddenClass>(clazzPtr.getNonNull(this));
     if (LLVM_LIKELY(!clazz->isDictionary())) {
       // Cache the class, id and property slot.
-      cacheEntry->clazz = clazzGCPtr.getStorageType();
+      cacheEntry->clazz = clazzPtr;
       cacheEntry->slot = desc.slot;
     }
     return JSObject::getNamedSlotValue(createPseudoHandle(*obj), this, desc);
@@ -116,11 +114,10 @@ CallResult<PseudoHandle<>> Runtime::getNamed(
 ExecutionStatus Runtime::putNamedThrowOnError(
     Handle<JSObject> obj,
     PropCacheID id,
-    HermesValue hv) {
-  auto clazzGCPtr = obj->getClassGCPtr();
+    SmallHermesValue shv) {
+  CompressedPointer clazzPtr{obj->getClassGCPtr()};
   auto *cacheEntry = &fixedPropCache_[static_cast<int>(id)];
-  if (LLVM_LIKELY(cacheEntry->clazz == clazzGCPtr.getStorageType())) {
-    auto shv = SmallHermesValue::encodeHermesValue(hv, this);
+  if (LLVM_LIKELY(cacheEntry->clazz == clazzPtr)) {
     JSObject::setNamedSlotValueUnsafe<PropStorage::Inline::Yes>(
         *obj, this, cacheEntry->slot, shv);
     return ExecutionStatus::RETURNED;
@@ -131,18 +128,18 @@ ExecutionStatus Runtime::putNamedThrowOnError(
           JSObject::tryGetOwnNamedDescriptorFast(*obj, this, sym, desc)) &&
       !desc.flags.accessor && desc.flags.writable &&
       !desc.flags.internalSetter) {
-    auto *clazz = clazzGCPtr.getNonNull(this);
+    HiddenClass *clazz = vmcast<HiddenClass>(clazzPtr.getNonNull(this));
     if (LLVM_LIKELY(!clazz->isDictionary())) {
       // Cache the class and property slot.
-      cacheEntry->clazz = clazzGCPtr.getStorageType();
+      cacheEntry->clazz = clazzPtr;
       cacheEntry->slot = desc.slot;
     }
-    auto shv = SmallHermesValue::encodeHermesValue(hv, this);
     JSObject::setNamedSlotValueUnsafe(*obj, this, desc.slot, shv);
     return ExecutionStatus::RETURNED;
   }
+  Handle<> value = makeHandle(shv.unboxToHV(this));
   return JSObject::putNamed_RJS(
-             obj, this, sym, makeHandle(hv), PropOpFlags().plusThrowOnError())
+             obj, this, sym, value, PropOpFlags().plusThrowOnError())
       .getStatus();
 }
 
@@ -155,7 +152,6 @@ Runtime::Runtime(
       optimizedEval(runtimeConfig.getOptimizedEval()),
       asyncBreakCheckInEval(runtimeConfig.getAsyncBreakCheckInEval()),
       heapStorage_(
-          getMetadataTable(),
           this,
           this,
           runtimeConfig.getGCConfig(),
@@ -189,31 +185,30 @@ Runtime::Runtime(
   if (LLVM_UNLIKELY(maxNumRegisters > kMaxSupportedNumRegisters)) {
     hermes_fatal("RuntimeConfig maxNumRegisters too big");
   }
-  registerStack_ = runtimeConfig.getRegisterStack();
-  if (!registerStack_) {
-    // registerStack_ should not be allocated with new, because then
+  registerStackStart_ = runtimeConfig.getRegisterStack();
+  if (!registerStackStart_) {
+    // registerStackAllocation_ should not be allocated with new, because then
     // default constructors would run for the whole stack space.
     // Round up to page size as required by vm_allocate.
-    const auto numBytesForRegisters = llvh::alignTo(
+    const uint32_t numBytesForRegisters = llvh::alignTo(
         sizeof(PinnedHermesValue) * maxNumRegisters, oscompat::page_size());
     auto result = oscompat::vm_allocate(numBytesForRegisters);
     if (!result) {
       hermes_fatal("Failed to allocate register stack", result.getError());
     }
-    registerStack_ = static_cast<PinnedHermesValue *>(result.get());
-    registerStackBytesToUnmap_ = numBytesForRegisters;
-    crashMgr_->registerMemory(registerStack_, numBytesForRegisters);
-  } else {
-    registerStackBytesToUnmap_ = 0;
+    registerStackStart_ = static_cast<PinnedHermesValue *>(result.get());
+    registerStackAllocation_ = {registerStackStart_, numBytesForRegisters};
+    crashMgr_->registerMemory(registerStackStart_, numBytesForRegisters);
   }
 
-  registerStackEnd_ = registerStack_ + maxNumRegisters;
+  registerStackEnd_ = registerStackStart_ + maxNumRegisters;
   if (shouldRandomizeMemoryLayout_) {
     const unsigned bytesOff = std::random_device()() % oscompat::page_size();
-    registerStackEnd_ -= bytesOff / sizeof(PinnedHermesValue);
-    assert(registerStackEnd_ >= registerStack_ && "register stack too small");
+    registerStackStart_ += bytesOff / sizeof(PinnedHermesValue);
+    assert(
+        registerStackEnd_ >= registerStackStart_ && "register stack too small");
   }
-  stackPointer_ = registerStackEnd_;
+  stackPointer_ = registerStackStart_;
 
   // Setup the "root" stack frame.
   setCurrentFrameToTopOfStack();
@@ -221,28 +216,6 @@ Runtime::Runtime(
   allocStack(
       StackFrameLayout::CalleeExtraRegistersAtStart,
       HermesValue::encodeUndefinedValue());
-
-#ifdef HERMESVM_SERIALIZE
-  if (runtimeConfig.getDeserializeFile()) {
-    assert(
-        runtimeConfig.getExternalPointersVectorCallBack() &&
-        "missing function pointer to map external pointers.");
-    // If there is a serialized heap file available, use that to initialize
-    // Runtime instead of re-creating the Runtime.
-    Deserializer d(
-        runtimeConfig.getDeserializeFile(),
-        this,
-        runtimeConfig.getExternalPointersVectorCallBack());
-    deserializeImpl(d, runtimeConfig.getGCConfig().getAllocInYoung());
-
-    LLVM_DEBUG(llvh::dbgs() << "Runtime initialized\n");
-
-    if (runtimeConfig.getEnableSampleProfiling())
-      samplingProfiler = std::make_unique<SamplingProfiler>(this);
-
-    return;
-  }
-#endif // HERMESVM_SERIALIZE
 
   // Initialize Predefined Strings.
   // This function does not do any allocations.
@@ -305,9 +278,6 @@ Runtime::Runtime(
   // the builtins table.
   initNativeBuiltins();
 
-  stringCycleCheckVisited_ =
-      ignoreAllocationFailure(ArrayStorage::create(this, 8));
-
   // Set the prototype of the global object to the standard object prototype,
   // which has now been defined.
   ignoreAllocationFailure(JSObject::setParent(
@@ -317,19 +287,6 @@ Runtime::Runtime(
       PropOpFlags().plusThrowOnError()));
 
   symbolRegistry_.init(this);
-
-#ifdef HERMESVM_SERIALIZE
-  if (runtimeConfig.getSerializeAfterInitFile()) {
-    assert(
-        runtimeConfig.getExternalPointersVectorCallBack() &&
-        "missing function pointer to map external pointers.");
-    Serializer s(
-        *runtimeConfig.getSerializeAfterInitFile(),
-        this,
-        runtimeConfig.getExternalPointersVectorCallBack());
-    serialize(s);
-  }
-#endif // HERMESVM_SERIALIZE
 
   // BB Profiler need to be ready before running internal bytecode.
 #ifdef HERMESVM_PROFILER_BB
@@ -362,9 +319,10 @@ Runtime::~Runtime() {
       "A pointer is left in the ID tracker that is from non-JS memory. "
       "Was untrackNative called?");
   crashMgr_->unregisterCallback(crashCallbackKey_);
-  if (registerStackBytesToUnmap_ > 0) {
-    crashMgr_->unregisterMemory(registerStack_);
-    oscompat::vm_free(registerStack_, registerStackBytesToUnmap_);
+  if (!registerStackAllocation_.empty()) {
+    crashMgr_->unregisterMemory(registerStackAllocation_.data());
+    oscompat::vm_free(
+        registerStackAllocation_.data(), registerStackAllocation_.size());
   }
   // Remove inter-module dependencies so we can delete them in any order.
   for (auto &module : runtimeModuleList_) {
@@ -421,7 +379,7 @@ void Runtime::markRoots(
   {
     MarkRootsPhaseTimer timer(this, RootAcceptor::Section::Registers);
     acceptor.beginRootSection(RootAcceptor::Section::Registers);
-    for (auto *p = stackPointer_, *e = registerStackEnd_; p != e; ++p)
+    for (auto *p = registerStackStart_, *e = stackPointer_; p != e; ++p)
       acceptor.accept(*p);
     acceptor.endRootSection();
   }
@@ -455,6 +413,15 @@ void Runtime::markRoots(
       for (auto &hv : charStrings_)
         acceptor.accept(hv);
     }
+    acceptor.endRootSection();
+  }
+
+  {
+    MarkRootsPhaseTimer timer(
+        this, RootAcceptor::Section::StringCycleCheckVisited);
+    acceptor.beginRootSection(RootAcceptor::Section::StringCycleCheckVisited);
+    for (auto *&ptr : stringCycleCheckVisited_)
+      acceptor.acceptPtr(ptr);
     acceptor.endRootSection();
   }
 
@@ -558,14 +525,16 @@ void Runtime::markRoots(
   }
 }
 
-void Runtime::markWeakRoots(WeakRootAcceptor &acceptor) {
+void Runtime::markWeakRoots(WeakRootAcceptor &acceptor, bool markLongLived) {
   MarkRootsPhaseTimer timer(this, RootAcceptor::Section::WeakRefs);
   acceptor.beginRootSection(RootAcceptor::Section::WeakRefs);
-  for (auto &entry : fixedPropCache_) {
-    acceptor.acceptWeak(entry.clazz);
+  if (markLongLived) {
+    for (auto &entry : fixedPropCache_) {
+      acceptor.acceptWeak(entry.clazz);
+    }
+    for (auto &rm : runtimeModuleList_)
+      rm.markWeakRoots(acceptor);
   }
-  for (auto &rm : runtimeModuleList_)
-    rm.markWeakRoots(acceptor);
   for (auto &fn : customMarkWeakRootFuncs_)
     fn(&getHeap(), acceptor);
   acceptor.endRootSection();
@@ -806,9 +775,8 @@ void Runtime::potentiallyMoveHeap() {
   // is on.
   FillerCell::create(
       this,
-      std::max(
-          sizeof(FillerCell),
-          static_cast<size_t>(toRValue(GC::minAllocationSize()))));
+      std::max<size_t>(
+          heapAlignSize(sizeof(FillerCell)), GC::minAllocationSize()));
 }
 #endif
 
@@ -888,26 +856,6 @@ CallResult<HermesValue> Runtime::runBytecode(
     Handle<Environment> environment,
     Handle<> thisArg) {
   clearThrownValue();
-
-#ifdef HERMESVM_SERIALIZE
-  // If we are constructed from serialize data with a ClosureFunction, execute
-  // the function.
-  if (!serializeClosure.isUndefined()) {
-    ScopedNativeCallFrame newFrame{
-        this,
-        0,
-        serializeClosure,
-        HermesValue::encodeUndefinedValue(),
-        *thisArg};
-    if (LLVM_UNLIKELY(newFrame.overflowed()))
-      return raiseStackOverflow(StackOverflowKind::NativeStack);
-    return shouldRandomizeMemoryLayout_
-        ? interpretFunctionWithRandomStack(
-              this, vmcast<JSFunction>(serializeClosure)->getCodeBlock())
-        : interpretFunction(
-              vmcast<JSFunction>(serializeClosure)->getCodeBlock());
-  }
-#endif
 
   auto globalFunctionIndex = bytecode->getGlobalFunctionIndex();
 
@@ -1153,7 +1101,7 @@ llvh::Optional<Runtime::StackFrameInfo> Runtime::stackFrameInfoByIndex(
 /// call.
 uint32_t Runtime::calcFrameOffset(ConstStackFrameIterator it) const {
   assert(it != getStackFrames().end() && "invalid frame");
-  return registerStackEnd_ - it->ptr();
+  return it->ptr() - registerStackStart_;
 }
 
 /// \return the offset between the location of the current frame and the
@@ -1324,31 +1272,19 @@ ExecutionStatus Runtime::raiseEvalUnsupported(llvh::StringRef code) {
       TwineChar16("Parsing source code unsupported: ") + code.substr(0, 32));
 }
 
-CallResult<bool> Runtime::insertVisitedObject(Handle<JSObject> obj) {
-  bool foundCycle = false;
-  MutableHandle<ArrayStorage> stack{
-      this, vmcast<ArrayStorage>(stringCycleCheckVisited_)};
-  for (uint32_t i = 0, len = stack->size(); i < len; ++i) {
-    if (stack->at(i).getObject() == obj.get()) {
-      foundCycle = true;
-      break;
-    }
-  }
-  if (ArrayStorage::push_back(stack, this, obj) == ExecutionStatus::EXCEPTION) {
-    return ExecutionStatus::EXCEPTION;
-  }
-  stringCycleCheckVisited_ = stack.getHermesValue();
-  return foundCycle;
+bool Runtime::insertVisitedObject(JSObject *obj) {
+  if (llvh::find(stringCycleCheckVisited_, obj) !=
+      stringCycleCheckVisited_.end())
+    return true;
+  stringCycleCheckVisited_.push_back(obj);
+  return false;
 }
 
-void Runtime::removeVisitedObject(Handle<JSObject> obj) {
+void Runtime::removeVisitedObject(JSObject *obj) {
   (void)obj;
-  auto stack = Handle<ArrayStorage>::vmcast(&stringCycleCheckVisited_);
-  auto elem = stack->pop_back(this);
-  (void)elem;
   assert(
-      elem.isObject() && elem.getObject() == obj.get() &&
-      "string cycle check: stack corrupted");
+      stringCycleCheckVisited_.back() == obj && "string cycle stack corrupted");
+  stringCycleCheckVisited_.pop_back();
 }
 
 std::unique_ptr<Buffer> Runtime::generateSpecialRuntimeBytecode() {
@@ -1730,9 +1666,10 @@ void Runtime::allocStack(uint32_t count, HermesValue initValue) {
   // constants are propagated into initValue, which enables clang to use
   // memset_pattern_16. This ends up being a significant loss as it is an
   // indirect call.
+  auto *oldStackPointer = stackPointer_;
   allocUninitializedStack(count);
   // Initialize the new registers.
-  std::uninitialized_fill_n(stackPointer_, count, initValue);
+  std::uninitialized_fill_n(oldStackPointer, count, initValue);
 }
 
 void Runtime::dumpCallFrames(llvh::raw_ostream &OS) {
@@ -1741,7 +1678,7 @@ void Runtime::dumpCallFrames(llvh::raw_ostream &OS) {
   unsigned i = 0;
   for (StackFramePtr sf : getStackFrames()) {
     OS << i++ << " ";
-    if (auto *closure = sf.getCalleeClosure()) {
+    if (auto *closure = dyn_vmcast<Callable>(sf.getCalleeClosureOrCBRef())) {
       OS << cellKindStr(closure->getKind()) << " ";
     }
     if (auto *cb = sf.getCalleeCodeBlock()) {
@@ -1808,8 +1745,13 @@ void Runtime::crashCallback(int fd) {
   json.emitKeyValue(
       "address", llvmStreamableToString(llvh::format_hex((uintptr_t)this, 10)));
   json.emitKeyValue(
-      "registerStack",
-      llvmStreamableToString(llvh::format_hex((uintptr_t)registerStack_, 10)));
+      "registerStackAllocation",
+      llvmStreamableToString(
+          llvh::format_hex((uintptr_t)registerStackAllocation_.data(), 10)));
+  json.emitKeyValue(
+      "registerStackStart",
+      llvmStreamableToString(
+          llvh::format_hex((uintptr_t)registerStackStart_, 10)));
   json.emitKeyValue(
       "registerStackPointer",
       llvmStreamableToString(llvh::format_hex((uintptr_t)stackPointer_, 10)));
@@ -1831,7 +1773,7 @@ void Runtime::crashWriteCallStack(JSONEmitter &json) {
   for (auto frame : getStackFrames()) {
     json.openDict();
     json.emitKeyValue(
-        "StackFrameRegOffs", (uint32_t)(registerStackEnd_ - frame.ptr()));
+        "StackFrameRegOffs", (uint32_t)(frame.ptr() - registerStackStart_));
     auto codeBlock = frame.getSavedCodeBlock();
     if (codeBlock) {
       json.emitKeyValue("FunctionID", codeBlock->getFunctionID());
@@ -1887,8 +1829,8 @@ std::string Runtime::getCallStackNoAlloc(const Inst *ip) {
             blockSourceCode.getValue(), bytecodeOffs);
         if (sourceLocation) {
           auto file = debugInfo->getFilenameByID(sourceLocation->filenameId);
-          res += ": " + file + ":" + oscompat::to_string(sourceLocation->line) +
-              ":" + oscompat::to_string(sourceLocation->column);
+          res += ": " + file + ":" + std::to_string(sourceLocation->line) +
+              ":" + std::to_string(sourceLocation->column);
         }
       }
       res += "\n";
@@ -1990,296 +1932,6 @@ HiddenClass *Runtime::resolveHiddenClassId(ClassId classId) {
   return vmcast<HiddenClass>(hcHermesVal);
 }
 
-#endif
-
-#ifdef HERMESVM_SERIALIZE
-void Runtime::serialize(Serializer &s) {
-  // Full GC here.
-  getHeap().collect("serialize");
-
-  s.writeCurrentOffset();
-  getHeap().serializeWeakRefs(s);
-
-  s.writeCurrentOffset();
-  serializeIdentifierTable(s);
-
-  s.writeCurrentOffset();
-  symbolRegistry_.serialize(s);
-
-  s.writeCurrentOffset();
-  serializeRuntimeFields(s);
-
-  s.writeCurrentOffset();
-  getHeap().serializeHeap(s);
-
-  s.writeCurrentOffset();
-  getHeap().getIDTracker().serialize(s);
-
-  s.writeCurrentOffset();
-  getHeap().getAllocationLocationTracker().serialize(s);
-
-  // In the end record the size of the object table and flush the string
-  // buffers, so the deserializer can read it. TODO: perhaps seek to the
-  // beginning and record there.
-  s.writeCurrentOffset();
-  s.writeEpilogue();
-}
-
-void Runtime::serializeIdentifierTable(Serializer &s) {
-  identifierTable_.serialize(s);
-}
-
-void Runtime::serializeRuntimeFields(Serializer &s) {
-// Serialize all HermesValue
-#define RUNTIME_HV_FIELD(name) s.writeHermesValue(name);
-#define RUNTIME_HV_FIELD_PROTOTYPE(name) RUNTIME_HV_FIELD(name)
-#define RUNTIME_HV_FIELD_INSTANCE(name) RUNTIME_HV_FIELD(name)
-#define RUNTIME_HV_FIELD_RUNTIMEMODULE(name) RUNTIME_HV_FIELD(name)
-#include "hermes/VM/RuntimeHermesValueFields.def"
-#undef RUNTIME_HV_FIELD
-  // stringCycleCheckVisited_ owns an ArrayStorage. This is managed via a RAII
-  // so it will never be cleared when deserialized if we serialize it. We will
-  // not serialize the contents of this storage but only do relocation for the
-  // ArrayStorage *.
-  bool hasArray = (bool)vmcast<ArrayStorage>(stringCycleCheckVisited_);
-  s.writeInt<uint8_t>(hasArray);
-  if (hasArray) {
-    s.endObject(vmcast<ArrayStorage>(stringCycleCheckVisited_));
-  }
-
-  // Do not Serialize any raw pointers of HermesValue fields. Get those pointers
-  // after relocation finishes.
-
-  // RegExpMatch regExpLastMatch{};
-  // Ignore for now since we only serialize/deserialize after global object
-  // initialization.
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-
-  // TODO: ignore all fields from runtimeConfig, about frames, stacks etc.
-  // come back later to check again from heap_ to nativeCallFrameDepth_.
-
-  s.writeRelocation(emptyCodeBlock_);
-  s.writeRelocation(returnThisCodeBlock_);
-
-  /// Field specialCodeBlockRuntimeModule_;
-  /// Field RuntimeModuleList runtimeModuleList_{}. We don't S/D the list of
-  /// Runtimemodules now because Runtime doesn't own them, Domain owns them, so
-  /// they will be Serialized/Deserialized with Domain. When new RuntimeModules
-  /// are deserialized, they will add themselves to this list.
-  s.writeRelocation(specialCodeBlockRuntimeModule_);
-
-  // Field rootClazzes_[];
-  for (const auto &clazz : rootClazzes_)
-    s.writeHermesValue(clazz);
-
-  // Field PropertyCacheEntry fixedPropCache_[(size_t)PropCacheID::_COUNT];
-  // Ignore for now.
-  // TODO: come back later.
-
-  // Field std::vector<PinnedHermesValue> charStrings_{};
-  s.writeInt<uint32_t>(charStrings_.size());
-  for (auto &str : charStrings_) {
-    s.writeHermesValue(str);
-  }
-
-  // Field std::vector<NativeFunction *> builtins_{};
-  s.writeInt<uint32_t>(builtins_.size());
-  for (auto *nativeFunction : builtins_) {
-    s.writeRelocation(nativeFunction);
-  }
-
-  s.writeInt<uint8_t>(builtinsFrozen_);
-
-  // TODO: Come back later. serialize/deserialize this to be able to
-  // serialize/deserialize after user code.
-  // Field const CrashManager::CallbackKey crashCallbackKey_;
-  // Field std::shared_ptr<SamplingProfiler> samplingProfiler;
-
-#ifdef HERMES_ENABLE_DEBUGGER
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-  // Field Debugger debugger_{this};
-  // Field std::atomic<uint8_t> debuggerRequestedFlag_{0};
-#endif
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-  // Field std::vector<std::shared_ptr<hbc::BCProvider>> persistentBCProviders_;
-
-#ifdef HERMES_ENABLE_DEBUGGER
-  // Field const inst::Inst *savedIP_{nullptr};
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-#else
-#endif // HERMES_ENABLE_DEBUGGER
-}
-
-void Runtime::deserializeRuntimeFields(Deserializer &d) {
-// Deserialize all HermesValue
-#define RUNTIME_HV_FIELD(name) d.readHermesValue(&name);
-#define RUNTIME_HV_FIELD_PROTOTYPE(name) RUNTIME_HV_FIELD(name)
-#define RUNTIME_HV_FIELD_INSTANCE(name) RUNTIME_HV_FIELD(name)
-#define RUNTIME_HV_FIELD_RUNTIMEMODULE(name) RUNTIME_HV_FIELD(name)
-#include "hermes/VM/RuntimeHermesValueFields.def"
-#undef RUNTIME_HV_FIELD
-  // stringCycleCheckVisited_ owns an ArrayStorage. It is managed via a RAII so
-  // we don't serialize the contents of the storage. Create an empty
-  // ArrayStorage here if needed to handle relocation.
-  if (d.readInt<uint8_t>()) {
-    auto arrRes = this->ignoreAllocationFailure(ArrayStorage::create(this, 0));
-    d.endObject(vmcast<ArrayStorage>(arrRes));
-  }
-
-  // Do not Deserialize any raw pointers of HermesValue fields. Get those
-  // pointers after relocation finishes.
-
-  // Field RegExpMatch regExpLastMatch{};
-  // Ignore for now since we only serialize/deserialize after global object
-  // initialization.
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-
-  // TODO: Ignore all fields from runtimeConfig, about frames, stacks etc for
-  // now. Come back later to check again from heap_ to nativeCallFrameDepth_.
-
-  d.readRelocation(&emptyCodeBlock_, RelocationKind::NativePointer);
-  d.readRelocation(&returnThisCodeBlock_, RelocationKind::NativePointer);
-
-  /// Field specialCodeBlockRuntimeModule_;
-  /// Field RuntimeModuleList runtimeModuleList_{}. We don't S/D the list of
-  /// Runtimemodules now because Runtime doesn't own them, Domain owns them, so
-  /// they will be Serialized/Deserialized with Domain. When new RuntimeModules
-  /// are deserialized, they will add themselves to this list.
-  d.readRelocation(
-      &specialCodeBlockRuntimeModule_, RelocationKind::NativePointer);
-
-  // Field rootClazzes_[];
-  for (auto &clazz : rootClazzes_)
-    d.readHermesValue(&clazz);
-
-  // Field PropertyCacheEntry fixedPropCache_[(size_t)PropCacheID::_COUNT];
-  // Ignore for now.
-  // TODO: come back later.
-
-  // Field std::vector<PinnedHermesValue> charStrings_{};
-  size_t size = d.readInt<uint32_t>();
-  charStrings_.resize(size);
-  for (auto &str : charStrings_) {
-    d.readHermesValue(&str);
-  }
-
-  // Field std::vector<NativeFunction *> builtins_{};
-  size = d.readInt<uint32_t>();
-  builtins_.resize(size);
-  for (auto *&nativeFunction : builtins_) {
-    d.readRelocation(&nativeFunction, RelocationKind::NativePointer);
-  }
-
-  builtinsFrozen_ = d.readInt<uint8_t>();
-
-  // TODO: Come back later. Serialize/deserialize this to be able to
-  // serialize/deserialize after user code.
-  // Field const CrashManager::CallbackKey crashCallbackKey_;
-  // Field std::shared_ptr<SamplingProfiler> samplingProfiler;
-
-#ifdef HERMES_ENABLE_DEBUGGER
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-  // Field Debugger debugger_{this}; Field std::atomic<uint8_t>
-  // debuggerRequestedFlag_{0};
-#endif
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-  // Field std::vector<std::shared_ptr<hbc::BCProvider>> persistentBCProviders_;
-
-#ifdef HERMES_ENABLE_DEBUGGER
-  // Field const inst::Inst *savedIP_{nullptr};
-  // TODO: serialize/deserialize this to be able to serialize/deserialize after
-  // user code.
-#else
-#endif // HERMES_ENABLE_DEBUGGER
-}
-
-void Runtime::deserializeImpl(Deserializer &d, bool currentlyInYoung) {
-  if (currentlyInYoung) {
-    getHeap().deserializeStart();
-  }
-
-  GCScope scope(this);
-
-  d.readAndCheckOffset();
-  getHeap().deserializeWeakRefs(d);
-
-  d.readAndCheckOffset();
-  identifierTable_.deserialize(d);
-
-  d.readAndCheckOffset();
-  symbolRegistry_.deserialize(d);
-
-  d.readAndCheckOffset();
-  deserializeRuntimeFields(d);
-
-  d.readAndCheckOffset();
-  getHeap().deserializeHeap(d);
-
-  d.readAndCheckOffset();
-  getHeap().getIDTracker().deserialize(d);
-
-  d.readAndCheckOffset();
-  getHeap().getAllocationLocationTracker().deserialize(d);
-
-  d.readAndCheckOffset();
-  d.flushRelocationQueue();
-
-  // Now update the runtime pointer to prototypes.
-  // JSObject *objectPrototypeRawPtr{};
-  objectPrototypeRawPtr = vmcast<JSObject>(objectPrototype);
-  // JSObject *functionPrototypeRawPtr{};
-  functionPrototypeRawPtr = vmcast<NativeFunction>(functionPrototype);
-
-  LLVM_DEBUG(llvh::dbgs() << "Finish deserializing\n");
-
-  if (currentlyInYoung) {
-    // Only switch back now if the config says allocInYoung. Otherwise
-    // wait until tti.
-    getHeap().deserializeEnd();
-  }
-}
-
-void Runtime::populateHeaderRuntimeConfig(SerializeHeader &header) {
-  header.enableEval = enableEval;
-  header.hasES6Promise = hasES6Promise_;
-  header.hasES6Proxy = hasES6Proxy_;
-  header.hasIntl = hasIntl_;
-  header.bytecodeWarmupPercent = bytecodeWarmupPercent_;
-  header.trackIO = trackIO_;
-}
-
-void Runtime::checkHeaderRuntimeConfig(SerializeHeader &header) const {
-  if (header.enableEval != enableEval) {
-    hermes_fatal(
-        "serialize/deserialize Runtime Configs don't match (enableEval)");
-  }
-  if (header.hasES6Promise != hasES6Promise_) {
-    hermes_fatal(
-        "serialize/deserialize Runtime Configs don't match (es6Promise)");
-  }
-  if (header.hasES6Proxy != hasES6Proxy_) {
-    hermes_fatal(
-        "serialize/deserialize Runtime Configs don't match (es6Proxy)");
-  }
-  if (header.hasIntl != hasIntl_) {
-    hermes_fatal("serialize/deserialize Runtime Configs don't match (intl)");
-  }
-
-  if (header.bytecodeWarmupPercent != bytecodeWarmupPercent_) {
-    hermes_fatal(
-        "serialize/deserialize Runtime Configs don't match (bytecodeWarmupPercent)");
-  }
-  if (header.trackIO != trackIO_) {
-    hermes_fatal("serialize/deserialize Runtime Configs don't match (trackIO)");
-  }
-}
 #endif
 
 ExecutionStatus Runtime::notifyTimeout() {

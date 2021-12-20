@@ -4,7 +4,7 @@ param(
     [string]$RN_CLONE_URL = "https://github.com/facebook/react-native.git",
 
     [Parameter(Mandatory=$False)]
-    [string]$COMMIT_HASH="386dbd943",
+    [string]$COMMIT_HASH="v0.66.0-rc.1",
 
     [Parameter(Mandatory=$False)]
     [switch]$Force
@@ -19,6 +19,14 @@ if($Force.IsPresent) {
     }
 }
 
+$currentGitUser=Invoke-Expression 'git config user.email'
+if ([string]::IsNullOrWhiteSpace($currentGitUser)) {
+    Invoke-Expression 'git config --local user.name "HermesDev"'
+    Invoke-Expression 'git config --local user.email "hermesdev@microsoft.com"'
+    Invoke-Expression 'git config --local core.autocrlf false'
+    Invoke-Expression 'git config --local core.filemode false'
+}
+
 # We have an existing checkout if git head exists.
 $RN_REPO_HEAD="$RN_DIR\.git\HEAD"
 if (!(Test-Path -Path $RN_REPO_HEAD)) {
@@ -30,6 +38,16 @@ if (!(Test-Path -Path $RN_REPO_HEAD)) {
 } 
 
 Push-Location $RN_REPO_NAME
+
+# A hack to avoid the bat files from autocrlfed which fails the subsequent checkout.
+$RN_GIT_ATTRIBUTES="$RN_DIR\.gitattributes"
+if (Test-Path -Path $RN_GIT_ATTRIBUTES) {
+    Remove-Item -Force $RN_GIT_ATTRIBUTES | Out-Null
+    Invoke-Expression "git add -A"  | Out-Null
+    Invoke-Expression 'git commit -m "Temporary commit to create create clone"'  | Out-Null
+    Invoke-Expression 'git reset --hard'  | Out-Null
+}
+
 Invoke-Expression "git checkout $COMMIT_HASH"  | Out-Null
 Pop-Location
 

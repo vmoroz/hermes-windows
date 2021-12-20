@@ -37,17 +37,7 @@ class JSCallableProxy : public NativeFunction {
       Handle<JSObject> target,
       Handle<JSObject> handler);
 
-  bool isConstructor(Runtime *runtime) {
-    return vm::isConstructor(
-        runtime, vmcast_or_null<Callable>(slots_.target.get(runtime)));
-  }
-
-#ifdef HERMESVM_SERIALIZE
-  explicit JSCallableProxy(Deserializer &d);
-
-  friend void CallableProxySerialize(Serializer &s, const GCCell *cell);
-  friend void CallableProxyDeserialize(Deserializer &d, CellKind kind);
-#endif
+  CallResult<bool> isConstructor(Runtime *runtime);
 
   JSCallableProxy(
       Runtime *runtime,

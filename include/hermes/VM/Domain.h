@@ -63,11 +63,6 @@ class Domain final : public GCCell {
     /// Encoded as a HermesValue NativeUInt32.
     FunctionIndexOffset,
 
-    /// NativePointer to the RuntimeModule in which this CJS module lives.
-    /// Note: This must be kept alive by the Domain which allocated this
-    /// CJSModule.
-    runtimeModuleOffset,
-
     /// Number of fields used by a CJS module in the ArrayStorage.
     CJSModuleSize,
   };
@@ -83,6 +78,11 @@ class Domain final : public GCCell {
   /// this vector.
   /// Lazily allocated: field is nullptr until importCJSModuleTable() is called.
   GCPointer<ArrayStorage> cjsModules_;
+
+  /// Contains the RuntimeModule corresponding to each of the CJS modules above.
+  /// The n-th element in this array corresponds to the CJS module with offset
+  /// (n * CJSModuleSize).
+  CopyableVector<RuntimeModule *> cjsRuntimeModules_{};
 
   /// Map of { StringID => CJS module index }.
   /// Used when doing a slow require() call that needs to resolve a filename.
@@ -105,19 +105,6 @@ class Domain final : public GCCell {
   OptValue<uint32_t> cjsEntryModuleID_;
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  /// Fast constructor used by Deserializer. Do not do heap allocation.
-  Domain(Deserializer &d);
-
-  friend void DomainSerialize(Serializer &s, const GCCell *cell);
-
-  /// Serialize the ArrayStorage owned by a Domain.
-  static void serializeArrayStorage(Serializer &s, const ArrayStorage *cell);
-
-  /// Deserialize the ArrayStorage owned by a Domain.
-  static ArrayStorage *deserializeArrayStorage(Deserializer &d);
-#endif
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::DomainKind;
   }
@@ -198,9 +185,8 @@ class Domain final : public GCCell {
   /// \return the runtime module for the given cjsModuleOffset.
   RuntimeModule *getRuntimeModule(Runtime *runtime, uint32_t cjsModuleOffset)
       const {
-    return cjsModules_.get(runtime)
-        ->at(cjsModuleOffset + runtimeModuleOffset)
-        .getNativePointer<RuntimeModule>();
+    assert(cjsModuleOffset % CJSModuleSize == 0 && "Invalid cjsModuleOffset");
+    return cjsRuntimeModules_[cjsModuleOffset / CJSModuleSize];
   }
 
   /// Set the module object for the given cjsModuleOffset.
@@ -266,20 +252,9 @@ class RequireContext final : public JSObject {
   friend void RequireContextBuildMeta(
       const GCCell *cell,
       Metadata::Builder &mb);
+  friend void RequireContextSerialize(Serializer &, const GCCell *);
 
  public:
-  // We need two anonymous slots for the domain and dirname.
-  static const PropStorage::size_type ANONYMOUS_PROPERTY_SLOTS =
-      Super::ANONYMOUS_PROPERTY_SLOTS + 2;
-
-  static constexpr SlotIndex domainPropIndex() {
-    return numOverlapSlots<RequireContext>() + ANONYMOUS_PROPERTY_SLOTS - 2;
-  }
-
-  static constexpr SlotIndex dirnamePropIndex() {
-    return numOverlapSlots<RequireContext>() + ANONYMOUS_PROPERTY_SLOTS - 1;
-  }
-
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::RequireContextKind;
   }
@@ -292,29 +267,23 @@ class RequireContext final : public JSObject {
 
   /// \return the domain for this require context.
   static Domain *getDomain(Runtime *runtime, RequireContext *self) {
-    return vmcast<Domain>(
-        JSObject::getDirectSlotValue<domainPropIndex()>(self).getObject(
-            runtime));
+    return self->domain_.get(runtime);
   }
 
   /// \return the current dirname for this require context.
   static StringPrimitive *getDirname(Runtime *runtime, RequireContext *self) {
-    return vmcast<StringPrimitive>(
-        JSObject::getDirectSlotValue<dirnamePropIndex()>(self).getString(
-            runtime));
+    return self->dirname_.get(runtime);
   }
-
-#ifdef HERMESVM_SERIALIZE
-  explicit RequireContext(Deserializer &d);
-
-  friend void RequireContextDeserialize(Deserializer &d, CellKind kind);
-#endif
 
   RequireContext(
       Runtime *runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz)
       : JSObject(runtime, &vt.base, *parent, *clazz) {}
+
+ private:
+  GCPointer<Domain> domain_;
+  GCPointer<StringPrimitive> dirname_;
 };
 
 } // namespace vm

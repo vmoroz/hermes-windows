@@ -34,36 +34,10 @@ void CallableProxyBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSCallableProxy>());
   NativeFunctionBuildMeta(cell, mb);
   const auto *self = static_cast<const JSCallableProxy *>(cell);
+  mb.setVTable(&JSCallableProxy::vt.base.base);
   mb.addField("@target", &self->slots_.target);
   mb.addField("@handler", &self->slots_.handler);
 }
-
-#ifdef HERMESVM_SERIALIZE
-JSCallableProxy::JSCallableProxy(Deserializer &d)
-    : NativeFunction(
-          d,
-          &vt.base.base,
-          nullptr,
-          &JSCallableProxy::_proxyNativeCall) {
-  d.readRelocation(&slots_.target, RelocationKind::GCPointer);
-  d.readRelocation(&slots_.handler, RelocationKind::GCPointer);
-}
-
-void CallableProxySerialize(Serializer &s, const GCCell *cell) {
-  NativeFunction::serializeNativeFunctionImpl(
-      s, cell, JSObject::numOverlapSlots<JSCallableProxy>());
-  auto *self = vmcast<const JSCallableProxy>(cell);
-  s.writeRelocation(self->slots_.target.get(s.getRuntime()));
-  s.writeRelocation(self->slots_.handler.get(s.getRuntime()));
-  s.endObject(cell);
-}
-
-void CallableProxyDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::CallableProxyKind && "Expected CallableProxy");
-  auto *cell = d.getRuntime()->makeAFixed<JSCallableProxy>(d);
-  d.endObject(cell);
-}
-#endif
 
 PseudoHandle<JSCallableProxy> JSCallableProxy::create(Runtime *runtime) {
   auto *cproxy = runtime->makeAFixed<JSCallableProxy>(
@@ -71,8 +45,7 @@ PseudoHandle<JSCallableProxy> JSCallableProxy::create(Runtime *runtime) {
       Handle<JSObject>::vmcast(&runtime->objectPrototype),
       runtime->getHiddenClassForPrototype(
           runtime->objectPrototypeRawPtr,
-          JSObject::numOverlapSlots<JSCallableProxy>() +
-              ANONYMOUS_PROPERTY_SLOTS));
+          JSObject::numOverlapSlots<JSCallableProxy>()));
 
   cproxy->flags_.proxyObject = true;
 
@@ -94,6 +67,15 @@ void JSCallableProxy::setTargetAndHandler(
     Handle<JSObject> handler) {
   slots_.target.set(runtime, target.get(), &runtime->getHeap());
   slots_.handler.set(runtime, handler.get(), &runtime->getHeap());
+}
+
+CallResult<bool> JSCallableProxy::isConstructor(Runtime *runtime) {
+  ScopedNativeDepthTracker depthTracker(runtime);
+  if (LLVM_UNLIKELY(depthTracker.overflowed())) {
+    return runtime->raiseStackOverflow(Runtime::StackOverflowKind::NativeStack);
+  }
+  return vm::isConstructor(
+      runtime, vmcast_or_null<Callable>(slots_.target.get(runtime)));
 }
 
 CallResult<HermesValue>
@@ -123,22 +105,19 @@ JSCallableProxy::_proxyNativeCall(void *, Runtime *runtime, NativeArgs) {
     // OR
     //   a. Assert: IsConstructor(target) is true.
     //   b. Return ? Construct(target, argumentsList, newTarget).
-    HermesValue newTarget = callerFrame->isConstructorCall()
-        ? callerFrame.getNewTargetRef()
-        : HermesValue::encodeUndefinedValue();
     ScopedNativeCallFrame newFrame{
         runtime,
         callerFrame.getArgCount(),
         target.getHermesValue(),
-        newTarget,
+        callerFrame.getNewTargetRef(),
         callerFrame.getThisArgRef()};
     if (LLVM_UNLIKELY(newFrame.overflowed()))
       return runtime->raiseStackOverflow(
           Runtime::StackOverflowKind::NativeStack);
     std::uninitialized_copy_n(
-        &(callerFrame->getArgRefUnsafe(0)),
+        callerFrame.argsBegin(),
         callerFrame.getArgCount(),
-        &(newFrame->getArgRefUnsafe(0)));
+        newFrame->argsBegin());
     // I know statically that target is a Callable, but storing it as
     // a Callable makes it much harder to share all the JSProxy code,
     // so we cast here.
@@ -199,7 +178,12 @@ CallResult<PseudoHandle<JSObject>> JSCallableProxy::_newObjectImpl(
     Handle<Callable> callable,
     Runtime *runtime,
     Handle<JSObject> protoHandle) {
-  if (!vmcast<JSCallableProxy>(*callable)->isConstructor(runtime)) {
+  CallResult<bool> isConstructorRes =
+      vmcast<JSCallableProxy>(*callable)->isConstructor(runtime);
+  if (LLVM_UNLIKELY(isConstructorRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  if (!*isConstructorRes) {
     return runtime->raiseTypeError("Function is not a constructor");
   }
   return vm::Callable::newObject(

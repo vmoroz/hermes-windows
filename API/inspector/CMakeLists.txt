@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# We are building 'hermesinspector.dll' using code from react-native, folly, boost etc.
+
 set(inspector_sources
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp

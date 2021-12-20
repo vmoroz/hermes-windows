@@ -366,23 +366,10 @@ class JSObject : public GCCell {
   // has justified doing this.
   struct Helper;
 
-#ifdef HERMESVM_SERIALIZE
-  /// A constructor used by deserializeion which performs no GC allocation.
-  JSObject(Deserializer &d, const VTable *vtp);
-
-  static void
-  serializeObjectImpl(Serializer &s, const GCCell *cell, unsigned overlapSlots);
-#endif
-
   static const ObjectVTable vt;
 
   /// Default capacity of indirect property storage.
   static const PropStorage::size_type DEFAULT_PROPERTY_CAPACITY = 4;
-
-  /// Number of property slots used by the implementation that are unnamed,
-  /// meaning they are invisible to user code. Child classes should override
-  /// this value by adding to it and defining a constant with the same name.
-  static const PropStorage::size_type ANONYMOUS_PROPERTY_SLOTS = 0;
 
   /// Number of property slots used by the implementation that are named,
   /// meaning they are also visible to user code. Child classes should override
@@ -390,7 +377,7 @@ class JSObject : public GCCell {
   static const PropStorage::size_type NAMED_PROPERTY_SLOTS = 0;
 
   /// Number of property slots allocated directly inside the object.
-  static const PropStorage::size_type DIRECT_PROPERTY_SLOTS = 6;
+  static const PropStorage::size_type DIRECT_PROPERTY_SLOTS = 5;
 
   static bool classof(const GCCell *cell) {
     return kindInRange(
@@ -1558,6 +1545,10 @@ constexpr size_t JSObject::cellSizeJSObject() {
           directPropsOffset() +
               sizeof(GCSmallHermesValue) * DIRECT_PROPERTY_SLOTS,
       "unexpected padding");
+  static_assert(
+      heapAlignSize(sizeof(JSObjectAndDirectProps)) ==
+          sizeof(JSObjectAndDirectProps),
+      "Wasted direct slot due to alignment");
   return sizeof(JSObjectAndDirectProps);
 }
 
@@ -1668,8 +1659,7 @@ inline CallResult<PseudoHandle<JSObject>> JSObject::allocatePropStorage(
 
 template <typename T>
 inline T *JSObject::initDirectPropStorage(Runtime *runtime, T *self) {
-  constexpr auto count = numOverlapSlots<T>() + T::ANONYMOUS_PROPERTY_SLOTS +
-      T::NAMED_PROPERTY_SLOTS;
+  constexpr auto count = numOverlapSlots<T>() + T::NAMED_PROPERTY_SLOTS;
   static_assert(
       count <= DIRECT_PROPERTY_SLOTS,
       "smallPropStorage size must fit in direct properties");

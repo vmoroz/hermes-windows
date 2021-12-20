@@ -46,6 +46,17 @@ elseif (MINGW) # FIXME: Also cygwin?
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack,16777216")
 endif ()
 
+if(MSVC)
+  # FastDebug Flavor
+  # 1. Optmize for speed.
+  # 2. Enable full Inlining
+  # 3. Link against debug flavored VCRT
+  # Note: /O2 and RTC1 are incompatible
+  # TODO: /Ox is more debug friendly ?
+  string(APPEND CMAKE_CXX_FLAGS_FASTDEBUG "/MDd /O2 /Ob2")
+  string(APPEND CMAKE_C_FLAGS_FASTDEBUG "/MDd /O2 /Ob2")
+endif()
+
 if (WIN32)
   set(LLVM_HAVE_LINK_VERSION_SCRIPT 0)
   if (CYGWIN)
@@ -82,7 +93,7 @@ function(hermes_update_compile_flags name)
     set(flags "${flags} /Gy")
     
     # Ensure debug symbols are generated for all sources.
-    set(flags "${compile_flags} /Zi")
+    set(flags "${flags} /Zi")
   #endif ()
 
   if (HERMES_ENABLE_EH)
@@ -265,8 +276,9 @@ if (MSVC)
     -D_SCL_SECURE_NO_WARNINGS
   )
 
+  # Security flags.
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE /guard:cf")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE /guard:cf")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE /guard:cf")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /guard:cf")
 
   # Tell MSVC to use the Unicode version of the Win32 APIs instead of ANSI.
@@ -395,11 +407,11 @@ if (GCC_COMPATIBLE)
     # recommendations for older compilers that do not implement C++ Core Issue 1579.
     check_cxx_compiler_flag("-Wredundant-move" REDUNDANT_MOVE_FLAG)
     append_if(REDUNDANT_MOVE_FLAG "-Wno-redundant-move" CMAKE_CXX_FLAGS)
-
-    # This warning generates a lot of noise in gtest.
-    check_cxx_compiler_flag("-Wdeprecated-copy" DEPRECATED_COPY_FLAG)
-    append_if(DEPRECATED_COPY_FLAG "-Wno-deprecated-copy" CMAKE_CXX_FLAGS)
   endif ()
+
+  # This warning generates a lot of noise in gtest.
+  check_cxx_compiler_flag("-Wdeprecated-copy" DEPRECATED_COPY_FLAG)
+  append_if(DEPRECATED_COPY_FLAG "-Wno-deprecated-copy" CMAKE_CXX_FLAGS)
 
   # Disable -Wclass-memaccess, a C++-only warning from GCC 8 that fires on
   # LLVM's ADT classes.
@@ -432,6 +444,9 @@ if (GCC_COMPATIBLE)
 
   # Enable -Wdelete-non-virtual-dtor if available.
   add_flag_if_supported("-Wdelete-non-virtual-dtor" DELETE_NON_VIRTUAL_DTOR_FLAG)
+
+  # Avoid triggering arbitrary UB when converting doubles to ints.
+  add_flag_if_supported("-fno-strict-float-cast-overflow" NO_STRICT_FLOAT_CAST_OVERFLOW_FLAG)
 
   # Disable range loop analysis warnings.
   check_cxx_compiler_flag("-Wrange-loop-analysis" RANGE_ANALYSIS_FLAG)

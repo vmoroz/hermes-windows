@@ -25,7 +25,6 @@ struct HermesStringImpl : public IHermesString {
 
   HermesStringImpl(std::string &&str) : str_(std::move(str)){};
   HermesStringImpl(const std::string &str) : str_(str){};
-  // HermesStringImpl(std::string str) : str_(str){};
   std::string str_;
   ~HermesStringImpl() {
     

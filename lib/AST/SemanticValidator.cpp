@@ -510,6 +510,11 @@ void SemanticValidator::visit(ImportDeclarationNode *importDecl) {
         "'import' statement requires module mode");
   }
 
+  if (compile_ && !importDecl->_assertions.empty()) {
+    sm_.error(
+        importDecl->getSourceRange(), "import assertions are not supported");
+  }
+
   curFunction()->semInfo->imports.push_back(importDecl);
   visitESTreeChildren(*this, importDecl);
 }

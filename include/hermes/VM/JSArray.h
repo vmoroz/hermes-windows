@@ -20,22 +20,7 @@ class ArrayImpl : public JSObject {
   using Super = JSObject;
   friend void ArrayImplBuildMeta(const GCCell *cell, Metadata::Builder &mb);
 
-  static constexpr size_t indexedStoragePropIndex() {
-    return numOverlapSlots<ArrayImpl>() + ANONYMOUS_PROPERTY_SLOTS - 1;
-  }
-
  public:
-#ifdef HERMESVM_SERIALIZE
-  ArrayImpl(Deserializer &d, const VTable *vt);
-
-  friend void
-  serializeArrayImpl(Serializer &s, const GCCell *cell, unsigned overlapSlots);
-#endif
-
-  /// Add an anonymous property slot to hold the indexedStorage pointer.
-  static const PropStorage::size_type ANONYMOUS_PROPERTY_SLOTS =
-      Super::ANONYMOUS_PROPERTY_SLOTS + 1;
-
   static bool classof(const GCCell *cell) {
     return kindInRange(
         cell->getKind(),
@@ -130,16 +115,13 @@ class ArrayImpl : public JSObject {
   /// Get a pointer to the indexed storage for this array. The returned value
   /// may be null if there is no indexed storage.
   StorageType *getIndexedStorage(PointerBase *base) const {
-    return vmcast_or_null<StorageType>(
-        JSObject::getDirectSlotValue<indexedStoragePropIndex()>(this).getObject(
-            base));
+    return indexedStorage_.get(base);
   }
 
   /// Set the indexed storage of this array to be \p p. The pointer is allowed
   /// to be null.
   void setIndexedStorage(PointerBase *base, StorageType *p, GC *gc) {
-    JSObject::setDirectSlotValue<indexedStoragePropIndex()>(
-        this, SmallHermesValue::encodeObjectValue(p, base), gc);
+    indexedStorage_.set(base, p, gc);
   }
 
   /// @}
@@ -241,6 +223,8 @@ class ArrayImpl : public JSObject {
   uint32_t beginIndex_{0};
   /// One past the last index contained in the storage.
   uint32_t endIndex_{0};
+  /// The indexed storage for this array.
+  GCPointer<StorageType> indexedStorage_;
 };
 
 class Arguments final : public ArrayImpl {
@@ -265,12 +249,6 @@ class Arguments final : public ArrayImpl {
       Handle<Callable> curFunction,
       bool strictMode);
 
-#ifdef HERMESVM_SERIALIZE
-  explicit Arguments(Deserializer &d);
-
-  friend void ArgumentsDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   Arguments(
       Runtime *runtime,
       Handle<JSObject> parent,
@@ -285,8 +263,7 @@ class JSArray final : public ArrayImpl {
   friend class JSObject;
 
   static constexpr SlotIndex jsArrayPropertyCount() {
-    return numOverlapSlots<JSArray>() + ANONYMOUS_PROPERTY_SLOTS +
-        NAMED_PROPERTY_SLOTS;
+    return numOverlapSlots<JSArray>() + NAMED_PROPERTY_SLOTS;
   }
 
   static constexpr inline SlotIndex lengthPropIndex() {
@@ -294,12 +271,6 @@ class JSArray final : public ArrayImpl {
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  JSArray(Deserializer &d, const VTable *vt);
-
-  friend void ArraySerialize(Serializer &s, const GCCell *cell);
-#endif
-
   static const ObjectVTable vt;
 
   // We need one more slot for the '.length' property.
@@ -430,13 +401,6 @@ class JSArrayIterator : public JSObject {
       Runtime *runtime);
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  explicit JSArrayIterator(Deserializer &d);
-
-  friend void ArrayIteratorSerialize(Serializer &s, const GCCell *cell);
-  friend void ArrayIteratorDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   JSArrayIterator(
       Runtime *runtime,
       Handle<JSObject> parent,

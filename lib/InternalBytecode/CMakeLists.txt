@@ -34,7 +34,7 @@ set(JS_COMPILER_FLAGS "-O" "-Wno-undefined-variable")
 
 # Concatenate all JS files into one source file for compilation.
 # This way there is only one RuntimeModule made for them.
-if(NOT WIN32)
+if(NOT CMAKE_HOST_WIN32)
   set(concatenate "cat")
 else()
   set(concatenate "type")
@@ -62,7 +62,7 @@ add_custom_command(
 # Compile the one source file to Hermes bytecode.
 add_custom_command(
   OUTPUT InternalBytecode.hbc
-  COMMAND ${hermesc_EXE} ${JS_COMPILER_FLAGS} -fno-enable-tdz -emit-binary -out=${CMAKE_CURRENT_BINARY_DIR}/InternalBytecode.hbc ${CMAKE_CURRENT_BINARY_DIR}/InternalBytecode.js
+  COMMAND ${hermesc_EXE} ${JS_COMPILER_FLAGS} -emit-binary -out=${CMAKE_CURRENT_BINARY_DIR}/InternalBytecode.hbc ${CMAKE_CURRENT_BINARY_DIR}/InternalBytecode.js
   DEPENDS ${hermesc_EXE} InternalBytecode.js
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   VERBATIM

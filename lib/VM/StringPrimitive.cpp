@@ -19,204 +19,40 @@
 namespace hermes {
 namespace vm {
 
-// Has nothing to do, just here to stop linker errors.
 void DynamicASCIIStringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
+    Metadata::Builder &mb) {
+  mb.setVTable(&DynamicASCIIStringPrimitive::vt);
+}
 void DynamicUTF16StringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
-
-#ifdef HERMESVM_SERIALIZE
-template <typename T, bool Uniqued>
-void serializeDynamicStringImpl(Serializer &s, const GCCell *cell) {
-  const auto *self = vmcast<const DynamicStringPrimitive<T, Uniqued>>(cell);
-  // Write string length.
-  s.writeInt<uint32_t>(self->lengthAndUniquedFlag_);
-  if (Uniqued) {
-    // If isUniqued, also writes SymbolID.
-    s.writeInt<uint32_t>(
-        (self->isUniqued() ? self->getUniqueID() : SymbolID::empty())
-            .unsafeGetRaw());
-  }
-  // Writes the actual string.
-  s.writeData(self->getRawPointer(), self->getStringLength() * sizeof(T));
-  s.endObject(cell);
+    Metadata::Builder &mb) {
+  mb.setVTable(&DynamicUTF16StringPrimitive::vt);
 }
-
-template <typename T, bool Uniqued>
-void deserializeDynamicStringImpl(Deserializer &d) {
-  uint32_t lengthAndUniquedFlag = d.readInt<uint32_t>();
-  uint32_t length = lengthAndUniquedFlag &
-      ~DynamicStringPrimitive<T, Uniqued>::LENGTH_FLAG_UNIQUED;
-  bool uniqued = lengthAndUniquedFlag &
-      DynamicStringPrimitive<T, Uniqued>::LENGTH_FLAG_UNIQUED;
-  SymbolID uniqueID{};
-  if (Uniqued) {
-    uniqueID = SymbolID::unsafeCreate(d.readInt<uint32_t>());
-  }
-
-  auto *cell =
-      d.getRuntime()->makeAVariable<DynamicStringPrimitive<T, Uniqued>>(
-          DynamicStringPrimitive<T, Uniqued>::allocationSize(length),
-          d.getRuntime(),
-          length);
-  if (uniqued)
-    cell->convertToUniqued(uniqueID);
-  d.readData(cell->getRawPointerForWrite(), length * sizeof(T));
-
-  d.endObject(cell);
-}
-
-void DynamicASCIIStringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeDynamicStringImpl<char, false>(s, cell);
-}
-
-void DynamicUTF16StringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeDynamicStringImpl<char16_t, false>(s, cell);
-}
-
-void DynamicUniquedASCIIStringPrimitiveSerialize(
-    Serializer &s,
-    const GCCell *cell) {
-  serializeDynamicStringImpl<char, true>(s, cell);
-}
-
-void DynamicUniquedUTF16StringPrimitiveSerialize(
-    Serializer &s,
-    const GCCell *cell) {
-  serializeDynamicStringImpl<char16_t, true>(s, cell);
-}
-
-void DynamicASCIIStringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::DynamicASCIIStringPrimitiveKind &&
-      "Expected DynamicASCIIStringPrimitive");
-  deserializeDynamicStringImpl<char, false>(d);
-}
-
-void DynamicUTF16StringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::DynamicUTF16StringPrimitiveKind &&
-      "Expected DynamicUTF16StringPrimitive");
-  deserializeDynamicStringImpl<char16_t, false>(d);
-}
-
-void DynamicUniquedASCIIStringPrimitiveDeserialize(
-    Deserializer &d,
-    CellKind kind) {
-  assert(
-      kind == CellKind::DynamicUniquedASCIIStringPrimitiveKind &&
-      "Expected DynamicUniquedASCIIStringPrimitive");
-  deserializeDynamicStringImpl<char, true>(d);
-}
-
-void DynamicUniquedUTF16StringPrimitiveDeserialize(
-    Deserializer &d,
-    CellKind kind) {
-  assert(
-      kind == CellKind::DynamicUniquedUTF16StringPrimitiveKind &&
-      "Expected DynamicUniquedUTF16StringPrimitive");
-  deserializeDynamicStringImpl<char16_t, true>(d);
-}
-#endif
 
 void DynamicUniquedASCIIStringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
+    Metadata::Builder &mb) {
+  mb.setVTable(&DynamicUniquedASCIIStringPrimitive::vt);
+}
 
 void DynamicUniquedUTF16StringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
+    Metadata::Builder &mb) {
+  mb.setVTable(&DynamicUniquedUTF16StringPrimitive::vt);
+}
 
 void ExternalASCIIStringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
+    Metadata::Builder &mb) {
+  mb.setVTable(&ExternalASCIIStringPrimitive::vt);
+}
 
 void ExternalUTF16StringPrimitiveBuildMeta(
     const GCCell *cell,
-    Metadata::Builder &mb) {}
-
-#ifdef HERMESVM_SERIALIZE
-template <typename T>
-void serializeExternalStringImpl(Serializer &s, const GCCell *cell) {
-  const auto *self = vmcast<const ExternalStringPrimitive<T>>(cell);
-  s.writeInt<uint32_t>(self->lengthAndUniquedFlag_);
-  s.writeInt<uint32_t>(
-      (self->isUniqued() ? self->getUniqueID() : SymbolID::empty())
-          .unsafeGetRaw());
-  // Writes the actual string.
-  s.writeData(self->getRawPointer(), self->getStringLength() * sizeof(T));
-  // contents_.data() is tracked by IDTracker for heapsnapshot. We should do
-  // relocation for it.
-  s.endObject((void *)self->contents_.data());
-
-  s.endObject(cell);
+    Metadata::Builder &mb) {
+  mb.setVTable(&ExternalUTF16StringPrimitive::vt);
 }
-
-template <typename T>
-void deserializeExternalStringImpl(Deserializer &d) {
-  // Deserialize the data.
-  uint32_t lengthAndUniquedFlag = d.readInt<uint32_t>();
-  uint32_t length =
-      lengthAndUniquedFlag & ~ExternalStringPrimitive<T>::LENGTH_FLAG_UNIQUED;
-  bool uniqued = length & ExternalStringPrimitive<T>::LENGTH_FLAG_UNIQUED;
-  assert(
-      ExternalStringPrimitive<T>::isSafeExternalLength(length) &&
-      "length should be external");
-  if (LLVM_UNLIKELY(length > ExternalStringPrimitive<T>::MAX_STRING_LENGTH))
-    hermes_fatal("String length exceeds limit");
-  uint32_t allocSize = length * sizeof(T);
-  if (LLVM_UNLIKELY(
-          !d.getRuntime()->getHeap().canAllocExternalMemory(allocSize))) {
-    hermes_fatal("Cannot allocate an external string primitive.");
-  }
-
-  auto uniqueID = SymbolID::unsafeCreate(d.readInt<uint32_t>());
-  std::basic_string<T> contents(length, '\0');
-  d.readData(&contents[0], length * sizeof(T));
-
-  // Construct an ExternalStringPrimitive from what we deserialized.
-  auto *cell =
-      d.getRuntime()
-          ->makeAVariable<ExternalStringPrimitive<T>, HasFinalizer::Yes>(
-              sizeof(ExternalStringPrimitive<T>),
-              d.getRuntime(),
-              std::move(contents));
-  if (uniqued)
-    cell->convertToUniqued(uniqueID);
-
-  // contents_.data() is tracked by IDTracker for heapsnapshot. We should do
-  // relocation for it.
-  d.endObject((void *)cell->contents_.data());
-
-  d.getRuntime()->getHeap().creditExternalMemory(
-      cell, cell->calcExternalMemorySize());
-  d.endObject(cell);
-}
-
-void ExternalASCIIStringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeExternalStringImpl<char>(s, cell);
-}
-
-void ExternalUTF16StringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeExternalStringImpl<char16_t>(s, cell);
-}
-
-void ExternalASCIIStringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::ExternalASCIIStringPrimitiveKind &&
-      "Expected ExternalASCIIStringPrimitive");
-  deserializeExternalStringImpl<char>(d);
-}
-
-void ExternalUTF16StringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::ExternalUTF16StringPrimitiveKind &&
-      "Expected ExternalUTF16StringPrimitive");
-  deserializeExternalStringImpl<char16_t>(d);
-}
-#endif
 
 template <typename T>
 CallResult<HermesValue> StringPrimitive::createEfficientImpl(
@@ -680,12 +516,14 @@ void BufferedASCIIStringPrimitiveBuildMeta(
     const GCCell *cell,
     Metadata::Builder &mb) {
   const auto *self = static_cast<const BufferedASCIIStringPrimitive *>(cell);
+  mb.setVTable(&BufferedASCIIStringPrimitive::vt);
   mb.addField("storage", &self->concatBufferHV_);
 }
 void BufferedUTF16StringPrimitiveBuildMeta(
     const GCCell *cell,
     Metadata::Builder &mb) {
   const auto *self = static_cast<const BufferedUTF16StringPrimitive *>(cell);
+  mb.setVTable(&BufferedUTF16StringPrimitive::vt);
   mb.addField("storage", &self->concatBufferHV_);
 }
 
@@ -826,36 +664,6 @@ PseudoHandle<StringPrimitive> internalConcatStringPrimitives(
     return BufferedUTF16StringPrimitive::create(runtime, leftHnd, rightHnd);
   }
 }
-
-#ifdef HERMESVM_SERIALIZE
-template <typename T>
-void serializeConcatStringImpl(Serializer &s, const GCCell *cell) {}
-
-template <typename T>
-void deserializeConcatStringImpl(Deserializer &d) {}
-
-void BufferedASCIIStringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeConcatStringImpl<char>(s, cell);
-}
-
-void BufferedUTF16StringPrimitiveSerialize(Serializer &s, const GCCell *cell) {
-  serializeConcatStringImpl<char16_t>(s, cell);
-}
-
-void BufferedASCIIStringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::BufferedASCIIStringPrimitiveKind &&
-      "Expected BufferedASCIIStringPrimitive");
-  deserializeConcatStringImpl<char>(d);
-}
-
-void BufferedUTF16StringPrimitiveDeserialize(Deserializer &d, CellKind kind) {
-  assert(
-      kind == CellKind::BufferedUTF16StringPrimitiveKind &&
-      "Expected BufferedUTF16StringPrimitive");
-  deserializeConcatStringImpl<char16_t>(d);
-}
-#endif
 
 template <typename T>
 void BufferedStringPrimitive<T>::_snapshotAddEdgesImpl(

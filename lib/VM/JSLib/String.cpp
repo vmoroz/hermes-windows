@@ -36,8 +36,7 @@ namespace vm {
 /// String.
 
 Handle<JSObject> createStringConstructor(Runtime *runtime) {
-  auto stringPrototype =
-      Handle<PrimitiveBox>::vmcast(&runtime->stringPrototype);
+  auto stringPrototype = Handle<JSString>::vmcast(&runtime->stringPrototype);
 
   auto cons = defineSystemConstructor<JSString>(
       runtime,
@@ -575,7 +574,8 @@ stringPrototypeToString(void *, Runtime *runtime, NativeArgs args) {
   auto *strPtr = dyn_vmcast<JSString>(args.getThisArg());
   if (strPtr) {
     // Only return the string if called on a String object.
-    return JSString::getPrimitiveValue(strPtr).unboxToHV(runtime);
+    return HermesValue::encodeStringValue(
+        JSString::getPrimitiveString(strPtr, runtime));
   }
   return runtime->raiseTypeError(
       "String.prototype.toString() called on non-string object");
@@ -871,7 +871,7 @@ stringPrototypeToLowerCase(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue>
 stringPrototypeToLocaleLowerCase(void *ctx, Runtime *runtime, NativeArgs args) {
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
   return intlStringPrototypeToLocaleLowerCase(/* unused */ ctx, runtime, args);
 #else
   if (LLVM_UNLIKELY(
@@ -905,7 +905,7 @@ stringPrototypeToUpperCase(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue>
 stringPrototypeToLocaleUpperCase(void *ctx, Runtime *runtime, NativeArgs args) {
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
   return intlStringPrototypeToLocaleUpperCase(/* unused */ ctx, runtime, args);
 #else
   if (LLVM_UNLIKELY(
@@ -1075,7 +1075,7 @@ stringPrototypeTrimEnd(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue>
 stringPrototypeLocaleCompare(void *ctx, Runtime *runtime, NativeArgs args) {
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
   return intlStringPrototypeLocaleCompare(/* unused */ ctx, runtime, args);
 #else
   auto thisValue = args.getThisHandle();

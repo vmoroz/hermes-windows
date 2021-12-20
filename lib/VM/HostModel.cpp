@@ -9,9 +9,6 @@
 
 #include "hermes/VM/BuildMetadata.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 
@@ -41,19 +38,8 @@ void FinalizableNativeFunctionBuildMeta(
   mb.addJSObjectOverlapSlots(
       JSObject::numOverlapSlots<FinalizableNativeFunction>());
   NativeFunctionBuildMeta(cell, mb);
+  mb.setVTable(&FinalizableNativeFunction::vt.base.base);
 }
-
-#ifdef HERMESVM_SERIALIZE
-void FinalizableNativeFunctionSerialize(Serializer &s, const GCCell *cell) {
-  llvh::outs()
-      << "Serialize function not implemented for FinalizableNativeFunction\n";
-}
-
-void FinalizableNativeFunctionDeserialize(Deserializer &d, CellKind kind) {
-  llvh::outs()
-      << "Deserialize function not implemented for FinalizableNativeFunction\n";
-}
-#endif
 
 CallResult<HermesValue> FinalizableNativeFunction::createWithoutPrototype(
     Runtime *runtime,
@@ -69,9 +55,7 @@ CallResult<HermesValue> FinalizableNativeFunction::createWithoutPrototype(
           runtime,
           parentHandle,
           runtime->getHiddenClassForPrototype(
-              *parentHandle,
-              numOverlapSlots<FinalizableNativeFunction>() +
-                  ANONYMOUS_PROPERTY_SLOTS),
+              *parentHandle, numOverlapSlots<FinalizableNativeFunction>()),
           context,
           functionPtr,
           finalizePtr);
@@ -113,19 +97,8 @@ const ObjectVTable HostObject::vt{
 void HostObjectBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<HostObject>());
   ObjectBuildMeta(cell, mb);
+  mb.setVTable(&HostObject::vt.base);
 }
-
-#ifdef HERMESVM_SERIALIZE
-void HostObjectSerialize(Serializer &s, const GCCell *cell) {
-  LLVM_DEBUG(
-      llvh::dbgs() << "Serialize function not implemented for HostObject\n");
-}
-
-void HostObjectDeserialize(Deserializer &d, CellKind kind) {
-  LLVM_DEBUG(
-      llvh::dbgs() << "Deserialize function not implemented for HostObject\n");
-}
-#endif
 
 CallResult<HermesValue> HostObject::createWithoutPrototype(
     Runtime *runtime,
@@ -136,8 +109,7 @@ CallResult<HermesValue> HostObject::createWithoutPrototype(
       runtime,
       parentHandle,
       runtime->getHiddenClassForPrototype(
-          *parentHandle,
-          numOverlapSlots<HostObject>() + ANONYMOUS_PROPERTY_SLOTS),
+          *parentHandle, numOverlapSlots<HostObject>()),
       std::move(proxy));
 
   hostObj->flags_.hostObject = true;
@@ -147,5 +119,3 @@ CallResult<HermesValue> HostObject::createWithoutPrototype(
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

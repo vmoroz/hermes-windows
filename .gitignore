@@ -31,3 +31,6 @@ test/ApplePlatformsIntegrationTestApp/ApplePlatformsIntegrationTestApp.xcworkspa
 .vs
 /.vscode
 /CMakeSettings.json
+
+# Intl testing
+android/intltest/java/com/facebook/hermes/test/assets/**

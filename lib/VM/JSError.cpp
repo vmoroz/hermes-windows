@@ -41,35 +41,10 @@ void ErrorBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSError>());
   ObjectBuildMeta(cell, mb);
   const auto *self = static_cast<const JSError *>(cell);
+  mb.setVTable(&JSError::vt.base);
   mb.addField("funcNames", &self->funcNames_);
   mb.addField("domains", &self->domains_);
 }
-
-#ifdef HERMESVM_SERIALIZE
-void ErrorSerialize(Serializer &s, const GCCell *cell) {
-  JSObject::serializeObjectImpl(s, cell, JSObject::numOverlapSlots<JSError>());
-  // TODO: Finish serialize/deserialize stacktrace if we want to
-  // serialize/deserialize after user code.
-
-  auto *self = vmcast<const JSError>(cell);
-  s.writeRelocation(self->domains_.get(s.getRuntime()));
-  s.writeRelocation(self->funcNames_.get(s.getRuntime()));
-  s.writeInt<uint8_t>(self->catchable_);
-  s.endObject(cell);
-}
-
-void ErrorDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::ErrorKind && "Expected JSError");
-  auto *cell = d.getRuntime()->makeAFixed<JSError, HasFinalizer::Yes>(d);
-  d.endObject(cell);
-}
-
-JSError::JSError(Deserializer &d) : JSObject(d, &vt.base) {
-  d.readRelocation(&domains_, RelocationKind::GCPointer);
-  d.readRelocation(&funcNames_, RelocationKind::GCPointer);
-  catchable_ = d.readInt<uint8_t>();
-}
-#endif
 
 CallResult<HermesValue>
 errorStackGetter(void *, Runtime *runtime, NativeArgs args) {
@@ -169,7 +144,7 @@ PseudoHandle<JSError> JSError::create(
       runtime,
       parentHandle,
       runtime->getHiddenClassForPrototype(
-          *parentHandle, numOverlapSlots<JSError>() + ANONYMOUS_PROPERTY_SLOTS),
+          *parentHandle, numOverlapSlots<JSError>()),
       catchable);
   return JSObjectInit::initToPseudoHandle(runtime, cell);
 }
@@ -305,7 +280,9 @@ static Handle<PropStorage> getCallStackFunctionNames(
         name = HermesValue::encodeStringValue(
             runtime->getPredefinedString(Predefined::proxyTrap));
       }
-    } else if (cf.getCalleeClosureOrCBRef().isNativeValue()) {
+    } else if (!cf.getCalleeClosureOrCBRef().isObject()) {
+      // If CalleeClosureOrCB is not an object pointer, then it must be a native
+      // pointer to a CodeBlock.
       auto *cb =
           cf.getCalleeClosureOrCBRef().getNativePointer<const CodeBlock>();
       if (cb->getNameMayAllocate().isValid())

@@ -232,8 +232,8 @@ hermesBuiltinThrowTypeError(void *, Runtime *runtime, NativeArgs args) {
 /// \return `undefined`
 CallResult<HermesValue>
 hermesBuiltinGeneratorSetDelegated(void *, Runtime *runtime, NativeArgs args) {
-  auto *gen = dyn_vmcast_or_null<GeneratorInnerFunction>(
-      runtime->getCurrentFrame().getPreviousFrame().getCalleeClosure());
+  auto *gen = dyn_vmcast<GeneratorInnerFunction>(
+      runtime->getCurrentFrame().getPreviousFrame().getCalleeClosureOrCBRef());
   if (!gen) {
     return runtime->raiseTypeError(
         "generatorSetDelegated can only be called as part of yield*");
@@ -514,9 +514,11 @@ hermesBuiltinCopyRestArgs(void *, Runtime *runtime, NativeArgs args) {
   auto array = *cr;
   JSArray::setStorageEndIndex(array, runtime, length);
 
+  NoAllocScope noAlloc{runtime};
+  JSArray *arrPtr = array.get();
   for (uint32_t i = 0; i != length; ++i) {
-    array->unsafeSetExistingElementAt(
-        array.get(), runtime, i, it->getArgRef(from));
+    JSArray::unsafeSetExistingElementAt(
+        arrPtr, runtime, i, it->getArgRef(from));
     ++from;
   }
 

@@ -34,16 +34,8 @@ StackFramePtrT<isConst>::getCalleeCodeBlock() const {
     else
       return nullptr;
   } else {
-    assert(
-        ref.isNativeValue() &&
-        "getCalleeClosureOrCBRef must be NativeValue or Object");
     return ref.template getNativePointer<CodeBlock>();
   }
-}
-
-template <bool isConst>
-inline Callable *StackFramePtrT<isConst>::getCalleeClosure() const {
-  return dyn_vmcast<Callable>(getCalleeClosureOrCBRef());
 }
 
 template <bool isConst>

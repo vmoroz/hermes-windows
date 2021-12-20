@@ -19,9 +19,13 @@ namespace hbc {
 class BackendContext;
 }
 
+#ifdef HERMES_RUN_WASM
+class EmitWasmIntrinsicsContext;
+#endif // HERMES_RUN_WASM
+
 struct CodeGenerationSettings {
   /// Whether we should emit TDZ checks.
-  bool enableTDZ{true};
+  bool enableTDZ{false};
   /// Whether we can assume there are unlimited number of registers.
   /// This affects how we generate the IR, as we can decide whether
   /// to hold as many temporary values as we like.
@@ -48,9 +52,6 @@ struct OptimizationSettings {
   /// Enable any inlining of functions.
   bool inlining{true};
 
-  /// Enable IR outlining.
-  bool outlining{false};
-
   /// Reuse property cache entries for same property name.
   bool reusePropCache{true};
 
@@ -60,6 +61,9 @@ struct OptimizationSettings {
 
   /// Attempt to resolve CommonJS require() calls at compile time.
   bool staticRequire{false};
+
+  /// Recognize and emit Asm.js/Wasm unsafe compiler intrinsics.
+  bool useUnsafeIntrinsics{false};
 };
 
 enum class DebugInfoSetting {
@@ -188,6 +192,9 @@ class Context {
   /// Whether to parse Flow type syntax.
   ParseFlowSetting parseFlow_{ParseFlowSetting::NONE};
 
+  /// Whether to parse TypeScript syntax.
+  bool parseTS_{false};
+
   /// If non-null, the resolution table which resolves static require().
   const std::unique_ptr<ResolutionTable> resolutionTable_;
 
@@ -209,6 +216,10 @@ class Context {
   /// The HBC backend context. We use a shared pointer to avoid any dependencies
   /// on its destructor.
   std::shared_ptr<hbc::BackendContext> hbcBackendContext_{};
+
+#ifdef HERMES_RUN_WASM
+  std::shared_ptr<EmitWasmIntrinsicsContext> wasmIntrinsicsContext_{};
+#endif // HERMES_RUN_WASM
 
  public:
   explicit Context(
@@ -253,6 +264,10 @@ class Context {
   }
 
   SourceErrorManager &getSourceErrorManager() {
+    return sm_;
+  }
+
+  const SourceErrorManager &getSourceErrorManager() const {
     return sm_;
   }
 
@@ -329,6 +344,18 @@ class Context {
     return parseFlow_ == ParseFlowSetting::ALL;
   }
 
+  void setParseTS(bool parseTS) {
+    parseTS_ = parseTS;
+  }
+  bool getParseTS() const {
+    return parseTS_;
+  }
+
+  /// \return true if either TS or Flow is being parsed.
+  bool getParseTypes() const {
+    return getParseFlow() || getParseTS();
+  }
+
   bool isLazyCompilation() const {
     return lazyCompilation_;
   }
@@ -377,6 +404,10 @@ class Context {
     return optimizationSettings_.staticBuiltins;
   }
 
+  bool getUseUnsafeIntrinsics() const {
+    return optimizationSettings_.useUnsafeIntrinsics;
+  }
+
   const CodeGenerationSettings &getCodeGenerationSettings() const {
     return codeGenerationSettings_;
   }
@@ -403,6 +434,17 @@ class Context {
       std::shared_ptr<hbc::BackendContext> hbcBackendContext) {
     hbcBackendContext_ = std::move(hbcBackendContext);
   }
+
+#ifdef HERMES_RUN_WASM
+  EmitWasmIntrinsicsContext *getWasmIntrinsicsContext() {
+    return wasmIntrinsicsContext_.get();
+  }
+
+  void setWasmIntrinsicsContext(
+      std::shared_ptr<EmitWasmIntrinsicsContext> wasmIntrinsicsContext) {
+    wasmIntrinsicsContext_ = std::move(wasmIntrinsicsContext);
+  }
+#endif // HERMES_RUN_WASM
 };
 
 } // namespace hermes

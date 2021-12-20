@@ -24,12 +24,6 @@ class PropertyAccessor final : public GCCell {
         getter(runtime, *getter, &runtime->getHeap()),
         setter(runtime, *setter, &runtime->getHeap()) {}
 
-#ifdef HERMESVM_SERIALIZE
-  /// Fast constructor used by deserialization. Don't do any GC allocation. Only
-  /// calls super Constructor.
-  PropertyAccessor(Deserializer &d);
-#endif
-
   static const VTable vt;
 
   static bool classof(const GCCell *cell) {
@@ -38,11 +32,6 @@ class PropertyAccessor final : public GCCell {
 
   GCPointer<Callable> getter{};
   GCPointer<Callable> setter{};
-
-#if (defined(HERMESVM_GC_HADES) || defined(HERMESVM_GC_RUNTIME))
-  // Unused padding just to meet the minimum allocation requirements from Hades.
-  int8_t _padding_[4];
-#endif
 
   static CallResult<HermesValue>
   create(Runtime *runtime, Handle<Callable> getter, Handle<Callable> setter);

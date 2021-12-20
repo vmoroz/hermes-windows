@@ -12,9 +12,6 @@
 #include "hermes/VM/GCPointer-inline.h"
 #include "hermes/VM/Operations.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 //===----------------------------------------------------------------------===//
@@ -26,39 +23,13 @@ const VTable HashMapEntry::vt{
 
 void HashMapEntryBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const HashMapEntry *>(cell);
+  mb.setVTable(&HashMapEntry::vt);
   mb.addField("key", &self->key);
   mb.addField("value", &self->value);
   mb.addField("prevIterationEntry", &self->prevIterationEntry);
   mb.addField("nextIterationEntry", &self->nextIterationEntry);
   mb.addField("nextEntryInBucket", &self->nextEntryInBucket);
 }
-
-#ifdef HERMESVM_SERIALIZE
-HashMapEntry::HashMapEntry(Deserializer &d)
-    : GCCell(&d.getRuntime()->getHeap(), &vt) {
-  d.readHermesValue(&key);
-  d.readHermesValue(&value);
-  d.readRelocation(&prevIterationEntry, RelocationKind::GCPointer);
-  d.readRelocation(&nextIterationEntry, RelocationKind::GCPointer);
-  d.readRelocation(&nextEntryInBucket, RelocationKind::GCPointer);
-}
-
-void HashMapEntrySerialize(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const HashMapEntry>(cell);
-  s.writeHermesValue(self->key);
-  s.writeHermesValue(self->value);
-  s.writeRelocation(self->prevIterationEntry.get(s.getRuntime()));
-  s.writeRelocation(self->nextIterationEntry.get(s.getRuntime()));
-  s.writeRelocation(self->nextEntryInBucket.get(s.getRuntime()));
-  s.endObject(cell);
-}
-
-void HashMapEntryDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::HashMapEntryKind && "Expected HashMapEntry");
-  auto *cell = d.getRuntime()->makeAFixed<HashMapEntry>(d);
-  d.endObject(cell);
-}
-#endif
 
 CallResult<PseudoHandle<HashMapEntry>> HashMapEntry::create(Runtime *runtime) {
   return createPseudoHandle(runtime->makeAFixed<HashMapEntry>(runtime));
@@ -73,40 +44,11 @@ const VTable OrderedHashMap::vt{
 
 void OrderedHashMapBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const OrderedHashMap *>(cell);
+  mb.setVTable(&OrderedHashMap::vt);
   mb.addField("hashTable", &self->hashTable_);
   mb.addField("firstIterationEntry", &self->firstIterationEntry_);
   mb.addField("lastIterationEntry", &self->lastIterationEntry_);
 }
-
-#ifdef HERMESVM_SERIALIZE
-OrderedHashMap::OrderedHashMap(Deserializer &d)
-    : GCCell(&d.getRuntime()->getHeap(), &vt) {
-  d.readRelocation(&hashTable_, RelocationKind::GCPointer);
-  d.readRelocation(&firstIterationEntry_, RelocationKind::GCPointer);
-  d.readRelocation(&lastIterationEntry_, RelocationKind::GCPointer);
-  capacity_ = d.readInt<uint32_t>();
-  size_ = d.readInt<uint32_t>();
-}
-
-void OrderedHashMapSerialize(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const OrderedHashMap>(cell);
-
-  s.writeRelocation(self->hashTable_.get(s.getRuntime()));
-  s.writeRelocation(self->firstIterationEntry_.get(s.getRuntime()));
-  s.writeRelocation(self->lastIterationEntry_.get(s.getRuntime()));
-  s.writeInt<uint32_t>(self->capacity_);
-  s.writeInt<uint32_t>(self->size_);
-
-  s.endObject(cell);
-}
-
-void OrderedHashMapDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::OrderedHashMapKind && "ExpectedOrderedHashMap");
-  auto *cell = d.getRuntime()->makeAFixed<OrderedHashMap>(d);
-
-  d.endObject(cell);
-}
-#endif
 
 OrderedHashMap::OrderedHashMap(
     Runtime *runtime,
@@ -446,5 +388,3 @@ void OrderedHashMap::clear(Runtime *runtime) {
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

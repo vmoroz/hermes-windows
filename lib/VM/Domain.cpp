@@ -12,9 +12,6 @@
 #include "hermes/VM/JSLib.h"
 #include "hermes/VM/Profiler/SamplingProfiler.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 
@@ -26,7 +23,6 @@ const VTable Domain::vt{
     _mallocSizeImpl,
     nullptr,
     nullptr,
-    nullptr,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::Code,
         nullptr,
@@ -36,112 +32,10 @@ const VTable Domain::vt{
 
 void DomainBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const Domain *>(cell);
+  mb.setVTable(&Domain::vt);
   mb.addField("cjsModules", &self->cjsModules_);
   mb.addField("throwingRequire", &self->throwingRequire_);
 }
-
-#ifdef HERMESVM_SERIALIZE
-Domain::Domain(Deserializer &d) : GCCell(&d.getRuntime()->getHeap(), &vt) {
-  if (d.readInt<uint8_t>()) {
-    cjsModules_.set(
-        d.getRuntime(),
-        Domain::deserializeArrayStorage(d),
-        &d.getRuntime()->getHeap());
-  }
-  // Field llvh::DenseMap<SymbolID, uint32_t> cjsModuleTable_{};
-  size_t size = d.readInt<size_t>();
-  for (size_t i = 0; i < size; i++) {
-    auto res = cjsModuleTable_
-                   .try_emplace(
-                       SymbolID::unsafeCreate(d.readInt<uint32_t>()),
-                       d.readInt<uint32_t>())
-                   .second;
-    if (!res) {
-      hermes_fatal("Shouldn't fail to insert during deserialization");
-    }
-  }
-
-  // Field CopyableVector<RuntimeModule *> runtimeModules_{};
-  size = d.readInt<size_t>();
-  for (size_t i = 0; i < size; i++) {
-    runtimeModules_.push_back(
-        RuntimeModule::deserialize(d), &d.getRuntime()->getHeap());
-  }
-
-  d.readRelocation(&throwingRequire_, RelocationKind::GCPointer);
-}
-
-void DomainSerialize(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const Domain>(cell);
-  // If we have an ArrayStorage serialize it here.
-  bool hasArray = (bool)self->cjsModules_;
-  s.writeInt<uint8_t>(hasArray);
-  if (hasArray) {
-    Domain::serializeArrayStorage(s, self->cjsModules_.get(s.getRuntime()));
-  }
-  // Field llvh::DenseMap<SymbolID, uint32_t> cjsModuleTable_{};
-  size_t size = self->cjsModuleTable_.size();
-  s.writeInt<size_t>(size);
-  for (auto it = self->cjsModuleTable_.begin();
-       it != self->cjsModuleTable_.end();
-       it++) {
-    s.writeInt<uint32_t>(it->first.unsafeGetRaw());
-    s.writeInt<uint32_t>(it->second);
-  }
-
-  // Field CopyableVector<RuntimeModule *> runtimeModules_{};
-  // Domain owns RuntimeModules. Call serialize funtion for them here.
-  size = self->runtimeModules_.size();
-  s.writeInt<size_t>(size);
-  for (size_t i = 0; i < size; i++) {
-    self->runtimeModules_[i]->serialize(s);
-  }
-
-  s.writeRelocation(self->throwingRequire_.get(s.getRuntime()));
-  s.endObject(cell);
-}
-
-void DomainDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::DomainKind && "Expected Domain");
-  auto *cell = d.getRuntime()->makeAFixed<Domain, HasFinalizer::Yes>(d);
-  d.endObject(cell);
-}
-
-void Domain::serializeArrayStorage(Serializer &s, const ArrayStorage *cell) {
-  assert(
-      cell->size() % runtimeModuleOffset == 0 && "Invalid ArrayStorage size");
-  s.writeInt<ArrayStorage::size_type>(cell->capacity());
-  s.writeInt<ArrayStorage::size_type>(cell->size());
-  for (ArrayStorage::size_type i = 0; i < cell->size(); i += CJSModuleSize) {
-    s.writeHermesValue(cell->data()[i + CachedExportsOffset]);
-    s.writeHermesValue(cell->data()[i + ModuleOffset]);
-    s.writeHermesValue(cell->data()[i + FunctionIndexOffset]);
-    s.writeHermesValue(
-        cell->data()[i + runtimeModuleOffset], /* nativePointer */ true);
-  }
-  s.endObject(cell);
-}
-
-ArrayStorage *Domain::deserializeArrayStorage(Deserializer &d) {
-  ArrayStorage::size_type capacity = d.readInt<ArrayStorage::size_type>();
-  ArrayStorage::size_type size = d.readInt<ArrayStorage::size_type>();
-  assert(size % runtimeModuleOffset == 0 && "Invalid ArrayStorage size");
-  auto cjsModulesRes = ArrayStorage::create(d.getRuntime(), capacity, size);
-  if (LLVM_UNLIKELY(cjsModulesRes == ExecutionStatus::EXCEPTION)) {
-    hermes_fatal("fail to allocate memory for CJSModules");
-  }
-  auto *cell = vmcast<ArrayStorage>(*cjsModulesRes);
-  for (ArrayStorage::size_type i = 0; i < cell->size(); i += CJSModuleSize) {
-    d.readHermesValue(&cell->data()[i + CachedExportsOffset]);
-    d.readHermesValue(&cell->data()[i + ModuleOffset]);
-    d.readHermesValue(&cell->data()[i + FunctionIndexOffset]);
-    d.readHermesValue(
-        &cell->data()[i + runtimeModuleOffset], /* nativePointer */ true);
-  }
-  d.endObject(cell);
-  return cell;
-}
-#endif
 
 PseudoHandle<Domain> Domain::create(Runtime *runtime) {
   auto *cell = runtime->makeAFixed<Domain, HasFinalizer::Yes>(runtime);
@@ -185,7 +79,8 @@ size_t Domain::_mallocSizeImpl(GCCell *cell) {
   for (auto *rm : self->runtimeModules_)
     rmSize += sizeof(RuntimeModule) + rm->additionalMemorySize();
 
-  return self->cjsModuleTable_.getMemorySize() +
+  return self->cjsRuntimeModules_.capacity_in_bytes() +
+      self->cjsModuleTable_.getMemorySize() +
       self->runtimeModules_.capacity_in_bytes() + rmSize;
 }
 
@@ -251,6 +146,11 @@ ExecutionStatus Domain::importCJSModuleTable(
       return ExecutionStatus::EXCEPTION;
     }
     cjsModules = vmcast<ArrayStorage>(*cjsModulesRes);
+    self->cjsRuntimeModules_.reserve(firstSegmentModules);
+    for (size_t i = self->cjsRuntimeModules_.size(); i < firstSegmentModules;
+         i++) {
+      self->cjsRuntimeModules_.push_back(nullptr, &runtime->getHeap());
+    }
 
     auto requireFn = NativeFunction::create(
         runtime,
@@ -329,6 +229,10 @@ ExecutionStatus Domain::importCJSModuleTable(
             ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
     }
+    self->cjsRuntimeModules_.reserve(maxModuleID + 1);
+    for (size_t i = self->cjsRuntimeModules_.size(); i <= maxModuleID; i++) {
+      self->cjsRuntimeModules_.push_back(nullptr, &runtime->getHeap());
+    }
   }
 
   /// \return Whether the module with ID \param moduleID has been registered in
@@ -352,11 +256,15 @@ ExecutionStatus Domain::importCJSModuleTable(
   /// Register CJS module \param moduleID in the runtime module table.
   /// \return The index into cjsModules where this module's record begins.
   /// \pre Space has been allocated for this module's record in cjsModules.
+  /// \pre Space has been allocated for this module's RuntimeModule* in
+  /// cjsRuntimeModules_.
   /// \pre There is no module already registered under moduleID.
   auto &cjsEntryModuleID = self->cjsEntryModuleID_;
+  auto &cjsRuntimeModules = self->cjsRuntimeModules_;
   const auto registerModule =
       [runtime,
        &cjsModules,
+       &cjsRuntimeModules,
        runtimeModule,
        &isModuleRegistered,
        &cjsEntryModuleID](uint32_t moduleID, uint32_t functionID) -> uint32_t {
@@ -378,10 +286,7 @@ ExecutionStatus Domain::importCJSModuleTable(
         index + FunctionIndexOffset,
         HermesValue::encodeNativeUInt32(functionID),
         &runtime->getHeap());
-    cjsModules->set(
-        index + runtimeModuleOffset,
-        HermesValue::encodeNativePointer(runtimeModule),
-        &runtime->getHeap());
+    cjsRuntimeModules[moduleID] = runtimeModule;
     assert(isModuleRegistered(moduleID) && "CJS module was not registered");
     return index;
   };
@@ -434,23 +339,11 @@ const ObjectVTable RequireContext::vt{
 void RequireContextBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<RequireContext>());
   ObjectBuildMeta(cell, mb);
+  const auto *self = static_cast<const RequireContext *>(cell);
+  mb.setVTable(&RequireContext::vt.base);
+  mb.addField(&self->domain_);
+  mb.addField(&self->dirname_);
 }
-
-#ifdef HERMESVM_SERIALIZE
-RequireContext::RequireContext(Deserializer &d) : JSObject(d, &vt.base) {}
-
-void RequireContextSerialize(Serializer &s, const GCCell *cell) {
-  JSObject::serializeObjectImpl(
-      s, cell, JSObject::numOverlapSlots<RequireContext>());
-  s.endObject(cell);
-}
-
-void RequireContextDeserialize(Deserializer &d, CellKind kind) {
-  assert(kind == CellKind::RequireContextKind && "Expected RequireContext");
-  auto *cell = d.getRuntime()->makeAFixed<RequireContext>(d);
-  d.endObject(cell);
-}
-#endif
 
 Handle<RequireContext> RequireContext::create(
     Runtime *runtime,
@@ -460,21 +353,13 @@ Handle<RequireContext> RequireContext::create(
   auto *cell = runtime->makeAFixed<RequireContext>(
       runtime,
       objProto,
-      runtime->getHiddenClassForPrototype(*objProto, ANONYMOUS_PROPERTY_SLOTS));
+      runtime->getHiddenClassForPrototype(
+          *objProto, numOverlapSlots<RequireContext>()));
   auto self = JSObjectInit::initToHandle(runtime, cell);
-
-  JSObject::setDirectSlotValue<domainPropIndex()>(
-      *self,
-      SmallHermesValue::encodeObjectValue(domain.get(), runtime),
-      &runtime->getHeap());
-  JSObject::setDirectSlotValue<dirnamePropIndex()>(
-      *self,
-      SmallHermesValue::encodeStringValue(dirname.get(), runtime),
-      &runtime->getHeap());
+  self->domain_.set(runtime, *domain, &runtime->getHeap());
+  self->dirname_.set(runtime, *dirname, &runtime->getHeap());
   return self;
 }
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

@@ -142,10 +142,11 @@ class SamplingProfiler {
 
     /// Per-thread profiler instance for loom/local profiling.
     /// Limitations: No recursive runtimes in one thread.
+    //  WINDOWS: We don't keep the profiler instance in the TLS, as we don't run the sampling in the runtime thread.
+    //  POSIX runtime uses TLS to get hold of the profiler instance in the signal handler.
+    //  In Windows, we directly pass the profiler instance as a function parameter.
 #ifndef _MSC_VER
     ThreadLocal<SamplingProfiler> threadLocalProfiler_;
-#else
-    SamplingProfiler* threadLocalProfiler_;
 #endif
 
     /// Whether profiler is enabled or not. Protected by profilerLock_.
@@ -190,8 +191,12 @@ class SamplingProfiler {
     bool unregisterSignalHandler();
 #endif
 
+#ifndef _MSC_VER
     /// Signal handler to walk the stack frames.
     static void profilingSignalHandler(int signo);
+#else
+    static void profilingSignalHandler(SamplingProfiler* profiler);
+#endif
 
     /// Main routine to take a sample of runtime stack.
     /// \return false for failure which timer loop thread should stop.
@@ -221,10 +226,6 @@ class SamplingProfiler {
     GlobalProfiler();
   };
 
-#ifdef _MSC_VER
-  ThreadId threadId_;
-#endif
-
   /// Protect data specific to a runtime, such as the sampled stacks and
   /// domains.
   std::mutex runtimeDataLock_;
@@ -251,6 +252,10 @@ class SamplingProfiler {
 #ifndef _MSC_VER
   pthread_t currentThread_;
 #else
+  // WINDOWS: The profiler needs to remember the runtime thread id to store in the samples.
+  // And, we need to keep a handle of the runtime thread so that we can pause the thread before taking samples. 
+  // Note that things can go haywire if the runtime is accessed from multiple threads as we keep track of only the initial thread !
+  ThreadId threadId_;
   HANDLE currentThreadHandle_;
 #endif
 

@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
+#ifndef HERMESVM_GC_MALLOC
 
 #include "gtest/gtest.h"
 
@@ -116,7 +116,7 @@ TEST_F(AlignedHeapSegmentTest, ResetLevel) {
   s.growToLimit();
 
   // Make the level different from the start of the region.
-  AllocResult res = s.alloc(sizeof(GCCell));
+  AllocResult res = s.alloc(cellSize<GCCell>());
   ASSERT_TRUE(res.success);
   ASSERT_NE(s.start(), s.level());
 
@@ -196,4 +196,4 @@ TEST_F(AlignedHeapSegmentDeathTest, GrowToTooBig) {
 
 } // namespace
 
-#endif // HERMESVM_GC_NONCONTIG_GENERATIONAL
+#endif // !HERMESVM_GC_MALLOC
