@@ -2617,7 +2617,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value *result) noexcept {
   // TODO: implement
   return handleExceptions([&] {
-#if 0
     CHECK_ARG(result);
     CHECK_OBJECT_ARG(object);
     RETURN_STATUS_IF_FALSE(
@@ -2629,22 +2628,11 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         napi_invalid_arg);
 
     auto objHandle = toObjectHandle(object);
-    struct JSObjectAccessor : vm::JSObject {
-      auto getClazz() {
-        return clazz_;
-      }
-      auto getFlags() {
-        return flags_;
-      }
-    };
-    auto objAccessor = static_cast<JSObjectAccessor *>(objHandle.get());
     auto objVT = reinterpret_cast<const vm::ObjectVTable *>(
         static_cast<vm::GCCell *>(objHandle.get())->getVT());
 
-    if (LLVM_UNLIKELY(
-            objAccessor->getFlags().lazyObject ||
-            objAccessor->getFlags().proxyObject)) {
-      if (objAccessor->getFlags().proxyObject) {
+    if (LLVM_UNLIKELY(objHandle->isLazy() || objHandle->isProxyObject())) {
+      if (objHandle->isProxyObject()) {
         auto okFlags = vm::OwnKeysFlags();
         okFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
         okFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
@@ -2655,9 +2643,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         *result = addStackValue(proxyRes->getHermesValue());
         return clearLastError();
       }
-      assert(
-          objAccessor->getFlags().lazyObject &&
-          "descriptor flags are impossible");
+      assert(objHandle->isLazy() && "descriptor flags are impossible");
       vm::JSObject::initializeLazyObject(&runtime_, objHandle);
     }
 
@@ -2666,7 +2652,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // Estimate the capacity of the output array.  This estimate is only
     // reasonable for the non-symbol case.
     uint32_t capacity = (keyFilter & napi_key_skip_strings) == 0
-        ? (objAccessor->getClazz().get(&runtime_)->getNumProperties() +
+        ? (objHandle->getClassGCPtr().get(&runtime_)->getNumProperties() +
            range.second - range.first)
         : 0;
 
@@ -2695,7 +2681,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // Iterate the named properties excluding those which use Symbols.
     if ((keyFilter & napi_key_skip_strings) == 0) {
       // Get host object property names
-      if (LLVM_UNLIKELY(objAccessor->getFlags().hostObject)) {
+      if (LLVM_UNLIKELY(objHandle->isHostObject())) {
         assert(
             range.first == range.second &&
             "Host objects cannot own indexed range");
@@ -2738,7 +2724,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       numIndexed = index;
 
       vm::HiddenClass::forEachProperty(
-          runtime_.makeHandle(objAccessor->getClazz()),
+          runtime_.makeHandle(objHandle->getClassGCPtr()),
           &runtime_,
           [this,
            keyFilter,
@@ -2822,7 +2808,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     if ((keyFilter & napi_key_skip_symbols) == 0) {
       vm::MutableHandle<vm::SymbolID> idHandle{&runtime_};
       vm::HiddenClass::forEachProperty(
-          runtime_.makeHandle(objAccessor->getClazz()),
+          runtime_.makeHandle(objHandle->getClassGCPtr()),
           &runtime_,
           [this, keyFilter, array, &index, &idHandle](
               vm::SymbolID id, vm::NamedPropertyDescriptor desc) {
@@ -2916,7 +2902,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     }
 
     *result = addStackValue(array.getHermesValue());
-#endif
     return clearLastError();
   });
 }
@@ -5111,7 +5096,7 @@ napi_status NodeApiEnvironment::getDateValue(
   return handleExceptions([&] {
     CHECK_ARG(value);
     CHECK_ARG(result);
-    vm::JSDate* date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
+    vm::JSDate *date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
     RETURN_STATUS_IF_FALSE(date, napi_date_expected);
     *result = date->getPrimitiveValue();
     return clearLastError();
