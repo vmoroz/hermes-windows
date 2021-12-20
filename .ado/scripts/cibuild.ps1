@@ -381,6 +381,10 @@ function Copy-Headers($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Con
     Copy-Item "$SourcesPath\API\jsi\jsi\*" -Destination "$OutputPath\build\native\include\jsi" -force -Recurse
     Copy-Item "$SourcesPath\API\hermes\hermes.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\API\hermes\hermes_dbg.h" -Destination "$OutputPath\build\native\include\hermes" -force
+    Copy-Item "$SourcesPath\API\hermes\hermes_napi.h" -Destination "$OutputPath\build\native\include\hermes" -force
+    Copy-Item "$SourcesPath\API\hermes\js_native_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
+    Copy-Item "$SourcesPath\API\hermes\js_native_api_types.h" -Destination "$OutputPath\build\native\include\hermes" -force
+    Copy-Item "$SourcesPath\API\hermes\js_native_ext_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\API\hermes\DebuggerAPI.h" -Destination "$OutputPath\build\native\include\hermes" -force
     Copy-Item "$SourcesPath\public\hermes\*" -Destination "$OutputPath\build\native\include\hermes" -force -Recurse
     Copy-Item "$RNDIR\ReactCommon\jsinspector\*.h" -Destination "$OutputPath\build\native\include\hermesinspector" -force -Recurse
