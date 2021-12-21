@@ -2729,6 +2729,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         CHECK_NAPI(convertNumbersToStrings(props));
       }
       *result = addStackValue(props.getHermesValue());
+      return clearLastError();
     }
     // vm::Handle<vm::HiddenClass> clazz(&runtime_, obj->getClass(runtime));
 
