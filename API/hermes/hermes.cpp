@@ -1298,7 +1298,7 @@ jsi::Value HermesRuntime::getObjectForID(uint64_t id) {
   return jsi::Value::null();
 }
 
-/// Get a structure representing the enviroment-dependent behavior, so
+/// Get a structure representing the environment-dependent behavior, so
 /// it can be written into the trace for later replay.
 const ::hermes::vm::MockedEnvironment &HermesRuntime::getMockedEnvironment()
     const {
