@@ -189,7 +189,7 @@ class ArrayImpl : public JSObject {
   /// semantics of the "indexed storage" the storage capacity may need to be
   /// expanded (e.g. affecting Array.length), or the write may simply be ignored
   /// (in the case of typed arrays).
-  /// \return true if the write succeeded, or fals if it was ignored.
+  /// \return true if the write succeeded, or false if it was ignored.
   static CallResult<bool> _setOwnIndexedImpl(
       Handle<JSObject> selfHandle,
       Runtime *runtime,
