@@ -570,6 +570,8 @@ struct NodeApiEnvironment {
       const napi_property_descriptor *properties,
       napi_value *result) noexcept;
 
+  napi_status convertNumbersToStrings(vm::Handle<vm::JSArray> array) noexcept;
+
   napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
 
   napi_status getForInPropertyNames(
@@ -2636,18 +2638,17 @@ napi_status NodeApiEnvironment::getForInPropertyNames(
     vm::Handle<vm::SegmentedArray> arr = *cr;
     size_t length = endIndex - beginIndex;
 
-    ASSIGN_CHECKED(
-        auto res,
-        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
+    ASSIGN_CHECKED(auto res, vm::JSArray::create(&runtime_, length, length));
     for (size_t i = 0; i < length; ++i) {
       vm::HermesValue name = arr->at(beginIndex + i);
       if (name.isString() || keyConversion == napi_key_keep_numbers) {
-        res->setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
+        vm::JSArray::setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
       } else if (name.isNumber()) {
         StringBuilder sb(static_cast<size_t>(name.getNumber()));
         std::string &str = sb.str();
         ASSIGN_CHECKED(auto strHV, stringHVFromAscii(str.data(), str.size()));
-        res->setElementAt(res, &runtime_, i, runtime_.makeHandle(strHV));
+        vm::JSArray::setElementAt(
+            res, &runtime_, i, runtime_.makeHandle(strHV));
       } else {
         llvm_unreachable("property name is not String or Number");
       }
@@ -2656,6 +2657,24 @@ napi_status NodeApiEnvironment::getForInPropertyNames(
     *result = addStackValue(res.getHermesValue());
     return clearLastError();
   });
+}
+
+napi_status NodeApiEnvironment::convertNumbersToStrings(
+    vm::Handle<vm::JSArray> array) noexcept {
+  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue value = array->at(&runtime_, i);
+    if (LLVM_UNLIKELY(value.isNumber())) {
+      StringBuilder sb(static_cast<size_t>(value.getNumber()));
+      std::string &str = sb.str();
+      ASSIGN_CHECKED(auto strHV, stringHVFromAscii(str.data(), str.size()));
+      vm::JSArray::setElementAt(
+          array, &runtime_, i, runtime_.makeHandle(strHV));
+    } else if (LLVM_UNLIKELY(!value.isString())) {
+      llvm_unreachable("value is not String or Number");
+    }
+  }
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getAllPropertyNames(
@@ -2684,7 +2703,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
 
   return handleExceptions([&] {
     CHECK_ARG(result);
-    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(object);
+    ASSIGN_CHECKED(auto objHV, vm::toObject(&runtime_, toHandle(object)));
+    auto objHandle = runtime_.makeHandle<vm::JSObject>(objHV);
     RETURN_STATUS_IF_FALSE(
         keyMode == napi_key_include_prototypes || keyMode == napi_key_own_only,
         napi_invalid_arg);
@@ -2693,7 +2714,39 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             keyConversion == napi_key_numbers_to_strings,
         napi_invalid_arg);
 
-    auto objHandle = toObjectHandle(object);
+    if (keyMode == napi_key_own_only &&
+        (keyFilter &
+         static_cast<napi_key_filter>(
+             napi_key_writable | napi_key_configurable)) == 0) {
+      vm::OwnKeysFlags okFlags{};
+      okFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
+      okFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
+      okFlags.setIncludeNonEnumerable((keyFilter & napi_key_enumerable) == 0);
+      ASSIGN_CHECKED(
+          auto props,
+          vm::JSObject::getOwnPropertyKeys(objHandle, &runtime_, okFlags));
+      if (keyConversion == napi_key_numbers_to_strings) {
+        CHECK_NAPI(convertNumbersToStrings(props));
+      }
+      *result = addStackValue(props.getHermesValue());
+    }
+    // vm::Handle<vm::HiddenClass> clazz(&runtime_, obj->getClass(runtime));
+
+    // auto ownPropEstimate = clazz->getNumProperties();
+    // ASSIGN_CHECKED(auto arr = vm::BigStorage::create(runtime,
+    // ownPropEstimate));
+
+    // appendAllPropertyNames(obj, runtime, arr, beginIndex);
+
+    // If obj or any of its prototypes are unsuitable for caching, then
+    // beginIndex is 0 and we return an array with only the property names.
+    // bool canCache = beginIndex;
+    // auto end = appendAllPropertyNames(obj, runtime, arr, beginIndex);
+    // if (end == ExecutionStatus::EXCEPTION) {
+    //   return ExecutionStatus::EXCEPTION;
+    // }
+    // endIndex = *end;
+
     auto objVT = reinterpret_cast<const vm::ObjectVTable *>(
         static_cast<vm::GCCell *>(objHandle.get())->getVT());
 
