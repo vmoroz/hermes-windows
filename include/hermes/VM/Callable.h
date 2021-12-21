@@ -373,7 +373,7 @@ class BoundFunction final : public Callable {
   static CallResult<PseudoHandle<>>
   _boundCall(BoundFunction *self, const Inst *ip, Runtime *runtime);
 
-  /// Intialize the length and name and property of a lazily created bound
+  /// Initialize the length and name and property of a lazily created bound
   /// function.
   static ExecutionStatus initializeLengthAndName(
       Handle<Callable> selfHandle,
