@@ -572,6 +572,11 @@ struct NodeApiEnvironment {
 
   napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
 
+  napi_status getForInPropertyNames(
+      napi_value object,
+      napi_key_conversion keyConversion,
+      napi_value *result) noexcept;
+
   napi_status getAllPropertyNames(
       napi_value object,
       napi_key_collection_mode keyMode,
@@ -2601,12 +2606,56 @@ napi_status NodeApiEnvironment::defineClass(
 napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
-  return getAllPropertyNames(
-      object,
-      napi_key_include_prototypes,
-      static_cast<napi_key_filter>(napi_key_enumerable | napi_key_skip_symbols),
-      napi_key_numbers_to_strings,
-      result);
+  return getForInPropertyNames(object, napi_key_numbers_to_strings, result);
+}
+
+napi_status NodeApiEnvironment::getForInPropertyNames(
+    napi_value object,
+    napi_key_conversion keyConversion,
+    napi_value *result) noexcept {
+  // Hermes optimizes retrieving property names for the 'for..in' implementation
+  // by caching its results. This function takes the benefits from using it.
+  return handleExceptions([&] {
+    CHECK_ARG(result);
+    CHECK_ARG(object);
+    ASSIGN_CHECKED(auto objHV, vm::toObject(&runtime_, toHandle(object)));
+    RETURN_STATUS_IF_FALSE(
+        keyConversion == napi_key_keep_numbers ||
+            keyConversion == napi_key_numbers_to_strings,
+        napi_invalid_arg);
+
+    uint32_t beginIndex;
+    uint32_t endIndex;
+    vm::CallResult<vm::Handle<vm::SegmentedArray>> cr =
+        vm::getForInPropertyNames(
+            &runtime_,
+            runtime_.makeHandle<vm::JSObject>(objHV),
+            beginIndex,
+            endIndex);
+    CHECK_STATUS(cr.getStatus());
+    vm::Handle<vm::SegmentedArray> arr = *cr;
+    size_t length = endIndex - beginIndex;
+
+    ASSIGN_CHECKED(
+        auto res,
+        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
+    for (size_t i = 0; i < length; ++i) {
+      vm::HermesValue name = arr->at(beginIndex + i);
+      if (name.isString() || keyConversion == napi_key_keep_numbers) {
+        res->setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
+      } else if (name.isNumber()) {
+        StringBuilder sb(static_cast<size_t>(name.getNumber()));
+        std::string &str = sb.str();
+        ASSIGN_CHECKED(auto strHV, stringHVFromAscii(str.data(), str.size()));
+        res->setElementAt(res, &runtime_, i, runtime_.makeHandle(strHV));
+      } else {
+        llvm_unreachable("property name is not String or Number");
+      }
+    }
+
+    *result = addStackValue(res.getHermesValue());
+    return clearLastError();
+  });
 }
 
 napi_status NodeApiEnvironment::getAllPropertyNames(
@@ -2624,7 +2673,15 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
   // TODO: Implement collecting strings
   // TODO: Convert numbers to strings when needed
   // TODO: Coerce to object first
-  // TODO: Implement fast path for for..in  
+
+  // The fast path used for the 'for..in' implementation.
+  if (keyFilter ==
+          static_cast<napi_key_filter>(
+              napi_key_enumerable | napi_key_skip_symbols) &&
+      keyMode == napi_key_include_prototypes) {
+    return getForInPropertyNames(object, keyConversion, result);
+  }
+
   return handleExceptions([&] {
     CHECK_ARG(result);
     CHECK_OBJECT_ARG(object);
