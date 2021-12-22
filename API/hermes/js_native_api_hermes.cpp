@@ -2830,8 +2830,38 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             continue;
           }
         }
-        // TODO: filter by attributes
-        // TODO: convert to string if needed
+
+        if ((keyFilter &
+             (napi_key_writable | napi_key_enumerable |
+              napi_key_configurable)) != 0) {
+          vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
+          vm::ComputedPropertyDescriptor desc;
+          ASSIGN_CHECKED(
+              auto descRes,
+              vm::JSObject::getOwnComputedPrimitiveDescriptor(
+                  head,
+                  &runtime_,
+                  prop,
+                  vm::JSObject::IgnoreProxy::No,
+                  tmpSymbolStorage,
+                  desc));
+          if (descRes) {
+            if ((keyFilter & napi_key_writable) != 0 && !desc.flags.writable) {
+              continue;
+            }
+            if ((keyFilter & napi_key_enumerable) != 0 &&
+                !desc.flags.enumerable) {
+              continue;
+            }
+            if ((keyFilter & napi_key_configurable) != 0 &&
+                !desc.flags.configurable) {
+              continue;
+            }
+          }
+        }
+        // TODO: work around the bug in the JSProxy::getOwnKeys - get symbols vs
+        // non-symbols separately
+        //  TODO: convert to string if needed
         CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
       }
 
