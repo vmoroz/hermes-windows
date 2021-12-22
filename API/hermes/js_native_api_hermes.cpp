@@ -2683,13 +2683,9 @@ struct OrderedList {
 
   OrderedList(Compare *compare) noexcept : compare_(compare) {}
 
-  void reserveExtra(uint32_t size) noexcept {
-    items_.reserve(items_.size() + size);
-  }
-
   bool insert(T value) noexcept {
-    auto it =
-        llvh::lower_bound(items_, value, [this](const T &item1, const T &item2) {
+    auto it = llvh::lower_bound(
+        items_, value, [this](const T &item1, const T &item2) {
           return (*compare_)(item1, item2) < 0;
         });
     if (it == items_.end() || (*compare_)(*it, value) == 0) {
@@ -2786,18 +2782,18 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         prop = props->at(&runtime_, i);
 
         // See if the property name is an index
-        auto propIndexOpt = OptValue<uint32_t>{};
-        auto propName = runtime_.makeNullHandle<vm::StringPrimitive>();
-        // auto propSymbol = runtime_.makeNullHandle<vm::SymbolID>();
+        OptValue<uint32_t> propIndexOpt{};
+        vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
+        vm::MutableHandle<vm::SymbolID> propSymbol(&runtime_);
         if (prop->isString()) {
-          propName = vm::Handle<vm::StringPrimitive>::vmcast(prop);
+          propString = vm::Handle<vm::StringPrimitive>::vmcast(prop);
           propIndexOpt = vm::toArrayIndex(
-              vm::StringPrimitive::createStringView(&runtime_, propName));
+              vm::StringPrimitive::createStringView(&runtime_, propString));
         } else if (prop->isNumber()) {
           propIndexOpt = doubleToArrayIndex(prop->getNumber());
           assert(propIndexOpt && "Invalid property index");
         } else if (prop->isSymbol()) {
-          // propSymbol = vm::Handle<vm::SymbolID>::vmcast(prop);
+          propSymbol = vm::Handle<vm::SymbolID>(&runtime_, prop->getSymbol());
         }
 
         OrderedList<uint32_t> shadowIndexes(
@@ -2811,30 +2807,28 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
               return item1->compare(item2.get());
             });
 
-        // llvh::SmallVector<vm::Handle<vm::SymbolID>, 64> shadowSymbols;
+        OrderedList<vm::Handle<vm::SymbolID>> shadowSymbols(
+            [](const vm::Handle<vm::SymbolID> &item1,
+               const vm::Handle<vm::SymbolID> &item2) {
+              return item1.get().unsafeGetRaw() < item2.get().unsafeGetRaw()
+                  ? -1
+                  : item1.get().unsafeGetRaw() > item2.get().unsafeGetRaw() ? 1
+                                                                            : 0;
+            });
+
         auto propsSize = vm::JSArray::getLength(props.get(), &runtime_);
-        shadowIndexes.reserveExtra(propsSize);
-        shadowStrings.reserveExtra(propsSize);
         if (propIndexOpt) {
           if (!shadowIndexes.insert(propIndexOpt.getValue())) {
             continue;
           }
-        } else if (propName.get()) {
-          if (!shadowStrings.insert(propName)) {
+        } else if (propString) {
+          if (!shadowStrings.insert(propString)) {
             continue;
           }
-          //  } else if (propSymbol.get().isValid()) {
-          // auto it = llvh::lower_bound(
-          //     shadowSymbols,
-          //     propSymbol,
-          //     [](const vm::Handle<vm::SymbolID> &item,
-          //        const vm::Handle<vm::SymbolID> &value) {
-          //       return item->unsafeGetRaw() < value->unsafeGetRaw();
-          //     });
-          // if (it == shadowSymbols.end() || it->get() == propSymbol.get()) {
-          //   continue;
-          // }
-          // shadowSymbols.insert(it, propSymbol);
+        } else if (propSymbol) {
+          if (!shadowSymbols.insert(propSymbol)) {
+            continue;
+          }
         }
         // TODO: filter by attributes
         // TODO: convert to string if needed
