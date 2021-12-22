@@ -2706,15 +2706,11 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_filter keyFilter,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
-  // TODO: implement
-
-  // TODO: Implement following the prototype chain
-  // TODO: Unify applying filters
-  // TODO: Use big storage to collect keys
-  // TODO: Implement collecting symbols
-  // TODO: Implement collecting strings
-  // TODO: Convert numbers to strings when needed
-  // TODO: Coerce to object first
+  // TODO: unify index conversion to string
+  // TODO: Can we use Hermes hash table for shadow strings?
+  // TODO: unify converting BigStorage to JSArray
+  // TODO: optimize for no-prototype cases
+  // TODO: Simplify conversion to object handle
 
   return handleExceptions([&] {
     CHECK_ARG(result);
@@ -2859,8 +2855,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             }
           }
         }
-        // TODO: work around the bug in the JSProxy::getOwnKeys - get symbols vs
-        // non-symbols separately
 
         if (keyConversion == napi_key_numbers_to_strings) {
           if (propIndexOpt) {
