@@ -2678,10 +2678,10 @@ napi_status NodeApiEnvironment::convertNumbersToStrings(
 }
 
 template <typename T>
-struct OrderedList {
+struct OrderedSet {
   using Compare = int(const T &item1, const T &item2);
 
-  OrderedList(Compare *compare) noexcept : compare_(compare) {}
+  OrderedSet(Compare *compare) noexcept : compare_(compare) {}
 
   bool insert(T value) noexcept {
     auto it = llvh::lower_bound(
@@ -2796,18 +2796,18 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           propSymbol = vm::Handle<vm::SymbolID>(&runtime_, prop->getSymbol());
         }
 
-        OrderedList<uint32_t> shadowIndexes(
+        OrderedSet<uint32_t> shadowIndexes(
             [](const uint32_t &item1, const uint32_t &item2) {
               return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
             });
 
-        OrderedList<vm::Handle<vm::StringPrimitive>> shadowStrings(
+        OrderedSet<vm::Handle<vm::StringPrimitive>> shadowStrings(
             [](const vm::Handle<vm::StringPrimitive> &item1,
                const vm::Handle<vm::StringPrimitive> &item2) {
               return item1->compare(item2.get());
             });
 
-        OrderedList<vm::Handle<vm::SymbolID>> shadowSymbols(
+        OrderedSet<vm::Handle<vm::SymbolID>> shadowSymbols(
             [](const vm::Handle<vm::SymbolID> &item1,
                const vm::Handle<vm::SymbolID> &item2) {
               return item1.get().unsafeGetRaw() < item2.get().unsafeGetRaw()
