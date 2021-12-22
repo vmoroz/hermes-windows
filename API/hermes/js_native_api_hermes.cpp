@@ -2861,7 +2861,19 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         }
         // TODO: work around the bug in the JSProxy::getOwnKeys - get symbols vs
         // non-symbols separately
-        //  TODO: convert to string if needed
+
+        if (keyConversion == napi_key_numbers_to_strings) {
+          if (propIndexOpt) {
+            StringBuilder sb(propIndexOpt.getValue());
+            std::string &str = sb.str();
+            ASSIGN_CHECKED(
+                auto strHV, stringHVFromAscii(str.data(), str.size()));
+            CHECK_STATUS(vm::BigStorage::push_back(
+                arr, &runtime_, runtime_.makeHandle(strHV)));
+            continue;
+          }
+        }
+
         CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
       }
 
