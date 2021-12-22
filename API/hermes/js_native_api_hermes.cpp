@@ -2882,7 +2882,16 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           auto parentRes, vm::JSObject::getPrototypeOf(head, &runtime_));
       head = parentRes.get();
     }
-    // TODO: create final array
+
+    auto length = arr->size();
+    ASSIGN_CHECKED(auto res, vm::JSArray::create(&runtime_, length, length));
+    for (size_t i = 0; i < length; ++i) {
+      vm::HermesValue name = arr->at(i);
+      vm::JSArray::setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
+    }
+
+    *result = addStackValue(res.getHermesValue());
+
     return clearLastError();
   });
 }
