@@ -2677,6 +2677,33 @@ napi_status NodeApiEnvironment::convertNumbersToStrings(
   return clearLastError();
 }
 
+template <typename T>
+struct OrderedList {
+  using Compare = int(const T &item1, const T &item2);
+
+  OrderedList(Compare *compare) noexcept : compare_(compare) {}
+
+  void reserveExtra(uint32_t size) noexcept {
+    items_.reserve(items_.size() + size);
+  }
+
+  bool insert(T value) noexcept {
+    auto it =
+        llvh::lower_bound(items_, value, [this](const T &item1, const T &item2) {
+          return (*compare_)(item1, item2) < 0;
+        });
+    if (it == items_.end() || (*compare_)(*it, value) == 0) {
+      return false;
+    }
+    items_.insert(it, value);
+    return true;
+  }
+
+ private:
+  llvh::SmallVector<T, 64> items_;
+  Compare *compare_{};
+};
+
 napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value object,
     napi_key_collection_mode keyMode,
@@ -2739,7 +2766,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     ASSIGN_CHECKED(
         auto arrRes, vm::BigStorage::create(&runtime_, ownPropEstimate));
 
-    auto arr = runtime_.makeMutableHandle<vm::BigStorage>(std::move(arrRes.get()));
+    auto arr =
+        runtime_.makeMutableHandle<vm::BigStorage>(std::move(arrRes.get()));
     vm::MutableHandle<> prop(&runtime_);
     vm::MutableHandle<vm::JSObject> head(&runtime_, objHandle.get());
     while (head.get()) {
@@ -2760,6 +2788,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         // See if the property name is an index
         auto propIndexOpt = OptValue<uint32_t>{};
         auto propName = runtime_.makeNullHandle<vm::StringPrimitive>();
+        // auto propSymbol = runtime_.makeNullHandle<vm::SymbolID>();
         if (prop->isString()) {
           propName = vm::Handle<vm::StringPrimitive>::vmcast(prop);
           propIndexOpt = vm::toArrayIndex(
@@ -2767,33 +2796,48 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         } else if (prop->isNumber()) {
           propIndexOpt = doubleToArrayIndex(prop->getNumber());
           assert(propIndexOpt && "Invalid property index");
+        } else if (prop->isSymbol()) {
+          // propSymbol = vm::Handle<vm::SymbolID>::vmcast(prop);
         }
 
-        llvh::SmallVector<vm::Handle<vm::StringPrimitive>, 64> shadowStrings;
-        llvh::SmallVector<uint32_t, 64> shadowIndexes;
-        shadowIndexes.reserve(
-            shadowIndexes.size() +
-            vm::JSArray::getLength(props.get(), &runtime_));
+        OrderedList<uint32_t> shadowIndexes(
+            [](const uint32_t &item1, const uint32_t &item2) {
+              return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
+            });
 
+        OrderedList<vm::Handle<vm::StringPrimitive>> shadowStrings(
+            [](const vm::Handle<vm::StringPrimitive> &item1,
+               const vm::Handle<vm::StringPrimitive> &item2) {
+              return item1->compare(item2.get());
+            });
+
+        // llvh::SmallVector<vm::Handle<vm::SymbolID>, 64> shadowSymbols;
+        auto propsSize = vm::JSArray::getLength(props.get(), &runtime_);
+        shadowIndexes.reserveExtra(propsSize);
+        shadowStrings.reserveExtra(propsSize);
         if (propIndexOpt) {
-          uint32_t propIndex = propIndexOpt.getValue();
-          auto it = llvh::lower_bound(shadowIndexes, propIndexOpt.getValue());
-          if (it == shadowIndexes.end() || *it == propIndex) {
+          if (!shadowIndexes.insert(propIndexOpt.getValue())) {
             continue;
           }
-          shadowIndexes.insert(it, propIndex);
-        } else {
-          assert(propName.get() && "Invalid property name");
-          auto it = llvh::lower_bound(shadowStrings, propName,
-          [](const vm::Handle<vm::StringPrimitive>& item, const vm::Handle<vm::StringPrimitive>& value){
-              return item->compare(value.get()) < 0;
-          });
-          if (it == shadowStrings.end() || (*it)->equals(propName.get())) {
+        } else if (propName.get()) {
+          if (!shadowStrings.insert(propName)) {
             continue;
           }
-          shadowStrings.insert(it, propName);
+          //  } else if (propSymbol.get().isValid()) {
+          // auto it = llvh::lower_bound(
+          //     shadowSymbols,
+          //     propSymbol,
+          //     [](const vm::Handle<vm::SymbolID> &item,
+          //        const vm::Handle<vm::SymbolID> &value) {
+          //       return item->unsafeGetRaw() < value->unsafeGetRaw();
+          //     });
+          // if (it == shadowSymbols.end() || it->get() == propSymbol.get()) {
+          //   continue;
+          // }
+          // shadowSymbols.insert(it, propSymbol);
         }
-        //TODO: convert to string if needed
+        // TODO: filter by attributes
+        // TODO: convert to string if needed
         CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
       }
 
