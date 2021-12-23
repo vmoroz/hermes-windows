@@ -543,7 +543,7 @@ struct NodeApiEnvironment {
   vm::CallResult<vm::Handle<T>> makeHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
 
-template <class T>
+  template <class T>
   vm::CallResult<vm::MutableHandle<T>> makeMutableHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
 
@@ -2706,7 +2706,8 @@ vm::CallResult<vm::Handle<T>> NodeApiEnvironment::makeHandle(
 template <class T>
 vm::CallResult<vm::MutableHandle<T>> NodeApiEnvironment::makeMutableHandle(
     vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
-      vm::CallResult<vm::Handle<T>> handleResult = makeHandle(std::move(callResult));
+  vm::CallResult<vm::Handle<T>> handleResult =
+      makeHandle(std::move(callResult));
   if (handleResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
     return vm::ExecutionStatus::EXCEPTION;
   }
@@ -2842,14 +2843,18 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             keyConversion, napi_key_keep_numbers, napi_key_numbers_to_strings),
         napi_invalid_arg);
 
-    vm::MutableHandle<vm::JSObject> currentObj(&runtime_, objHandle.get());
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
-        vm::JSObject::getPrototypeOf(currentObj, &runtime_));
+    // We can use optimized code if object has no parent.
+    bool hasParent;
+    {
+      ASSIGN_ELSE_RETURN_FAILURE(
+          vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
+          vm::JSObject::getPrototypeOf(objHandle, &runtime_));
+      hasParent = parentObj.get();
+    }
 
     // The fast path used for the 'for..in' implementation.
     if (keyFilter == (napi_key_enumerable | napi_key_skip_symbols) &&
-        (keyMode == napi_key_include_prototypes || !parentObj.get())) {
+        (keyMode == napi_key_include_prototypes || !hasParent)) {
       return getForInPropertyNames(objHandle, keyConversion, result);
     }
 
@@ -2860,7 +2865,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     ownKeyFlags.plusIncludeNonEnumerable(); // for proper shadow checks
 
     // Use the simple path for own properties without extra filters.
-    if ((keyMode == napi_key_own_only || !parentObj.get()) &&
+    if ((keyMode == napi_key_own_only || !hasParent) &&
         (keyFilter & (napi_key_writable | napi_key_configurable)) == 0) {
       // Exclude non-enumerable if requested
       ownKeyFlags.setIncludeNonEnumerable(
@@ -2874,78 +2879,89 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           /*out*/ result);
     }
 
+    // Collect and filter all properties into the arr.
+    const uint32_t sizeEstimate = 64;
     ASSIGN_ELSE_RETURN_FAILURE(
         vm::MutableHandle<vm::BigStorage> arr /*=*/,
-        makeMutableHandle(vm::BigStorage::create(&runtime_, 64)));
+        makeMutableHandle(vm::BigStorage::create(&runtime_, sizeEstimate)));
+
+    // Make sure that we do not include into the result properties that were
+    // shadowed by the derived objects.
+    bool useShadowTracking =
+        keyMode == napi_key_include_prototypes && hasParent;
+    OrderedSet<uint32_t> shadowIndexes(
+        [](const uint32_t &item1, const uint32_t &item2) {
+          return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
+        });
+    // TODO: replace with a hermes hashed collection
+    OrderedSet<vm::Handle<vm::StringPrimitive>> shadowStrings(
+        [](const vm::Handle<vm::StringPrimitive> &item1,
+           const vm::Handle<vm::StringPrimitive> &item2) {
+          return item1->compare(item2.get());
+        });
+    OrderedSet<vm::Handle<vm::SymbolID>> shadowSymbols(
+        [](const vm::Handle<vm::SymbolID> &item1,
+           const vm::Handle<vm::SymbolID> &item2) {
+          return item1.get().unsafeGetRaw() < item2.get().unsafeGetRaw() ? -1
+              : item1.get().unsafeGetRaw() > item2.get().unsafeGetRaw()  ? 1
+                                                                         : 0;
+        });
+
+    // Keep the mutable variables outside of loop for efficiency
+    vm::MutableHandle<vm::JSObject> currentObj(&runtime_, objHandle.get());
     vm::MutableHandle<> prop(&runtime_);
+    OptValue<uint32_t> propIndexOpt{};
+    vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
+    vm::MutableHandle<vm::SymbolID> propSymbol(&runtime_);
+
     while (currentObj.get()) {
-      vm::GCScope gcScope(&runtime_);
+      // TODO: vm::GCScope gcScope(&runtime_);
 
       ASSIGN_ELSE_RETURN_FAILURE(
           vm::Handle<vm::JSArray> props /*=*/,
           vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags));
 
-      for (uint32_t i = 0, e = props->getEndIndex(); i < e; ++i) {
+      for (uint32_t i = 0, end = props->getEndIndex(); i < end; ++i) {
         // TODO: gcScope.flushToMarker(marker);
         prop = props->at(&runtime_, i);
 
-        // See if the property name is an index
-        OptValue<uint32_t> propIndexOpt{};
-        vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
-        vm::MutableHandle<vm::SymbolID> propSymbol(&runtime_);
-        if (prop->isString()) {
-          propString = vm::Handle<vm::StringPrimitive>::vmcast(prop);
-          propIndexOpt = vm::toArrayIndex(
-              vm::StringPrimitive::createStringView(&runtime_, propString));
-        } else if (prop->isNumber()) {
-          propIndexOpt = doubleToArrayIndex(prop->getNumber());
-          assert(propIndexOpt && "Invalid property index");
-        } else if (prop->isSymbol()) {
-          propSymbol = vm::Handle<vm::SymbolID>(&runtime_, prop->getSymbol());
-        }
-
-        OrderedSet<uint32_t> shadowIndexes(
-            [](const uint32_t &item1, const uint32_t &item2) {
-              return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
-            });
-
-        OrderedSet<vm::Handle<vm::StringPrimitive>> shadowStrings(
-            [](const vm::Handle<vm::StringPrimitive> &item1,
-               const vm::Handle<vm::StringPrimitive> &item2) {
-              return item1->compare(item2.get());
-            });
-
-        OrderedSet<vm::Handle<vm::SymbolID>> shadowSymbols(
-            [](const vm::Handle<vm::SymbolID> &item1,
-               const vm::Handle<vm::SymbolID> &item2) {
-              return item1.get().unsafeGetRaw() < item2.get().unsafeGetRaw()
-                  ? -1
-                  : item1.get().unsafeGetRaw() > item2.get().unsafeGetRaw() ? 1
-                                                                            : 0;
-            });
-
-        auto propsSize = vm::JSArray::getLength(props.get(), &runtime_);
-        if (propIndexOpt) {
-          if (!shadowIndexes.insert(propIndexOpt.getValue())) {
-            continue;
+        // Do not add a property if it is overriden in the derived object.
+        if (useShadowTracking) {
+          if (prop->isString()) {
+            propString = vm::Handle<vm::StringPrimitive>::vmcast(prop);
+            // See if the property name is an index
+            propIndexOpt = vm::toArrayIndex(
+                vm::StringPrimitive::createStringView(&runtime_, propString));
+          } else if (prop->isNumber()) {
+            propIndexOpt = doubleToArrayIndex(prop->getNumber());
+            assert(propIndexOpt && "Invalid property index");
+          } else if (prop->isSymbol()) {
+            propSymbol = vm::Handle<vm::SymbolID>(&runtime_, prop->getSymbol());
           }
-        } else if (propString) {
-          if (!shadowStrings.insert(propString)) {
-            continue;
-          }
-        } else if (propSymbol) {
-          if (!shadowSymbols.insert(propSymbol)) {
-            continue;
+
+          if (propIndexOpt) {
+            if (!shadowIndexes.insert(propIndexOpt.getValue())) {
+              continue;
+            }
+          } else if (propString) {
+            if (!shadowStrings.insert(propString)) {
+              continue;
+            }
+          } else if (propSymbol) {
+            if (!shadowSymbols.insert(propSymbol)) {
+              continue;
+            }
           }
         }
 
+        // Apply filter for the property descriptor flags
         if ((keyFilter &
              (napi_key_writable | napi_key_enumerable |
               napi_key_configurable)) != 0) {
           vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
           vm::ComputedPropertyDescriptor desc;
-          ASSIGN_CHECKED(
-              auto descRes,
+          ASSIGN_ELSE_RETURN_FAILURE(
+              bool hasDescriptor /*=*/,
               vm::JSObject::getOwnComputedPrimitiveDescriptor(
                   currentObj,
                   &runtime_,
@@ -2953,7 +2969,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
                   vm::JSObject::IgnoreProxy::No,
                   tmpSymbolStorage,
                   desc));
-          if (descRes) {
+          if (hasDescriptor) {
             if ((keyFilter & napi_key_writable) != 0 && !desc.flags.writable) {
               continue;
             }
@@ -2968,36 +2984,33 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           }
         }
 
-        if (keyConversion == napi_key_numbers_to_strings) {
-          if (propIndexOpt) {
-            StringBuilder sb(propIndexOpt.getValue());
-            std::string &str = sb.str();
-            ASSIGN_CHECKED(
-                auto strHV, stringHVFromAscii(str.data(), str.size()));
-            CHECK_STATUS(vm::BigStorage::push_back(
-                arr, &runtime_, runtime_.makeHandle(strHV)));
-            continue;
-          }
+        if (keyConversion == napi_key_numbers_to_strings && useShadowTracking &&
+            propIndexOpt) {
+          ASSIGN_ELSE_RETURN_FAILURE(
+              vm::Handle<> str /*=*/,
+              StringBuilder(propIndexOpt.getValue()).makeStringHV(runtime_));
+          CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, str));
+        } else {
+          CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
         }
-
-        CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
       }
 
       // Continue to follow the prototype chain.
-      ASSIGN_CHECKED(
-          auto parentRes, vm::JSObject::getPrototypeOf(currentObj, &runtime_));
-      currentObj = parentRes.get();
+      ASSIGN_ELSE_RETURN_FAILURE(
+          vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
+          vm::JSObject::getPrototypeOf(currentObj, &runtime_));
+      currentObj = parentObj.get();
     }
 
+    // TODO: extract into a separate function
+    // TODO: use useShadowTracking
     auto length = arr->size();
     ASSIGN_CHECKED(auto res, vm::JSArray::create(&runtime_, length, length));
     for (size_t i = 0; i < length; ++i) {
       vm::HermesValue name = arr->at(i);
       vm::JSArray::setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
     }
-
     *result = addStackValue(res.getHermesValue());
-
     return clearLastError();
   });
 }
