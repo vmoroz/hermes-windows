@@ -182,6 +182,11 @@ constexpr std::size_t size(const T (&array)[N]) noexcept {
   return N;
 }
 
+template <class TEnum>
+bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept {
+  return lowerBound <= value && value <= upperBound;
+}
+
 struct Marker {
   size_t chunkIndex{0};
   size_t itemIndex{0};
@@ -534,6 +539,14 @@ struct NodeApiEnvironment {
   vm::Handle<> makeHandle(napi_value value) noexcept;
   vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
 
+  template <class T>
+  vm::CallResult<vm::Handle<T>> makeHandle(
+      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
+
+template <class T>
+  vm::CallResult<vm::MutableHandle<T>> makeMutableHandle(
+      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
+
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
@@ -603,7 +616,10 @@ struct NodeApiEnvironment {
       const napi_property_descriptor *properties,
       napi_value *result) noexcept;
 
-  napi_status convertNumbersToStrings(vm::Handle<vm::JSArray> array) noexcept;
+  napi_status convertNumbersToStrings(
+      vm::Handle<vm::JSArray> array,
+      bool shouldConvert,
+      napi_value *result) noexcept;
 
   napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
 
@@ -2658,21 +2674,6 @@ napi_status NodeApiEnvironment::defineClass(
   });
 }
 
-napi_status NodeApiEnvironment::getPropertyNames(
-    napi_value object,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(object);
-    CHECK_ARG(result);
-    ASSIGN_ELSE_RETURN_STATUS(
-        vm::Handle<vm::JSObject> objHandle /*=*/,
-        convertToObject(makeHandle(object)),
-        /*else return*/ napi_object_expected);
-    return getForInPropertyNames(
-        objHandle, napi_key_numbers_to_strings, result);
-  });
-}
-
 vm::CallResult<vm::Handle<vm::JSObject>> NodeApiEnvironment::convertToObject(
     vm::Handle<> value) noexcept {
   ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
@@ -2691,6 +2692,27 @@ vm::Handle<> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
 
 vm::Handle<> NodeApiEnvironment::makeHandle(vm::HermesValue value) noexcept {
   return vm::Handle<>(&runtime_, value);
+}
+
+template <class T>
+vm::CallResult<vm::Handle<T>> NodeApiEnvironment::makeHandle(
+    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
+  if (callResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
+  return runtime_.makeHandle(std::move(*callResult));
+}
+
+template <class T>
+vm::CallResult<vm::MutableHandle<T>> NodeApiEnvironment::makeMutableHandle(
+    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
+      vm::CallResult<vm::Handle<T>> handleResult = makeHandle(std::move(callResult));
+  if (handleResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
+  vm::MutableHandle<T> result{&runtime_};
+  result = std::move(*callResult);
+  return result;
 }
 
 template <class T>
@@ -2737,21 +2759,21 @@ napi_status NodeApiEnvironment::getForInPropertyNames(
 }
 
 napi_status NodeApiEnvironment::convertNumbersToStrings(
-    vm::Handle<vm::JSArray> array) noexcept {
-  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
-  for (size_t i = 0; i < length; ++i) {
-    vm::HermesValue value = array->at(&runtime_, i);
-    if (LLVM_UNLIKELY(value.isNumber())) {
-      StringBuilder sb(static_cast<size_t>(value.getNumber()));
-      std::string &str = sb.str();
-      ASSIGN_ELSE_RETURN_FAILURE(
-          auto strHV, stringHVFromAscii(str.data(), str.size()));
-      vm::JSArray::setElementAt(
-          array, &runtime_, i, runtime_.makeHandle(strHV));
-    } else if (LLVM_UNLIKELY(!value.isString())) {
-      llvm_unreachable("value is not String or Number");
+    vm::Handle<vm::JSArray> array,
+    bool shouldConvert,
+    napi_value *result) noexcept {
+  if (shouldConvert) {
+    size_t length = vm::JSArray::getLength(array.get(), &runtime_);
+    for (size_t i = 0; i < length; ++i) {
+      vm::HermesValue value = array->at(&runtime_, i);
+      if (LLVM_UNLIKELY(value.isNumber())) {
+        StringBuilder sb(static_cast<size_t>(value.getNumber()));
+        ASSIGN_ELSE_RETURN_FAILURE(vm::Handle<> str, sb.makeStringHV(runtime_));
+        vm::JSArray::setElementAt(array, &runtime_, i, str);
+      }
     }
   }
+  *result = addStackValue(array.getHermesValue());
   return clearLastError();
 }
 
@@ -2778,6 +2800,21 @@ struct OrderedSet {
   Compare *compare_{};
 };
 
+napi_status NodeApiEnvironment::getPropertyNames(
+    napi_value object,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(result);
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        /*else return*/ napi_object_expected);
+    return getForInPropertyNames(
+        objHandle, napi_key_numbers_to_strings, result);
+  });
+}
+
 napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value object,
     napi_key_collection_mode keyMode,
@@ -2794,64 +2831,59 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     CHECK_ARG(result);
     CHECK_ARG(object);
     ASSIGN_ELSE_RETURN_STATUS(
-        vm::Handle<vm::JSObject> objHandle/*=*/,
+        vm::Handle<vm::JSObject> objHandle /*=*/,
         convertToObject(makeHandle(object)),
-        /*else return*/napi_object_expected);
+        /*else return*/ napi_object_expected);
     RETURN_STATUS_IF_FALSE(
-        keyMode == napi_key_include_prototypes || keyMode == napi_key_own_only,
+        isInEnumRange(keyMode, napi_key_include_prototypes, napi_key_own_only),
         napi_invalid_arg);
     RETURN_STATUS_IF_FALSE(
-        keyConversion == napi_key_keep_numbers ||
-            keyConversion == napi_key_numbers_to_strings,
+        isInEnumRange(
+            keyConversion, napi_key_keep_numbers, napi_key_numbers_to_strings),
         napi_invalid_arg);
 
+    vm::MutableHandle<vm::JSObject> currentObj(&runtime_, objHandle.get());
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
+        vm::JSObject::getPrototypeOf(currentObj, &runtime_));
+
     // The fast path used for the 'for..in' implementation.
-    // TODO: use it also if there is no prototype
-    if (keyFilter ==
-            static_cast<napi_key_filter>(
-                napi_key_enumerable | napi_key_skip_symbols) &&
-        keyMode == napi_key_include_prototypes) {
+    if (keyFilter == (napi_key_enumerable | napi_key_skip_symbols) &&
+        (keyMode == napi_key_include_prototypes || !parentObj.get())) {
       return getForInPropertyNames(objHandle, keyConversion, result);
     }
 
-    if (keyMode == napi_key_own_only &&
-        (keyFilter &
-         static_cast<napi_key_filter>(
-             napi_key_writable | napi_key_configurable)) == 0) {
-      vm::OwnKeysFlags okFlags{};
-      okFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
-      okFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
-      okFlags.setIncludeNonEnumerable((keyFilter & napi_key_enumerable) == 0);
-      ASSIGN_CHECKED(
-          auto props,
-          vm::JSObject::getOwnPropertyKeys(objHandle, &runtime_, okFlags));
-      if (keyConversion == napi_key_numbers_to_strings) {
-        CHECK_NAPI(convertNumbersToStrings(props));
-      }
-      *result = addStackValue(props.getHermesValue());
-      return clearLastError();
+    // Flags to request own keys
+    vm::OwnKeysFlags ownKeyFlags{};
+    ownKeyFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
+    ownKeyFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
+    ownKeyFlags.plusIncludeNonEnumerable(); // for proper shadow checks
+
+    // Use the simple path for own properties without extra filters.
+    if ((keyMode == napi_key_own_only || !parentObj.get()) &&
+        (keyFilter & (napi_key_writable | napi_key_configurable)) == 0) {
+      // Exclude non-enumerable if requested
+      ownKeyFlags.setIncludeNonEnumerable(
+          (keyFilter & napi_key_enumerable) == 0);
+      ASSIGN_ELSE_RETURN_FAILURE(
+          vm::Handle<vm::JSArray> props /*=*/,
+          vm::JSObject::getOwnPropertyKeys(objHandle, &runtime_, ownKeyFlags));
+      return convertNumbersToStrings(
+          props,
+          keyConversion == napi_key_numbers_to_strings,
+          /*out*/ result);
     }
 
-    vm::Handle<vm::HiddenClass> objClass(
-        &runtime_, objHandle->getClass(&runtime_));
-    uint32_t ownPropEstimate = objClass->getNumProperties();
-    ASSIGN_CHECKED(
-        auto arrRes, vm::BigStorage::create(&runtime_, ownPropEstimate));
-
-    auto arr =
-        runtime_.makeMutableHandle<vm::BigStorage>(std::move(arrRes.get()));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::MutableHandle<vm::BigStorage> arr /*=*/,
+        makeMutableHandle(vm::BigStorage::create(&runtime_, 64)));
     vm::MutableHandle<> prop(&runtime_);
-    vm::MutableHandle<vm::JSObject> head(&runtime_, objHandle.get());
-    while (head.get()) {
+    while (currentObj.get()) {
       vm::GCScope gcScope(&runtime_);
 
-      vm::OwnKeysFlags okFlags{};
-      okFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
-      okFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
-      okFlags.plusIncludeNonEnumerable();
-      ASSIGN_CHECKED(
-          auto props,
-          vm::JSObject::getOwnPropertyKeys(head, &runtime_, okFlags));
+      ASSIGN_ELSE_RETURN_FAILURE(
+          vm::Handle<vm::JSArray> props /*=*/,
+          vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags));
 
       for (uint32_t i = 0, e = props->getEndIndex(); i < e; ++i) {
         // TODO: gcScope.flushToMarker(marker);
@@ -2915,7 +2947,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           ASSIGN_CHECKED(
               auto descRes,
               vm::JSObject::getOwnComputedPrimitiveDescriptor(
-                  head,
+                  currentObj,
                   &runtime_,
                   prop,
                   vm::JSObject::IgnoreProxy::No,
@@ -2953,8 +2985,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
 
       // Continue to follow the prototype chain.
       ASSIGN_CHECKED(
-          auto parentRes, vm::JSObject::getPrototypeOf(head, &runtime_));
-      head = parentRes.get();
+          auto parentRes, vm::JSObject::getPrototypeOf(currentObj, &runtime_));
+      currentObj = parentRes.get();
     }
 
     auto length = arr->size();
