@@ -120,17 +120,40 @@ using ::hermes::hermesLog;
 #define CHECK_BOOL_ARG(arg) \
   CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
 
-#define CHECK_STATUS(hermesStatus) CHECK_NAPI(checkStatus(hermesStatus))
+#define CHECK_STATUS(hermesStatus) \
+  CHECK_NAPI(checkStatus(hermesStatus, napi_generic_failure))
+
+#define CHECK_HERMES_STATUS(hermesStatus, status) \
+  CHECK_NAPI(checkStatus(hermesStatus, status))
 
 #define CONCAT_IMPL(left, right) left##right
 #define CONCAT(left, right) CONCAT_IMPL(left, right)
 #define TEMP_VARNAME(tempSuffix) CONCAT(temp_, tempSuffix)
-#define ASSIGN_CHECKED_IMPL(var, expr, tempSuffix)    \
-  auto TEMP_VARNAME(tempSuffix) = (expr);             \
-  CHECK_STATUS(TEMP_VARNAME(tempSuffix).getStatus()); \
+
+#define ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, tempSuffix) \
+  auto TEMP_VARNAME(tempSuffix) = (expr);                             \
+  CHECK_HERMES_STATUS(TEMP_VARNAME(tempSuffix).getStatus(), status);  \
   var = std::move(*TEMP_VARNAME(tempSuffix));
 
-#define ASSIGN_CHECKED(var, expr) ASSIGN_CHECKED_IMPL(var, expr, __COUNTER__)
+#define ASSIGN_CHECKED(var, expr) \
+  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
+
+#define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
+  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
+
+#define ASSIGN_ELSE_RETURN_STATUS(var, expr, status) \
+  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, __COUNTER__)
+
+#define ASSIGN_ELSE_RETURN_HERMES_EXCEPTION_IMPL(var, expr, tempSuffix) \
+  auto TEMP_VARNAME(tempSuffix) = (expr);                               \
+  if (TEMP_VARNAME(tempSuffix).getStatus() ==                           \
+      vm::ExecutionStatus::EXCEPTION) {                                 \
+    return vm::ExecutionStatus::EXCEPTION;                              \
+  }                                                                     \
+  var = std::move(*TEMP_VARNAME(tempSuffix));
+
+#define ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(var, expr) \
+  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION_IMPL(var, expr, __COUNTER__)
 
 #define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
   do {                                                              \
@@ -501,6 +524,16 @@ struct NodeApiEnvironment {
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
   virtual ~NodeApiEnvironment();
 
+  template <class T>
+  vm::MutableHandle<T> makeMutableHandle() noexcept;
+
+  vm::CallResult<vm::Handle<vm::JSObject>> convertToObject(
+      vm::Handle<> value) noexcept;
+
+  vm::Handle<> makeHandle(const vm::PinnedHermesValue *value) noexcept;
+  vm::Handle<> makeHandle(napi_value value) noexcept;
+  vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
+
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
@@ -575,7 +608,7 @@ struct NodeApiEnvironment {
   napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
 
   napi_status getForInPropertyNames(
-      napi_value object,
+      vm::Handle<vm::JSObject> object,
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
 
@@ -985,7 +1018,9 @@ struct NodeApiEnvironment {
   vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
   napi_value addStackValue(vm::HermesValue value) noexcept;
   napi_value toNapiValue(const vm::PinnedHermesValue &value) noexcept;
-  napi_status checkStatus(vm::ExecutionStatus status) noexcept;
+  napi_status checkStatus(
+      vm::ExecutionStatus hermesStatus,
+      napi_status status) noexcept;
 
   napi_status newFunction(
       vm::SymbolID name,
@@ -1073,6 +1108,13 @@ struct NodeApiEnvironment {
   napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
 
   vm::Runtime &runtime() noexcept;
+
+  struct RuntimeAccessor : vm::Runtime {
+    using vm::Runtime::nullPointer_;
+  };
+  RuntimeAccessor &runtimeAccessor() noexcept {
+    return static_cast<RuntimeAccessor &>(runtime_);
+  }
 
  private:
 #ifdef HERMESJSI_ON_STACK
@@ -2105,6 +2147,16 @@ struct StringBuilder {
     return str().c_str();
   }
 
+  vm::CallResult<vm::Handle<>> makeStringHV(vm::Runtime &runtime) noexcept {
+    stream_.flush();
+    auto res = vm::StringPrimitive::createEfficient(
+        &runtime, llvh::makeArrayRef(str_.data(), str_.size()));
+    if (LLVM_UNLIKELY(res.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
+      return vm::ExecutionStatus::EXCEPTION;
+    }
+    return runtime.makeHandle(*res);
+  }
+
  private:
   std::string str_;
   llvh::raw_string_ostream stream_;
@@ -2505,14 +2557,15 @@ napi_value NodeApiEnvironment::toNapiValue(
 }
 
 napi_status NodeApiEnvironment::checkStatus(
-    vm::ExecutionStatus status) noexcept {
-  if (LLVM_LIKELY(status != vm::ExecutionStatus::EXCEPTION)) {
+    vm::ExecutionStatus hermesStatus,
+    napi_status status) noexcept {
+  if (LLVM_LIKELY(hermesStatus != vm::ExecutionStatus::EXCEPTION)) {
     return napi_ok;
   }
 
   lastException_ = runtime_.getThrownValue();
   runtime_.clearThrownValue();
-  return napi_pending_exception;
+  return status;
 }
 
 napi_status NodeApiEnvironment::newFunction(
@@ -2608,55 +2661,79 @@ napi_status NodeApiEnvironment::defineClass(
 napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
-  return getForInPropertyNames(object, napi_key_numbers_to_strings, result);
+  return handleExceptions([&] {
+    CHECK_ARG(object);
+    CHECK_ARG(result);
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        /*else return*/ napi_object_expected);
+    return getForInPropertyNames(
+        objHandle, napi_key_numbers_to_strings, result);
+  });
+}
+
+vm::CallResult<vm::Handle<vm::JSObject>> NodeApiEnvironment::convertToObject(
+    vm::Handle<> value) noexcept {
+  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+      vm::HermesValue obj /*=*/, vm::toObject(&runtime_, value));
+  return vm::Handle<vm::JSObject>::vmcast(&runtime_, obj);
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(
+    const vm::PinnedHermesValue *value) noexcept {
+  return vm::Handle<>(value);
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
+  return makeHandle(phv(value));
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(vm::HermesValue value) noexcept {
+  return vm::Handle<>(&runtime_, value);
+}
+
+template <class T>
+vm::MutableHandle<T> NodeApiEnvironment::makeMutableHandle() noexcept {
+  return vm::MutableHandle<T>(&runtime_);
 }
 
 napi_status NodeApiEnvironment::getForInPropertyNames(
-    napi_value object,
+    vm::Handle<vm::JSObject> object,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   // Hermes optimizes retrieving property names for the 'for..in' implementation
   // by caching its results. This function takes the benefits from using it.
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    CHECK_ARG(object);
-    ASSIGN_CHECKED(auto objHV, vm::toObject(&runtime_, toHandle(object)));
-    RETURN_STATUS_IF_FALSE(
-        keyConversion == napi_key_keep_numbers ||
-            keyConversion == napi_key_numbers_to_strings,
-        napi_invalid_arg);
+  uint32_t beginIndex;
+  uint32_t endIndex;
+  ASSIGN_ELSE_RETURN_FAILURE(
+      vm::Handle<vm::BigStorage> arr,
+      vm::getForInPropertyNames(&runtime_, object, beginIndex, endIndex));
+  size_t length = endIndex - beginIndex;
 
-    uint32_t beginIndex;
-    uint32_t endIndex;
-    vm::CallResult<vm::Handle<vm::SegmentedArray>> cr =
-        vm::getForInPropertyNames(
-            &runtime_,
-            runtime_.makeHandle<vm::JSObject>(objHV),
-            beginIndex,
-            endIndex);
-    CHECK_STATUS(cr.getStatus());
-    vm::Handle<vm::SegmentedArray> arr = *cr;
-    size_t length = endIndex - beginIndex;
-
-    ASSIGN_CHECKED(auto res, vm::JSArray::create(&runtime_, length, length));
-    for (size_t i = 0; i < length; ++i) {
-      vm::HermesValue name = arr->at(beginIndex + i);
-      if (name.isString() || keyConversion == napi_key_keep_numbers) {
-        vm::JSArray::setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
-      } else if (name.isNumber()) {
+  // TODO: extract into a separate function
+  ASSIGN_ELSE_RETURN_FAILURE(
+      vm::Handle<vm::JSArray> res,
+      vm::JSArray::create(&runtime_, length, length));
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue name = arr->at(beginIndex + i);
+    if (name.isString()) {
+      vm::JSArray::setElementAt(res, &runtime_, i, makeHandle(name));
+    } else if (name.isNumber()) {
+      if (keyConversion == napi_key_numbers_to_strings) {
         StringBuilder sb(static_cast<size_t>(name.getNumber()));
-        std::string &str = sb.str();
-        ASSIGN_CHECKED(auto strHV, stringHVFromAscii(str.data(), str.size()));
-        vm::JSArray::setElementAt(
-            res, &runtime_, i, runtime_.makeHandle(strHV));
+        ASSIGN_ELSE_RETURN_FAILURE(vm::Handle<> str, sb.makeStringHV(runtime_));
+        vm::JSArray::setElementAt(res, &runtime_, i, str);
       } else {
-        llvm_unreachable("property name is not String or Number");
+        vm::JSArray::setElementAt(res, &runtime_, i, makeHandle(name));
       }
+    } else {
+      llvm_unreachable("property name is not String or Number");
     }
+  }
 
-    *result = addStackValue(res.getHermesValue());
-    return clearLastError();
-  });
+  *result = addStackValue(res.getHermesValue());
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::convertNumbersToStrings(
@@ -2667,7 +2744,8 @@ napi_status NodeApiEnvironment::convertNumbersToStrings(
     if (LLVM_UNLIKELY(value.isNumber())) {
       StringBuilder sb(static_cast<size_t>(value.getNumber()));
       std::string &str = sb.str();
-      ASSIGN_CHECKED(auto strHV, stringHVFromAscii(str.data(), str.size()));
+      ASSIGN_ELSE_RETURN_FAILURE(
+          auto strHV, stringHVFromAscii(str.data(), str.size()));
       vm::JSArray::setElementAt(
           array, &runtime_, i, runtime_.makeHandle(strHV));
     } else if (LLVM_UNLIKELY(!value.isString())) {
@@ -2715,8 +2793,10 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
   return handleExceptions([&] {
     CHECK_ARG(result);
     CHECK_ARG(object);
-    ASSIGN_CHECKED(auto objHV, vm::toObject(&runtime_, toHandle(object)));
-    auto objHandle = runtime_.makeHandle<vm::JSObject>(objHV);
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle/*=*/,
+        convertToObject(makeHandle(object)),
+        /*else return*/napi_object_expected);
     RETURN_STATUS_IF_FALSE(
         keyMode == napi_key_include_prototypes || keyMode == napi_key_own_only,
         napi_invalid_arg);
@@ -2731,7 +2811,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             static_cast<napi_key_filter>(
                 napi_key_enumerable | napi_key_skip_symbols) &&
         keyMode == napi_key_include_prototypes) {
-      return getForInPropertyNames(object, keyConversion, result);
+      return getForInPropertyNames(objHandle, keyConversion, result);
     }
 
     if (keyMode == napi_key_own_only &&
