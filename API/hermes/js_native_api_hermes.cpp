@@ -535,6 +535,12 @@ struct NodeApiEnvironment {
   vm::CallResult<vm::Handle<vm::JSObject>> convertToObject(
       vm::Handle<> value) noexcept;
 
+  vm::CallResult<vm::Handle<vm::JSArray>> convertKeyStorageToArray(
+      vm::Handle<vm::BigStorage> keyStorage,
+      uint32_t startIndex,
+      uint32_t length,
+      napi_key_conversion keyConversion) noexcept;
+
   vm::Handle<> makeHandle(const vm::PinnedHermesValue *value) noexcept;
   vm::Handle<> makeHandle(napi_value value) noexcept;
   vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
@@ -616,17 +622,16 @@ struct NodeApiEnvironment {
       const napi_property_descriptor *properties,
       napi_value *result) noexcept;
 
-  napi_status convertNumbersToStrings(
-      vm::Handle<vm::JSArray> array,
-      bool shouldConvert,
-      napi_value *result) noexcept;
+  vm::CallResult<vm::Handle<>> convertIndexToString(double value) noexcept;
+
+  vm::ExecutionStatus convertKeyNumbersToStrings(
+      vm::Handle<vm::JSArray> array) noexcept;
+
+  vm::CallResult<vm::Handle<vm::JSArray>> getForInPropertyNames(
+      vm::Handle<vm::JSObject> object,
+      napi_key_conversion keyConversion) noexcept;
 
   napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
-
-  napi_status getForInPropertyNames(
-      vm::Handle<vm::JSObject> object,
-      napi_key_conversion keyConversion,
-      napi_value *result) noexcept;
 
   napi_status getAllPropertyNames(
       napi_value object,
@@ -634,6 +639,8 @@ struct NodeApiEnvironment {
       napi_key_filter keyFilter,
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
+
+  napi_status setResult(vm::HermesValue value, napi_value *result) noexcept;
 
   napi_status
   setProperty(napi_value object, napi_value key, napi_value value) noexcept;
@@ -2721,63 +2728,6 @@ vm::MutableHandle<T> NodeApiEnvironment::makeMutableHandle() noexcept {
   return vm::MutableHandle<T>(&runtime_);
 }
 
-napi_status NodeApiEnvironment::getForInPropertyNames(
-    vm::Handle<vm::JSObject> object,
-    napi_key_conversion keyConversion,
-    napi_value *result) noexcept {
-  // Hermes optimizes retrieving property names for the 'for..in' implementation
-  // by caching its results. This function takes the benefits from using it.
-  uint32_t beginIndex;
-  uint32_t endIndex;
-  ASSIGN_ELSE_RETURN_FAILURE(
-      vm::Handle<vm::BigStorage> arr,
-      vm::getForInPropertyNames(&runtime_, object, beginIndex, endIndex));
-  size_t length = endIndex - beginIndex;
-
-  // TODO: extract into a separate function
-  ASSIGN_ELSE_RETURN_FAILURE(
-      vm::Handle<vm::JSArray> res,
-      vm::JSArray::create(&runtime_, length, length));
-  for (size_t i = 0; i < length; ++i) {
-    vm::HermesValue name = arr->at(beginIndex + i);
-    if (name.isString()) {
-      vm::JSArray::setElementAt(res, &runtime_, i, makeHandle(name));
-    } else if (name.isNumber()) {
-      if (keyConversion == napi_key_numbers_to_strings) {
-        StringBuilder sb(static_cast<size_t>(name.getNumber()));
-        ASSIGN_ELSE_RETURN_FAILURE(vm::Handle<> str, sb.makeStringHV(runtime_));
-        vm::JSArray::setElementAt(res, &runtime_, i, str);
-      } else {
-        vm::JSArray::setElementAt(res, &runtime_, i, makeHandle(name));
-      }
-    } else {
-      llvm_unreachable("property name is not String or Number");
-    }
-  }
-
-  *result = addStackValue(res.getHermesValue());
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::convertNumbersToStrings(
-    vm::Handle<vm::JSArray> array,
-    bool shouldConvert,
-    napi_value *result) noexcept {
-  if (shouldConvert) {
-    size_t length = vm::JSArray::getLength(array.get(), &runtime_);
-    for (size_t i = 0; i < length; ++i) {
-      vm::HermesValue value = array->at(&runtime_, i);
-      if (LLVM_UNLIKELY(value.isNumber())) {
-        StringBuilder sb(static_cast<size_t>(value.getNumber()));
-        ASSIGN_ELSE_RETURN_FAILURE(vm::Handle<> str, sb.makeStringHV(runtime_));
-        vm::JSArray::setElementAt(array, &runtime_, i, str);
-      }
-    }
-  }
-  *result = addStackValue(array.getHermesValue());
-  return clearLastError();
-}
-
 template <typename T>
 struct OrderedSet {
   using Compare = int(const T &item1, const T &item2);
@@ -2811,8 +2761,10 @@ napi_status NodeApiEnvironment::getPropertyNames(
         vm::Handle<vm::JSObject> objHandle /*=*/,
         convertToObject(makeHandle(object)),
         /*else return*/ napi_object_expected);
-    return getForInPropertyNames(
-        objHandle, napi_key_numbers_to_strings, result);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::Handle<vm::JSArray> array /*=*/,
+        getForInPropertyNames(objHandle, napi_key_numbers_to_strings));
+    return setResult(array.getHermesValue(), result);
   });
 }
 
@@ -2855,7 +2807,10 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // The fast path used for the 'for..in' implementation.
     if (keyFilter == (napi_key_enumerable | napi_key_skip_symbols) &&
         (keyMode == napi_key_include_prototypes || !hasParent)) {
-      return getForInPropertyNames(objHandle, keyConversion, result);
+      ASSIGN_ELSE_RETURN_FAILURE(
+          vm::Handle<vm::JSArray> array /*=*/,
+          getForInPropertyNames(objHandle, napi_key_numbers_to_strings));
+      return setResult(array.getHermesValue(), result);
     }
 
     // Flags to request own keys
@@ -2867,23 +2822,23 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // Use the simple path for own properties without extra filters.
     if ((keyMode == napi_key_own_only || !hasParent) &&
         (keyFilter & (napi_key_writable | napi_key_configurable)) == 0) {
-      // Exclude non-enumerable if requested
       ownKeyFlags.setIncludeNonEnumerable(
           (keyFilter & napi_key_enumerable) == 0);
       ASSIGN_ELSE_RETURN_FAILURE(
-          vm::Handle<vm::JSArray> props /*=*/,
+          vm::Handle<vm::JSArray> ownKeys /*=*/,
           vm::JSObject::getOwnPropertyKeys(objHandle, &runtime_, ownKeyFlags));
-      return convertNumbersToStrings(
-          props,
-          keyConversion == napi_key_numbers_to_strings,
-          /*out*/ result);
+      if (keyConversion == napi_key_numbers_to_strings) {
+        CHECK_STATUS(convertKeyNumbersToStrings(ownKeys));
+      }
+      return setResult(ownKeys.getHermesValue(), result);
     }
 
-    // Collect and filter all properties into the arr.
+    // Collect all properties after applying filter into the keyStorage.
     const uint32_t sizeEstimate = 64;
     ASSIGN_ELSE_RETURN_FAILURE(
-        vm::MutableHandle<vm::BigStorage> arr /*=*/,
+        vm::MutableHandle<vm::BigStorage> keyStorage /*=*/,
         makeMutableHandle(vm::BigStorage::create(&runtime_, sizeEstimate)));
+    uint32_t size{0};
 
     // Make sure that we do not include into the result properties that were
     // shadowed by the derived objects.
@@ -2984,15 +2939,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           }
         }
 
-        if (keyConversion == napi_key_numbers_to_strings && useShadowTracking &&
-            propIndexOpt) {
-          ASSIGN_ELSE_RETURN_FAILURE(
-              vm::Handle<> str /*=*/,
-              StringBuilder(propIndexOpt.getValue()).makeStringHV(runtime_));
-          CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, str));
-        } else {
-          CHECK_STATUS(vm::BigStorage::push_back(arr, &runtime_, prop));
-        }
+        CHECK_STATUS(vm::BigStorage::push_back(keyStorage, &runtime_, prop));
+        ++size;
       }
 
       // Continue to follow the prototype chain.
@@ -3002,17 +2950,80 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       currentObj = parentObj.get();
     }
 
-    // TODO: extract into a separate function
-    // TODO: use useShadowTracking
-    auto length = arr->size();
-    ASSIGN_CHECKED(auto res, vm::JSArray::create(&runtime_, length, length));
-    for (size_t i = 0; i < length; ++i) {
-      vm::HermesValue name = arr->at(i);
-      vm::JSArray::setElementAt(res, &runtime_, i, runtime_.makeHandle(name));
-    }
-    *result = addStackValue(res.getHermesValue());
-    return clearLastError();
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::Handle<vm::JSArray> array /*=*/,
+        convertKeyStorageToArray(keyStorage, 0, size, keyConversion));
+    return setResult(array.getHermesValue(), result);
   });
+}
+
+vm::CallResult<vm::Handle<vm::JSArray>>
+NodeApiEnvironment::getForInPropertyNames(
+    vm::Handle<vm::JSObject> object,
+    napi_key_conversion keyConversion) noexcept {
+  // Hermes optimizes retrieving property names for the 'for..in' implementation
+  // by caching its results. This function takes the advantage from using it.
+  uint32_t beginIndex;
+  uint32_t endIndex;
+  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+      vm::Handle<vm::BigStorage> keyStorage,
+      vm::getForInPropertyNames(&runtime_, object, beginIndex, endIndex));
+  uint32_t size = endIndex - beginIndex;
+  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+      vm::Handle<vm::JSArray> array /*=*/,
+      convertKeyStorageToArray(keyStorage, 0, size, keyConversion));
+  return array;
+}
+
+vm::CallResult<vm::Handle<vm::JSArray>>
+NodeApiEnvironment::convertKeyStorageToArray(
+    vm::Handle<vm::BigStorage> keyStorage,
+    uint32_t startIndex,
+    uint32_t length,
+    napi_key_conversion keyConversion) noexcept {
+  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+      vm::Handle<vm::JSArray> array /*=*/,
+      vm::JSArray::create(&runtime_, length, length));
+  for (size_t i = 0; i < length; ++i) {
+    vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
+    if (keyConversion == napi_key_numbers_to_strings && key->isNumber()) {
+      ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+          key /*=*/, convertIndexToString(key->getNumber()));
+    }
+    vm::JSArray::setElementAt(array, &runtime_, i, key);
+  }
+  return array;
+}
+
+vm::ExecutionStatus NodeApiEnvironment::convertKeyNumbersToStrings(
+    vm::Handle<vm::JSArray> array) noexcept {
+  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue key = array->at(&runtime_, i);
+    if (LLVM_UNLIKELY(key.isNumber())) {
+      ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
+          vm::Handle<> strKey /*=*/, convertIndexToString(key.getNumber()));
+      vm::JSArray::setElementAt(array, &runtime_, i, strKey);
+    }
+  }
+  return vm::ExecutionStatus::RETURNED;
+}
+
+vm::CallResult<vm::Handle<>> NodeApiEnvironment::convertIndexToString(
+    double value) noexcept {
+  OptValue<uint32_t> index = doubleToArrayIndex(value);
+  if (LLVM_UNLIKELY(!index)) {
+    return runtime_.raiseRangeError("Index property is out of range");
+  }
+  return StringBuilder(*index).makeStringHV(runtime_);
+}
+
+napi_status NodeApiEnvironment::setResult(
+    vm::HermesValue value,
+    napi_value *result) noexcept {
+  CHECK_ARG(result);
+  *result = addStackValue(value);
+  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::setProperty(
