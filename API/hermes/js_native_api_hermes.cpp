@@ -2756,7 +2756,6 @@ napi_status NodeApiEnvironment::getPropertyNames(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(object);
-    CHECK_ARG(result);
     ASSIGN_ELSE_RETURN_STATUS(
         vm::Handle<vm::JSObject> objHandle /*=*/,
         convertToObject(makeHandle(object)),
@@ -2774,14 +2773,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_filter keyFilter,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
-  // TODO: unify index conversion to string
   // TODO: Can we use Hermes hash table for shadow strings?
-  // TODO: unify converting BigStorage to JSArray
-  // TODO: optimize for no-prototype cases
-  // TODO: Simplify conversion to object handle
-
   return handleExceptions([&] {
-    CHECK_ARG(result);
     CHECK_ARG(object);
     ASSIGN_ELSE_RETURN_STATUS(
         vm::Handle<vm::JSObject> objHandle /*=*/,
@@ -2848,7 +2841,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         [](const uint32_t &item1, const uint32_t &item2) {
           return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
         });
-    // TODO: replace with a hermes hashed collection
     OrderedSet<vm::Handle<vm::StringPrimitive>> shadowStrings(
         [](const vm::Handle<vm::StringPrimitive> &item1,
            const vm::Handle<vm::StringPrimitive> &item2) {
@@ -2870,14 +2862,15 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     vm::MutableHandle<vm::SymbolID> propSymbol(&runtime_);
 
     while (currentObj.get()) {
-      // TODO: vm::GCScope gcScope(&runtime_);
+      vm::GCScope gcScope(&runtime_);
 
       ASSIGN_ELSE_RETURN_FAILURE(
           vm::Handle<vm::JSArray> props /*=*/,
           vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags));
 
+      auto marker = gcScope.createMarker();
       for (uint32_t i = 0, end = props->getEndIndex(); i < end; ++i) {
-        // TODO: gcScope.flushToMarker(marker);
+        gcScope.flushToMarker(marker);
         prop = props->at(&runtime_, i);
 
         // Do not add a property if it is overriden in the derived object.
