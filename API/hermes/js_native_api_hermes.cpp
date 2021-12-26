@@ -6,7 +6,6 @@
 // TODO: Better native error handling
 // TODO: review all object functions
 
-// TODO: Implement getting all properties
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
@@ -434,7 +433,7 @@ struct CallbackInfo final {
       : context_(context), hvArgs_(hvArgs) {}
 
   void Args(napi_value *args, size_t *argCount) noexcept {
-    // TODO: fix    *args = napiValue(hvArgs_.begin());
+    *args = napiValue(&*hvArgs_.begin());
     *argCount = hvArgs_.getArgCount();
   }
 
