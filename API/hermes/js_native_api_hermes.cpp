@@ -1933,7 +1933,7 @@ struct OrderedSet {
 
  private:
   NodeApiEnvironment &env_;
-  llvh::SmallVector<vm::PinnedHermesValue, 64> items_;
+  llvh::SmallVector<vm::PinnedHermesValue, 16> items_;
   Compare *compare_{};
 };
 
@@ -1948,7 +1948,7 @@ struct UInt32OrderedSet {
   }
 
  private:
-  llvh::SmallVector<uint32_t, 64> items_;
+  llvh::SmallVector<uint32_t, 16> items_;
 };
 
 //=============================================================================
@@ -2868,10 +2868,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     }
 
     // Collect all properties after applying filter into the keyStorage.
-    const uint32_t sizeEstimate = 64;
     ASSIGN_ELSE_RETURN_FAILURE(
         vm::MutableHandle<vm::BigStorage> keyStorage /*=*/,
-        makeMutableHandle(vm::BigStorage::create(&runtime_, sizeEstimate)));
+        makeMutableHandle(vm::BigStorage::create(&runtime_, 16)));
     uint32_t size{0};
 
     // Make sure that we do not include into the result properties that were
@@ -2895,7 +2894,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     vm::MutableHandle<> prop(&runtime_);
     OptValue<uint32_t> propIndexOpt{};
     vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
-    vm::MutableHandle<vm::SymbolID> propSymbol(&runtime_);
 
     while (currentObj.get()) {
       vm::GCScope gcScope(&runtime_);
@@ -2920,7 +2918,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             propIndexOpt = doubleToArrayIndex(prop->getNumber());
             assert(propIndexOpt && "Invalid property index");
           } else if (prop->isSymbol()) {
-            propSymbol = vm::Handle<vm::SymbolID>(&runtime_, prop->getSymbol());
+            if (!shadowSymbols.insert(prop.getHermesValue())) {
+              continue;
+            }
           }
 
           if (propIndexOpt) {
@@ -2929,10 +2929,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
             }
           } else if (propString) {
             if (!shadowStrings.insert(prop.getHermesValue())) {
-              continue;
-            }
-          } else if (propSymbol) {
-            if (!shadowSymbols.insert(prop.getHermesValue())) {
               continue;
             }
           }
