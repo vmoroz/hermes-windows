@@ -2805,7 +2805,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_filter keyFilter,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
-  // TODO: Can we use Hermes hash table for shadow strings?
   return handleExceptions([&] {
     CHECK_ARG(object);
     ASSIGN_ELSE_RETURN_STATUS(
@@ -2858,7 +2857,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       return setResult(ownKeys.getHermesValue(), result);
     }
 
-    // Collect all properties after applying filter into the keyStorage.
+    // Collect all properties into the keyStorage.
     ASSIGN_ELSE_RETURN_FAILURE(
         vm::MutableHandle<vm::BigStorage> keyStorage /*=*/,
         makeMutableHandle(vm::BigStorage::create(&runtime_, 16)));
@@ -2868,6 +2867,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // shadowed by the derived objects.
     bool useShadowTracking =
         keyMode == napi_key_include_prototypes && hasParent;
+    // TODO: make the OrderedSet be a template
     UInt32OrderedSet shadowIndexes;
     OrderedSet shadowStrings(
         *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
@@ -3085,15 +3085,16 @@ napi_status NodeApiEnvironment::getProperty(
     napi_value key,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
-    CHECK_ARG(result);
-    auto objHandle = toObjectHandle(object);
-    auto res =
-        objHandle->getComputed_RJS(objHandle, &runtime_, stringHandle(key));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(res->get());
-    return clearLastError();
+    CHECK_ARG(object);
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        napi_object_expected);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::PseudoHandle<> res /*=*/,
+        vm::JSObject::getComputed_RJS(objHandle, &runtime_, makeHandle(key)));
+    return setResult(res.getHermesValue(), result);
   });
 }
 
