@@ -644,8 +644,19 @@ struct NodeApiEnvironment {
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
 
+  template <class T>
+  napi_status setResult(T value, T *result) noexcept;
   napi_status setResult(vm::HermesValue value, napi_value *result) noexcept;
-  napi_status setResult(bool value, bool *result) noexcept;
+  template <class T>
+  napi_status setResult(vm::Handle<T> handle, napi_value *result) noexcept;
+  template <class T>
+  napi_status setResult(
+      vm::PseudoHandle<T> handle,
+      napi_value *result) noexcept;
+  template <class T>
+  napi_status setOptionalResult(T value, T *result) noexcept;
+  template <class T>
+  napi_status setOptionalResult(T value, std::nullptr_t) noexcept;
 
   napi_status
   setProperty(napi_value object, napi_value key, napi_value value) noexcept;
@@ -3037,6 +3048,13 @@ vm::CallResult<vm::Handle<>> NodeApiEnvironment::convertIndexToString(
   return StringBuilder(*index).makeStringHV(runtime_);
 }
 
+template <class T>
+napi_status NodeApiEnvironment::setResult(T value, T *result) noexcept {
+  CHECK_ARG(result);
+  *result = value;
+  return clearLastError();
+}
+
 napi_status NodeApiEnvironment::setResult(
     vm::HermesValue value,
     napi_value *result) noexcept {
@@ -3045,9 +3063,32 @@ napi_status NodeApiEnvironment::setResult(
   return clearLastError();
 }
 
-napi_status NodeApiEnvironment::setResult(bool value, bool *result) noexcept {
-  CHECK_ARG(result);
-  *result = value;
+template <class T>
+napi_status NodeApiEnvironment::setResult(
+    vm::Handle<T> handle,
+    napi_value *result) noexcept {
+  return setResult(handle.getHermesValue(), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResult(
+    vm::PseudoHandle<T> handle,
+    napi_value *result) noexcept {
+  return setResult(handle.getHermesValue(), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setOptionalResult(T value, T *result) noexcept {
+  if (result) {
+    *result = value;
+  }
+  return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setOptionalResult(
+    T /*value*/,
+    std::nullptr_t) noexcept {
   return clearLastError();
 }
 
@@ -3067,8 +3108,7 @@ napi_status NodeApiEnvironment::setProperty(
             makeHandle(key),
             makeHandle(value),
             vm::PropOpFlags().plusThrowOnError()));
-    (void)res;
-    return clearLastError();
+    return setOptionalResult(res, nullptr);
   });
 }
 
@@ -3114,7 +3154,7 @@ napi_status NodeApiEnvironment::deleteProperty(
             &runtime_,
             makeHandle(key),
             vm::PropOpFlags().plusThrowOnError()));
-    return setResult(res, result);
+    return setOptionalResult(res, result);
   });
 }
 
@@ -3153,8 +3193,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
             makeHandle(name),
             makeHandle(value),
             vm::PropOpFlags().plusThrowOnError()));
-    (void)res;
-    return clearLastError();
+    return setOptionalResult(res, nullptr);
   });
 }
 
@@ -3348,21 +3387,16 @@ napi_status NodeApiEnvironment::getPrototype(
 }
 
 napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    *result = addStackValue(vm::JSObject::create(&runtime_).getHermesValue());
-    return clearLastError();
-  });
+  return handleExceptions(
+      [&] { return setResult(vm::JSObject::create(&runtime_), result); });
 }
 
 napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto arrHandle,
+        vm::Handle<vm::JSArray> arrHandle /*=*/,
         vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0));
-    *result = addStackValue(arrHandle.getHermesValue());
-    return clearLastError();
+    return setResult(arrHandle, result);
   });
 }
 
@@ -3370,12 +3404,10 @@ napi_status NodeApiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto arrHandle,
+        vm::Handle<vm::JSArray> arrHandle /*=*/,
         vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
-    *result = addStackValue(arrHandle.getHermesValue());
-    return clearLastError();
+    return setResult(arrHandle, result);
   });
 }
 
@@ -3383,9 +3415,7 @@ napi_status NodeApiEnvironment::isArray(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  *result = vm::vmisa<vm::JSArray>(*phv(value));
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSArray>(*phv(value)), result);
 }
 
 napi_status NodeApiEnvironment::getArrayLength(
@@ -3393,17 +3423,17 @@ napi_status NodeApiEnvironment::getArrayLength(
     uint32_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
-    auto arrayHandle = vm::Handle<vm::JSArray>::vmcast_or_null(phv(value));
-    RETURN_STATUS_IF_FALSE(arrayHandle, napi_array_expected);
-    auto res = vm::JSObject::getNamed_RJS(
-        arrayHandle,
-        &runtime_,
-        vm::Predefined::getSymbolID(vm::Predefined::length));
-    CHECK_STATUS(res.getStatus());
-    RETURN_STATUS_IF_FALSE((*res)->isNumber(), napi_number_expected);
-    *result = static_cast<uint32_t>((*res)->getDouble());
-    return clearLastError();
+    vm::Handle<vm::JSArray> arrHandle =
+        vm::Handle<vm::JSArray>::vmcast_or_null(phv(value));
+    RETURN_STATUS_IF_FALSE(arrHandle, napi_array_expected);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::PseudoHandle<> res /*=*/,
+        vm::JSObject::getNamed_RJS(
+            arrHandle,
+            &runtime_,
+            vm::Predefined::getSymbolID(vm::Predefined::length)));
+    RETURN_STATUS_IF_FALSE(res->isNumber(), napi_number_expected);
+    return setResult(static_cast<uint32_t>(res->getDouble()), result);
   });
 }
 
@@ -3412,17 +3442,14 @@ napi_status NodeApiEnvironment::hasElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
-    CHECK_ARG(result);
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
-    ASSIGN_ELSE_RETURN_FAILURE(
-        *result,
+        bool res /*=*/,
         vm::JSObject::hasComputed(
-            runtime_.makeHandle<vm::JSObject>(obj),
+            objHandle,
             &runtime_,
-            runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index))));
-    return clearLastError();
+            makeHandle(vm::HermesValue::encodeDoubleValue(index))));
+    return setResult(res, result);
   });
 }
 
@@ -3431,17 +3458,14 @@ napi_status NodeApiEnvironment::getElement(
     uint32_t index,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
-    CHECK_ARG(result);
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
-    auto res = vm::JSObject::getComputed_RJS(
-        runtime_.makeHandle<vm::JSObject>(obj),
-        &runtime_,
-        runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index)));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(res->get());
-    return clearLastError();
+        vm::PseudoHandle<> res /*=*/,
+        vm::JSObject::getComputed_RJS(
+            objHandle,
+            &runtime_,
+            makeHandle(vm::HermesValue::encodeDoubleValue(index))));
+    return setResult(std::move(res), result);
   });
 }
 
@@ -3450,16 +3474,16 @@ napi_status NodeApiEnvironment::setElement(
     uint32_t index,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
+    CHECK_ARG(value);
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
-    auto res = vm::JSObject::putComputed_RJS(
-        runtime_.makeHandle<vm::JSObject>(obj),
-        &runtime_,
-        runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index)),
-        runtime_.makeHandle(*phv(value)));
-    CHECK_STATUS(res.getStatus());
-    return clearLastError();
+        bool res /*=*/,
+        vm::JSObject::putComputed_RJS(
+            objHandle,
+            &runtime_,
+            makeHandle(vm::HermesValue::encodeDoubleValue(index)),
+            makeHandle(*phv(value))));
+    return setOptionalResult(res, nullptr);
   });
 }
 
@@ -3468,19 +3492,14 @@ napi_status NodeApiEnvironment::deleteElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
-    ASSIGN_ELSE_RETURN_FAILURE(
-        auto res,
+        bool res /*=*/,
         vm::JSObject::deleteComputed(
-            runtime_.makeHandle<vm::JSObject>(obj),
+            objHandle,
             &runtime_,
-            runtime_.makeHandle(vm::HermesValue::encodeDoubleValue(index))));
-    if (result != nullptr) {
-      *result = res;
-    }
-    return clearLastError();
+            makeHandle(vm::HermesValue::encodeDoubleValue(index))));
+    return setOptionalResult(res, result);
   });
 }
 
@@ -3490,18 +3509,14 @@ napi_status NodeApiEnvironment::createStringLatin1(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(str);
-    CHECK_ARG(result);
-    RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) ||
-            length <= std::numeric_limits<int32_t>::max(),
-        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char>::length(str);
     }
-    auto res = stringHVFromLatin1(str, length);
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/, stringHVFromLatin1(str, length));
+    return setResult(res, result);
   });
 }
 
@@ -3511,18 +3526,15 @@ napi_status NodeApiEnvironment::createStringUtf8(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(str);
-    CHECK_ARG(result);
-    RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) ||
-            length <= std::numeric_limits<int32_t>::max(),
-        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char>::length(str);
     }
-    auto res = stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length);
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/,
+        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length));
+    return setResult(res, result);
   });
 }
 
@@ -3532,19 +3544,16 @@ napi_status NodeApiEnvironment::createStringUtf16(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(str);
-    CHECK_ARG(result);
-    RETURN_STATUS_IF_FALSE(
-        (length == NAPI_AUTO_LENGTH) ||
-            length <= std::numeric_limits<int32_t>::max(),
-        napi_invalid_arg);
     if (length == NAPI_AUTO_LENGTH) {
       length = std::char_traits<char16_t>::length(str);
     }
-    auto res = vm::StringPrimitive::createEfficient(
-        &runtime_, llvh::makeArrayRef(str, length));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/,
+        vm::StringPrimitive::createEfficient(
+            &runtime_, llvh::makeArrayRef(str, length)));
+    return setResult(res, result);
   });
 }
 
