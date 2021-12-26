@@ -3123,14 +3123,15 @@ napi_status NodeApiEnvironment::hasOwnProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
     CHECK_ARG(key);
-    CHECK_ARG(result);
-    auto objHandle = toObjectHandle(object);
-    auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
-    CHECK_STATUS(res.getStatus());
-    *result = *res;
-    return clearLastError();
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
+    vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
+    vm::ComputedPropertyDescriptor desc;
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::getOwnComputedDescriptor(
+            objHandle, &runtime_, makeHandle(key), tmpSymbolStorage, desc));
+    return setResult(res, result);
   });
 }
 
@@ -3139,20 +3140,20 @@ napi_status NodeApiEnvironment::setNamedProperty(
     const char *utf8Name,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
     CHECK_ARG(utf8Name);
     CHECK_ARG(value);
-
-    auto objHandle = toObjectHandle(object);
-    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
-    CHECK_STATUS(objHandle
-                     ->putComputed_RJS(
-                         objHandle,
-                         &runtime_,
-                         toHandle(name),
-                         toHandle(value),
-                         vm::PropOpFlags().plusThrowOnError())
-                     .getStatus());
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue name /*=*/, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::putComputed_RJS(
+            objHandle,
+            &runtime_,
+            makeHandle(name),
+            makeHandle(value),
+            vm::PropOpFlags().plusThrowOnError()));
+    (void)res;
     return clearLastError();
   });
 }
@@ -3162,16 +3163,14 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     const char *utf8Name,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
     CHECK_ARG(utf8Name);
-    CHECK_ARG(result);
-
-    auto objHandle = toObjectHandle(object);
-    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
-
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
-    return clearLastError();
+        vm::HermesValue name /*=*/, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::hasComputed(objHandle, &runtime_, makeHandle(name)));
+    return setResult(res, result);
   });
 }
 
@@ -3180,18 +3179,14 @@ napi_status NodeApiEnvironment::getNamedProperty(
     const char *utf8Name,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
     CHECK_ARG(utf8Name);
-    CHECK_ARG(result);
-
-    auto objHandle = toObjectHandle(object);
-    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
-
+    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
     ASSIGN_ELSE_RETURN_FAILURE(
-        const auto &res,
-        objHandle->getComputed_RJS(objHandle, &runtime_, toHandle(name)));
-    *result = addStackValue(res.get());
-    return clearLastError();
+        vm::HermesValue name /*=*/, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::PseudoHandle<> res /*=*/,
+        vm::JSObject::getComputed_RJS(objHandle, &runtime_, makeHandle(name)));
+    return setResult(res.getHermesValue(), result);
   });
 }
 
