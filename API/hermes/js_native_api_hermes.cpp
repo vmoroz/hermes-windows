@@ -432,22 +432,22 @@ struct CallbackInfo final {
   CallbackInfo(HFContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
 
-  void Args(napi_value *args, size_t *argCount) noexcept {
+  void args(napi_value *args, size_t *argCount) noexcept {
     *args = napiValue(&*hvArgs_.begin());
     *argCount = hvArgs_.getArgCount();
   }
 
-  size_t ArgCount() noexcept {
+  size_t argCount() noexcept {
     return hvArgs_.getArgCount();
   }
 
-  napi_value This() noexcept {
+  napi_value thisArg() noexcept {
     return napiValue(&hvArgs_.getThisArg());
   }
 
-  void *Data() noexcept;
+  void *data() noexcept;
 
-  napi_value GetNewTarget() noexcept {
+  napi_value getNewTarget() noexcept {
     return napiValue(&hvArgs_.getNewTarget());
   }
 
@@ -472,7 +472,7 @@ struct HFContext final {
   void *data_;
 };
 
-void *CallbackInfo::Data() noexcept {
+void *CallbackInfo::data() noexcept {
   return context_.data_;
 }
 
@@ -3783,19 +3783,19 @@ napi_status NodeApiEnvironment::getCallbackInfo(
 
   if (args != nullptr) {
     CHECK_ARG(argCount);
-    callbackInfo->Args(args, argCount);
+    callbackInfo->args(args, argCount);
   }
 
   if (argCount != nullptr) {
-    *argCount = callbackInfo->ArgCount();
+    *argCount = callbackInfo->argCount();
   }
 
   if (thisArg != nullptr) {
-    *thisArg = callbackInfo->This();
+    *thisArg = callbackInfo->thisArg();
   }
 
   if (data != nullptr) {
-    *data = callbackInfo->Data();
+    *data = callbackInfo->data();
   }
 
   return clearLastError();
@@ -3808,7 +3808,7 @@ napi_status NodeApiEnvironment::getNewTarget(
   CHECK_ARG(callbackInfo);
   CHECK_ARG(result);
 
-  *result = callbackInfo->GetNewTarget();
+  *result = callbackInfo->getNewTarget();
 
   return clearLastError();
 }
