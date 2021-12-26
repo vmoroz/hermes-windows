@@ -643,6 +643,7 @@ struct NodeApiEnvironment {
       napi_value *result) noexcept;
 
   napi_status setResult(vm::HermesValue value, napi_value *result) noexcept;
+  napi_status setResult(bool value, bool *result) noexcept;
 
   napi_status
   setProperty(napi_value object, napi_value key, napi_value value) noexcept;
@@ -3042,24 +3043,33 @@ napi_status NodeApiEnvironment::setResult(
   return clearLastError();
 }
 
+napi_status NodeApiEnvironment::setResult(bool value, bool *result) noexcept {
+  CHECK_ARG(result);
+  *result = value;
+  return clearLastError();
+}
+
 napi_status NodeApiEnvironment::setProperty(
     napi_value object,
     napi_value key,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(value);
-
-    auto objHandle = toObjectHandle(object);
-    CHECK_STATUS(objHandle
-                     ->putComputed_RJS(
-                         objHandle,
-                         &runtime_,
-                         toHandle(key),
-                         toHandle(value),
-                         vm::PropOpFlags().plusThrowOnError())
-                     .getStatus());
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        napi_object_expected);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::putComputed_RJS(
+            objHandle,
+            &runtime_,
+            makeHandle(key),
+            makeHandle(value),
+            vm::PropOpFlags().plusThrowOnError()));
+    (void)res;
     return clearLastError();
   });
 }
@@ -3069,14 +3079,16 @@ napi_status NodeApiEnvironment::hasProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(object);
     CHECK_ARG(key);
-    CHECK_ARG(result);
-    auto objHandle = toObjectHandle(object);
-    auto res = objHandle->hasComputed(objHandle, &runtime_, stringHandle(key));
-    CHECK_STATUS(res.getStatus());
-    *result = *res;
-    return clearLastError();
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        napi_object_expected);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::hasComputed(objHandle, &runtime_, makeHandle(key)));
+    return setResult(res, result);
   });
 }
 
@@ -3085,8 +3097,8 @@ napi_status NodeApiEnvironment::getProperty(
     napi_value key,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(key);
     CHECK_ARG(object);
+    CHECK_ARG(key);
     ASSIGN_ELSE_RETURN_STATUS(
         vm::Handle<vm::JSObject> objHandle /*=*/,
         convertToObject(makeHandle(object)),
@@ -3103,18 +3115,21 @@ napi_status NodeApiEnvironment::deleteProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(result);
-    auto objHandle = toObjectHandle(object);
-    auto res = vm::JSObject::deleteComputed(
-        objHandle,
-        &runtime_,
-        stringHandle(key),
-        vm::PropOpFlags().plusThrowOnError());
-    CHECK_STATUS(res.getStatus());
-    *result = *res;
-    return clearLastError();
+    ASSIGN_ELSE_RETURN_STATUS(
+        vm::Handle<vm::JSObject> objHandle /*=*/,
+        convertToObject(makeHandle(object)),
+        napi_object_expected);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        bool res /*=*/,
+        vm::JSObject::deleteComputed(
+            objHandle,
+            &runtime_,
+            makeHandle(key),
+            vm::PropOpFlags().plusThrowOnError()));
+    return setResult(res, result);
   });
 }
 
