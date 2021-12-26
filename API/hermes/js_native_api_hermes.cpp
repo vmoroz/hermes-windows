@@ -174,6 +174,7 @@ struct InstanceData;
 struct HFContext;
 struct NodeApiEnvironment;
 struct Reference;
+struct OrderedSet;
 
 const napi_status napi_not_implemented = napi_generic_failure;
 
@@ -599,6 +600,11 @@ struct NodeApiEnvironment {
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
+
+  void pushOrderedSet(OrderedSet &set) noexcept;
+  void popOrderedSet() noexcept;
+
+  llvh::SmallVector<OrderedSet *, 16> orderedSets_;
 
   template <typename... TArgs>
   napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
@@ -1888,6 +1894,63 @@ HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
   // TODO: Add call in module
 }
 
+struct OrderedSet {
+  using Compare =
+      int32_t(const vm::HermesValue &item1, const vm::HermesValue &item2);
+
+  OrderedSet(NodeApiEnvironment &env, Compare *compare) noexcept
+      : env_(env), compare_(compare) {
+    env_.pushOrderedSet(*this);
+  }
+
+  ~OrderedSet() {
+    env_.popOrderedSet();
+  }
+
+  bool insert(vm::HermesValue value) noexcept {
+    auto it = llvh::lower_bound(
+        items_,
+        value,
+        [this](const vm::HermesValue &item1, const vm::HermesValue &item2) {
+          return (*compare_)(item1, item2) < 0;
+        });
+    if (it == items_.end() || (*compare_)(*it, value) == 0) {
+      return false;
+    }
+    items_.insert(it, value);
+    return true;
+  }
+
+  static void getGCRoots(
+      llvh::iterator_range<OrderedSet **> range,
+      vm::RootAcceptor &acceptor) noexcept {
+    for (auto set : range) {
+      for (vm::PinnedHermesValue &value : set->items_) {
+        acceptor.accept(value);
+      }
+    }
+  }
+
+ private:
+  NodeApiEnvironment &env_;
+  llvh::SmallVector<vm::PinnedHermesValue, 64> items_;
+  Compare *compare_{};
+};
+
+struct UInt32OrderedSet {
+  bool insert(uint32_t value) noexcept {
+    auto it = llvh::lower_bound(items_, value);
+    if (it == items_.end() || *it == value) {
+      return false;
+    }
+    items_.insert(it, value);
+    return true;
+  }
+
+ private:
+  llvh::SmallVector<uint32_t, 64> items_;
+};
+
 //=============================================================================
 // NodeApiEnvironment implementation
 //=============================================================================
@@ -1959,6 +2022,7 @@ NodeApiEnvironment::NodeApiEnvironment(
     for (auto &value : predefinedValues_) {
       acceptor.accept(value);
     }
+    OrderedSet::getGCRoots(orderedSets_, acceptor);
   });
   runtime_.addCustomWeakRootsFunction(
       [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
@@ -2728,29 +2792,6 @@ vm::MutableHandle<T> NodeApiEnvironment::makeMutableHandle() noexcept {
   return vm::MutableHandle<T>(&runtime_);
 }
 
-template <typename T>
-struct OrderedSet {
-  using Compare = int(const T &item1, const T &item2);
-
-  OrderedSet(Compare *compare) noexcept : compare_(compare) {}
-
-  bool insert(T value) noexcept {
-    auto it = llvh::lower_bound(
-        items_, value, [this](const T &item1, const T &item2) {
-          return (*compare_)(item1, item2) < 0;
-        });
-    if (it == items_.end() || (*compare_)(*it, value) == 0) {
-      return false;
-    }
-    items_.insert(it, value);
-    return true;
-  }
-
- private:
-  llvh::SmallVector<T, 64> items_;
-  Compare *compare_{};
-};
-
 napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
@@ -2837,21 +2878,16 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // shadowed by the derived objects.
     bool useShadowTracking =
         keyMode == napi_key_include_prototypes && hasParent;
-    OrderedSet<uint32_t> shadowIndexes(
-        [](const uint32_t &item1, const uint32_t &item2) {
-          return item1 < item2 ? -1 : item1 > item2 ? 1 : 0;
+    UInt32OrderedSet shadowIndexes;
+    OrderedSet shadowStrings(
+        *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
+          return item1.getString()->compare(item2.getString());
         });
-    OrderedSet<vm::Handle<vm::StringPrimitive>> shadowStrings(
-        [](const vm::Handle<vm::StringPrimitive> &item1,
-           const vm::Handle<vm::StringPrimitive> &item2) {
-          return item1->compare(item2.get());
-        });
-    OrderedSet<vm::Handle<vm::SymbolID>> shadowSymbols(
-        [](const vm::Handle<vm::SymbolID> &item1,
-           const vm::Handle<vm::SymbolID> &item2) {
-          return item1.get().unsafeGetRaw() < item2.get().unsafeGetRaw() ? -1
-              : item1.get().unsafeGetRaw() > item2.get().unsafeGetRaw()  ? 1
-                                                                         : 0;
+    OrderedSet shadowSymbols(
+        *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
+          vm::SymbolID::RawType rawItem1 = item1.getSymbol().unsafeGetRaw();
+          vm::SymbolID::RawType rawItem2 = item2.getSymbol().unsafeGetRaw();
+          return rawItem1 < rawItem2 ? -1 : rawItem1 > rawItem2 ? 1 : 0;
         });
 
     // Keep the mutable variables outside of loop for efficiency
@@ -2892,11 +2928,11 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
               continue;
             }
           } else if (propString) {
-            if (!shadowStrings.insert(propString)) {
+            if (!shadowStrings.insert(prop.getHermesValue())) {
               continue;
             }
           } else if (propSymbol) {
-            if (!shadowSymbols.insert(propSymbol)) {
+            if (!shadowSymbols.insert(prop.getHermesValue())) {
               continue;
             }
           }
@@ -4636,6 +4672,14 @@ void NodeApiEnvironment::addGCRoot(Reference *reference) noexcept {
 
 void NodeApiEnvironment::addFinalizingGCRoot(Reference *reference) noexcept {
   finalizingGCRoots_.pushBack(reference);
+}
+
+void NodeApiEnvironment::pushOrderedSet(OrderedSet &set) noexcept {
+  orderedSets_.push_back(&set);
+}
+
+void NodeApiEnvironment::popOrderedSet() noexcept {
+  orderedSets_.pop_back();
 }
 
 template <typename TLambda>
