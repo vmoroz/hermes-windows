@@ -729,13 +729,8 @@ struct NodeApiEnvironment {
       napi_value str,
       vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
-  napi_status createNumber(double value, napi_value *result) noexcept;
-
-  napi_status createNumber(int32_t value, napi_value *result) noexcept;
-
-  napi_status createNumber(uint32_t value, napi_value *result) noexcept;
-
-  napi_status createNumber(int64_t value, napi_value *result) noexcept;
+  template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
+  napi_status createNumber(T value, napi_value *result) noexcept;
 
   napi_status getBoolean(bool value, napi_value *result) noexcept;
 
@@ -3577,26 +3572,9 @@ napi_status NodeApiEnvironment::createSymbolID(
   return napi_ok;
 }
 
+template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
 napi_status NodeApiEnvironment::createNumber(
-    double value,
-    napi_value *result) noexcept {
-  return setResult(vm::HermesValue::encodeNumberValue(value), result);
-}
-
-napi_status NodeApiEnvironment::createNumber(
-    int32_t value,
-    napi_value *result) noexcept {
-  return setResult(vm::HermesValue::encodeNumberValue(value), result);
-}
-
-napi_status NodeApiEnvironment::createNumber(
-    uint32_t value,
-    napi_value *result) noexcept {
-  return setResult(vm::HermesValue::encodeNumberValue(value), result);
-}
-
-napi_status NodeApiEnvironment::createNumber(
-    int64_t value,
+    T value,
     napi_value *result) noexcept {
   return setResult(
       vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
