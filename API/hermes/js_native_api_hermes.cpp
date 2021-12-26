@@ -3580,49 +3580,32 @@ napi_status NodeApiEnvironment::createSymbolID(
 napi_status NodeApiEnvironment::createNumber(
     double value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    *result = addStackValue(vm::HermesValue::encodeUntrustedDoubleValue(value));
-    return clearLastError();
-  });
+  return setResult(vm::HermesValue::encodeNumberValue(value), result);
 }
 
 napi_status NodeApiEnvironment::createNumber(
     int32_t value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return clearLastError();
-  });
+  return setResult(vm::HermesValue::encodeNumberValue(value), result);
 }
 
 napi_status NodeApiEnvironment::createNumber(
     uint32_t value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return clearLastError();
-  });
+  return setResult(vm::HermesValue::encodeNumberValue(value), result);
 }
 
 napi_status NodeApiEnvironment::createNumber(
     int64_t value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    *result = addStackValue(vm::HermesValue::encodeNumberValue(value));
-    return clearLastError();
-  });
+  return setResult(
+      vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
 }
 
 napi_status NodeApiEnvironment::getBoolean(
     bool value,
     napi_value *result) noexcept {
-  CHECK_ARG(result);
-  *result = addStackValue(runtime_.getBoolValue(value).getHermesValue());
-  return clearLastError();
+  return setResult(runtime_.getBoolValue(value).getHermesValue(), result);
 }
 
 napi_status NodeApiEnvironment::createSymbol(
