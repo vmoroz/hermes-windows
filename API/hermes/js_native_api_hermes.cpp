@@ -134,9 +134,6 @@ using ::hermes::hermesLog;
   CHECK_HERMES_STATUS(TEMP_VARNAME(tempSuffix).getStatus(), status);  \
   var = std::move(*TEMP_VARNAME(tempSuffix));
 
-#define ASSIGN_CHECKED(var, expr) \
-  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
-
 #define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
   ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
 
@@ -3146,7 +3143,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
     CHECK_ARG(value);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
     CHECK_STATUS(objHandle
                      ->putComputed_RJS(
                          objHandle,
@@ -3169,9 +3166,9 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     CHECK_ARG(result);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
 
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         *result, objHandle->hasComputed(objHandle, &runtime_, toHandle(name)));
     return clearLastError();
   });
@@ -3187,9 +3184,9 @@ napi_status NodeApiEnvironment::getNamedProperty(
     CHECK_ARG(result);
 
     auto objHandle = toObjectHandle(object);
-    ASSIGN_CHECKED(const auto &name, stringHVFromUtf8(utf8Name));
+    ASSIGN_ELSE_RETURN_FAILURE(const auto &name, stringHVFromUtf8(utf8Name));
 
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         const auto &res,
         objHandle->getComputed_RJS(objHandle, &runtime_, toHandle(name)));
     *result = addStackValue(res.get());
@@ -3365,7 +3362,7 @@ napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
 napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         auto arrHandle,
         vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0));
     *result = addStackValue(arrHandle.getHermesValue());
@@ -3378,7 +3375,7 @@ napi_status NodeApiEnvironment::createArray(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         auto arrHandle,
         vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
     *result = addStackValue(arrHandle.getHermesValue());
@@ -3421,8 +3418,9 @@ napi_status NodeApiEnvironment::hasElement(
   return handleExceptions([&] {
     CHECK_ARG(object);
     CHECK_ARG(result);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
         *result,
         vm::JSObject::hasComputed(
             runtime_.makeHandle<vm::JSObject>(obj),
@@ -3439,7 +3437,8 @@ napi_status NodeApiEnvironment::getElement(
   return handleExceptions([&] {
     CHECK_ARG(object);
     CHECK_ARG(result);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
     auto res = vm::JSObject::getComputed_RJS(
         runtime_.makeHandle<vm::JSObject>(obj),
         &runtime_,
@@ -3456,7 +3455,8 @@ napi_status NodeApiEnvironment::setElement(
     napi_value value) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(object);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
     auto res = vm::JSObject::putComputed_RJS(
         runtime_.makeHandle<vm::JSObject>(obj),
         &runtime_,
@@ -3473,8 +3473,9 @@ napi_status NodeApiEnvironment::deleteElement(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(object);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
         auto res,
         vm::JSObject::deleteComputed(
             runtime_.makeHandle<vm::JSObject>(obj),
@@ -3565,7 +3566,7 @@ napi_status NodeApiEnvironment::createSymbolID(
     napi_value str,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   CHECK_STRING_ARG(str);
-  ASSIGN_CHECKED(
+  ASSIGN_ELSE_RETURN_FAILURE(
       *result,
       vm::stringToSymbolID(
           &runtime_, vm::createPseudoHandle(phv(str)->getString())));
@@ -3842,7 +3843,7 @@ napi_status NodeApiEnvironment::throwError(
     const vm::PinnedHermesValue &prototype) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(message);
-    ASSIGN_CHECKED(auto messageHV, stringHVFromUtf8(message));
+    ASSIGN_ELSE_RETURN_FAILURE(auto messageHV, stringHVFromUtf8(message));
     auto messageHandle = runtime_.makeHandle(messageHV);
 
     auto errorObj = runtime_.makeHandle(vm::JSError::create(
@@ -3851,7 +3852,7 @@ napi_status NodeApiEnvironment::throwError(
     CHECK_STATUS(vm::JSError::setupStack(errorObj, &runtime_));
     CHECK_STATUS(vm::JSError::setMessage(errorObj, &runtime_, messageHandle));
     if (code) {
-      ASSIGN_CHECKED(auto codeHV, stringHVFromUtf8(code));
+      ASSIGN_ELSE_RETURN_FAILURE(auto codeHV, stringHVFromUtf8(code));
       auto codeHandle = runtime_.makeHandle(codeHV);
       CHECK_STATUS(vm::JSObject::putNamed_RJS(
                        errorObj,
@@ -4265,9 +4266,10 @@ napi_status NodeApiEnvironment::typeTagObject(
   return handleExceptions([&] {
     CHECK_ARG(object);
     CHECK_ARG(typeTag);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
     auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         auto hasTag, hasPrivate(objHandle, NapiPredefined::TypeTagSymbol));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
@@ -4298,9 +4300,10 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     CHECK_ARG(object);
     CHECK_ARG(typeTag);
     CHECK_ARG(result);
-    ASSIGN_CHECKED(auto obj, vm::toObject(&runtime_, toHandle(object)));
+    ASSIGN_ELSE_RETURN_FAILURE(
+        auto obj, vm::toObject(&runtime_, toHandle(object)));
     auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
-    ASSIGN_CHECKED(
+    ASSIGN_ELSE_RETURN_FAILURE(
         auto tagHV, getPrivate(objHandle, NapiPredefined::TypeTagSymbol));
     auto tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(tagHV.getHermesValue());
