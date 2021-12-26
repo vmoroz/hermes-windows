@@ -10,6 +10,7 @@
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
 // TODO: use extended message for errors
+// TODO: see if finalizers can return error or exception
 
 #define NAPI_EXPERIMENTAL
 
