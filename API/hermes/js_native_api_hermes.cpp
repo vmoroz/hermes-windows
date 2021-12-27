@@ -3187,18 +3187,12 @@ napi_status NodeApiEnvironment::setProperty(
     napi_value key,
     napi_value value) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(value);
-    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        bool res /*=*/,
-        vm::JSObject::putComputed_RJS(
-            objHandle,
-            &runtime_,
-            makeHandle(key),
-            makeHandle(value),
-            vm::PropOpFlags().plusThrowOnError()));
-    return setOptionalResult(res, nullptr);
+    vm::Handle<vm::JSObject> objHandle(&runtime_);
+    CHECK_NAPI(convertToObject(object, &objHandle));
+    return putComputed(objHandle, key, value, nullptr);
   });
 }
 
