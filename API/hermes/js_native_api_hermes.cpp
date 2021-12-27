@@ -3064,8 +3064,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       currentObj = parentObj.get();
     }
 
-    return 
-        convertKeyStorageToArray(keyStorage, 0, size, keyConversion, result);
+    return convertKeyStorageToArray(keyStorage, 0, size, keyConversion, result);
   });
 }
 
@@ -5742,13 +5741,114 @@ napi_status NodeApiEnvironment::runReferenceFinalizers() noexcept {
 // NAPI implementation
 //=============================================================================
 
-napi_status napi_get_last_error_info(
+napi_status __cdecl napi_get_last_error_info(
     napi_env env,
     const napi_extended_error_info **result) {
   return CHECKED_ENV(env)->getLastErrorInfo(result);
 }
 
-napi_status napi_create_function(
+//-----------------------------------------------------------------------------
+// Getters for defined singletons
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_get_undefined(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->getUndefined(result);
+}
+
+napi_status __cdecl napi_get_null(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->getNull(result);
+}
+
+napi_status __cdecl napi_get_global(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->getGlobal(result);
+}
+
+napi_status __cdecl napi_get_boolean(
+    napi_env env,
+    bool value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getBoolean(value, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to create Primitive types/Objects
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_create_object(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->createObject(result);
+}
+
+napi_status __cdecl napi_create_array(napi_env env, napi_value *result) {
+  return CHECKED_ENV(env)->createArray(result);
+}
+
+napi_status __cdecl napi_create_array_with_length(
+    napi_env env,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createArray(length, result);
+}
+
+napi_status __cdecl napi_create_double(
+    napi_env env,
+    double value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createNumber(value, result);
+}
+
+napi_status __cdecl napi_create_int32(
+    napi_env env,
+    int32_t value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createNumber(value, result);
+}
+
+napi_status __cdecl napi_create_uint32(
+    napi_env env,
+    uint32_t value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createNumber(value, result);
+}
+
+napi_status __cdecl napi_create_int64(
+    napi_env env,
+    int64_t value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createNumber(value, result);
+}
+
+napi_status __cdecl napi_create_string_latin1(
+    napi_env env,
+    const char *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createStringLatin1(str, length, result);
+}
+
+napi_status __cdecl napi_create_string_utf8(
+    napi_env env,
+    const char *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createStringUtf8(str, length, result);
+}
+
+napi_status __cdecl napi_create_string_utf16(
+    napi_env env,
+    const char16_t *str,
+    size_t length,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createStringUtf16(str, length, result);
+}
+
+napi_status __cdecl napi_create_symbol(
+    napi_env env,
+    napi_value description,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createSymbol(description, result);
+}
+
+napi_status __cdecl napi_create_function(
     napi_env env,
     const char *utf8name,
     size_t length,
@@ -5759,7 +5859,371 @@ napi_status napi_create_function(
       utf8name, length, cb, callback_data, result);
 }
 
-napi_status napi_define_class(
+napi_status __cdecl napi_create_error(
+    napi_env env,
+    napi_value code,
+    napi_value msg,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createError(code, msg, result);
+}
+
+napi_status __cdecl napi_create_type_error(
+    napi_env env,
+    napi_value code,
+    napi_value msg,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createTypeError(code, msg, result);
+}
+
+napi_status __cdecl napi_create_range_error(
+    napi_env env,
+    napi_value code,
+    napi_value msg,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createRangeError(code, msg, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to get the native napi_value from Primitive type
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_typeof(
+    napi_env env,
+    napi_value value,
+    napi_valuetype *result) {
+  return CHECKED_ENV(env)->typeOf(value, result);
+}
+
+napi_status __cdecl napi_get_value_double(
+    napi_env env,
+    napi_value value,
+    double *result) {
+  return CHECKED_ENV(env)->getNumberValue(value, result);
+}
+
+napi_status __cdecl napi_get_value_int32(
+    napi_env env,
+    napi_value value,
+    int32_t *result) {
+  return CHECKED_ENV(env)->getNumberValue(value, result);
+}
+
+napi_status __cdecl napi_get_value_uint32(
+    napi_env env,
+    napi_value value,
+    uint32_t *result) {
+  return CHECKED_ENV(env)->getNumberValue(value, result);
+}
+
+napi_status __cdecl napi_get_value_int64(
+    napi_env env,
+    napi_value value,
+    int64_t *result) {
+  return CHECKED_ENV(env)->getNumberValue(value, result);
+}
+
+napi_status __cdecl napi_get_value_bool(
+    napi_env env,
+    napi_value value,
+    bool *result) {
+  return CHECKED_ENV(env)->getBoolValue(value, result);
+}
+
+// Copies a JavaScript string into a LATIN-1 string buffer. The result is the
+// number of bytes (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufsize is insufficient, the string will be truncated and null terminated.
+// If buf is NULL, this method returns the length of the string (in bytes)
+// via the result parameter.
+// The result argument is optional unless buf is NULL.
+napi_status __cdecl napi_get_value_string_latin1(
+    napi_env env,
+    napi_value value,
+    char *buf,
+    size_t bufsize,
+    size_t *result) {
+  return CHECKED_ENV(env)->getValueStringLatin1(value, buf, bufsize, result);
+}
+
+// Copies a JavaScript string into a UTF-8 string buffer. The result is the
+// number of bytes (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufsize is insufficient, the string will be truncated and null terminated.
+// If buf is NULL, this method returns the length of the string (in bytes)
+// via the result parameter.
+// The result argument is optional unless buf is NULL.
+napi_status __cdecl napi_get_value_string_utf8(
+    napi_env env,
+    napi_value value,
+    char *buf,
+    size_t bufsize,
+    size_t *result) {
+  return CHECKED_ENV(env)->getValueStringUtf8(value, buf, bufsize, result);
+}
+
+// Copies a JavaScript string into a UTF-16 string buffer. The result is the
+// number of 2-byte code units (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufsize is insufficient, the string will be truncated and null terminated.
+// If buf is NULL, this method returns the length of the string (in 2-byte
+// code units) via the result parameter.
+// The result argument is optional unless buf is NULL.
+napi_status __cdecl napi_get_value_string_utf16(
+    napi_env env,
+    napi_value value,
+    char16_t *buf,
+    size_t bufsize,
+    size_t *result) {
+  return CHECKED_ENV(env)->getValueStringUtf16(value, buf, bufsize, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to coerce values
+// These APIs may execute user scripts
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_coerce_to_bool(
+    napi_env env,
+    napi_value value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->coerceToBool(value, result);
+}
+
+napi_status __cdecl napi_coerce_to_number(
+    napi_env env,
+    napi_value value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->coerceToNumber(value, result);
+}
+
+napi_status __cdecl napi_coerce_to_object(
+    napi_env env,
+    napi_value value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->coerceToObject(value, result);
+}
+
+napi_status __cdecl napi_coerce_to_string(
+    napi_env env,
+    napi_value value,
+    napi_value *result) {
+  return CHECKED_ENV(env)->coerceToString(value, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Objects
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_get_prototype(
+    napi_env env,
+    napi_value object,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getPrototype(object, result);
+}
+
+napi_status __cdecl napi_get_property_names(
+    napi_env env,
+    napi_value object,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getPropertyNames(object, result);
+}
+
+napi_status __cdecl napi_set_property(
+    napi_env env,
+    napi_value object,
+    napi_value key,
+    napi_value value) {
+  return CHECKED_ENV(env)->setProperty(object, key, value);
+}
+
+napi_status __cdecl napi_has_property(
+    napi_env env,
+    napi_value object,
+    napi_value key,
+    bool *result) {
+  return CHECKED_ENV(env)->hasProperty(object, key, result);
+}
+
+napi_status __cdecl napi_get_property(
+    napi_env env,
+    napi_value object,
+    napi_value key,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getProperty(object, key, result);
+}
+
+napi_status __cdecl napi_delete_property(
+    napi_env env,
+    napi_value object,
+    napi_value key,
+    bool *result) {
+  return CHECKED_ENV(env)->deleteProperty(object, key, result);
+}
+
+napi_status __cdecl napi_has_own_property(
+    napi_env env,
+    napi_value object,
+    napi_value key,
+    bool *result) {
+  return CHECKED_ENV(env)->hasOwnProperty(object, key, result);
+}
+
+napi_status __cdecl napi_set_named_property(
+    napi_env env,
+    napi_value object,
+    const char *utf8name,
+    napi_value value) {
+  return CHECKED_ENV(env)->setNamedProperty(object, utf8name, value);
+}
+
+napi_status __cdecl napi_has_named_property(
+    napi_env env,
+    napi_value object,
+    const char *utf8name,
+    bool *result) {
+  return CHECKED_ENV(env)->hasNamedProperty(object, utf8name, result);
+}
+
+napi_status __cdecl napi_get_named_property(
+    napi_env env,
+    napi_value object,
+    const char *utf8name,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getNamedProperty(object, utf8name, result);
+}
+
+napi_status __cdecl napi_set_element(
+    napi_env env,
+    napi_value object,
+    uint32_t index,
+    napi_value value) {
+  return CHECKED_ENV(env)->setElement(object, index, value);
+}
+
+napi_status __cdecl napi_has_element(
+    napi_env env,
+    napi_value object,
+    uint32_t index,
+    bool *result) {
+  return CHECKED_ENV(env)->hasElement(object, index, result);
+}
+
+napi_status __cdecl napi_get_element(
+    napi_env env,
+    napi_value object,
+    uint32_t index,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getElement(object, index, result);
+}
+
+napi_status __cdecl napi_delete_element(
+    napi_env env,
+    napi_value object,
+    uint32_t index,
+    bool *result) {
+  return CHECKED_ENV(env)->deleteElement(object, index, result);
+}
+
+napi_status __cdecl napi_define_properties(
+    napi_env env,
+    napi_value object,
+    size_t property_count,
+    const napi_property_descriptor *properties) {
+  return CHECKED_ENV(env)->defineProperties(object, property_count, properties);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Arrays
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_is_array(
+    napi_env env,
+    napi_value value,
+    bool *result) {
+  return CHECKED_ENV(env)->isArray(value, result);
+}
+
+napi_status __cdecl napi_get_array_length(
+    napi_env env,
+    napi_value value,
+    uint32_t *result) {
+  return CHECKED_ENV(env)->getArrayLength(value, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to compare values
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_strict_equals(
+    napi_env env,
+    napi_value lhs,
+    napi_value rhs,
+    bool *result) {
+  return CHECKED_ENV(env)->strictEquals(lhs, rhs, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Functions
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_call_function(
+    napi_env env,
+    napi_value recv,
+    napi_value func,
+    size_t argc,
+    const napi_value *argv,
+    napi_value *result) {
+  return CHECKED_ENV(env)->callFunction(recv, func, argc, argv, result);
+}
+
+napi_status __cdecl napi_new_instance(
+    napi_env env,
+    napi_value constructor,
+    size_t argc,
+    const napi_value *argv,
+    napi_value *result) {
+  return CHECKED_ENV(env)->newInstance(constructor, argc, argv, result);
+}
+
+napi_status __cdecl napi_instanceof(
+    napi_env env,
+    napi_value object,
+    napi_value constructor,
+    bool *result) {
+  return CHECKED_ENV(env)->instanceOf(object, constructor, result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with napi_callbacks
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_get_cb_info(
+    napi_env env,
+    napi_callback_info cbinfo,
+    size_t *argc,
+    napi_value *argv,
+    napi_value *this_arg,
+    void **data) {
+  return CHECKED_ENV(env)->getCallbackInfo(
+      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo),
+      argc,
+      argv,
+      this_arg,
+      data);
+}
+
+napi_status __cdecl napi_get_new_target(
+    napi_env env,
+    napi_callback_info cbinfo,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getNewTarget(
+      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo), result);
+}
+
+napi_status __cdecl napi_define_class(
     napi_env env,
     const char *utf8name,
     size_t length,
@@ -5778,455 +6242,11 @@ napi_status napi_define_class(
       result);
 }
 
-napi_status
-napi_get_property_names(napi_env env, napi_value object, napi_value *result) {
-  return CHECKED_ENV(env)->getPropertyNames(object, result);
-}
-
-napi_status napi_get_all_property_names(
-    napi_env env,
-    napi_value object,
-    napi_key_collection_mode key_mode,
-    napi_key_filter key_filter,
-    napi_key_conversion key_conversion,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getAllPropertyNames(
-      object, key_mode, key_filter, key_conversion, result);
-}
-
-napi_status napi_set_property(
-    napi_env env,
-    napi_value object,
-    napi_value key,
-    napi_value value) {
-  return CHECKED_ENV(env)->setProperty(object, key, value);
-}
-
-napi_status napi_has_property(
-    napi_env env,
-    napi_value object,
-    napi_value key,
-    bool *result) {
-  return CHECKED_ENV(env)->hasProperty(object, key, result);
-}
-
-napi_status napi_get_property(
-    napi_env env,
-    napi_value object,
-    napi_value key,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getProperty(object, key, result);
-}
-
-napi_status napi_delete_property(
-    napi_env env,
-    napi_value object,
-    napi_value key,
-    bool *result) {
-  return CHECKED_ENV(env)->deleteProperty(object, key, result);
-}
-
-napi_status napi_has_own_property(
-    napi_env env,
-    napi_value object,
-    napi_value key,
-    bool *result) {
-  return CHECKED_ENV(env)->hasOwnProperty(object, key, result);
-}
-
-napi_status napi_set_named_property(
-    napi_env env,
-    napi_value object,
-    const char *utf8name,
-    napi_value value) {
-  return CHECKED_ENV(env)->setNamedProperty(object, utf8name, value);
-}
-
-napi_status napi_has_named_property(
-    napi_env env,
-    napi_value object,
-    const char *utf8name,
-    bool *result) {
-  return CHECKED_ENV(env)->hasNamedProperty(object, utf8name, result);
-}
-
-napi_status napi_get_named_property(
-    napi_env env,
-    napi_value object,
-    const char *utf8name,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getNamedProperty(object, utf8name, result);
-}
-
-napi_status napi_set_element(
-    napi_env env,
-    napi_value object,
-    uint32_t index,
-    napi_value value) {
-  return CHECKED_ENV(env)->setElement(object, index, value);
-}
-
-napi_status napi_has_element(
-    napi_env env,
-    napi_value object,
-    uint32_t index,
-    bool *result) {
-  return CHECKED_ENV(env)->hasElement(object, index, result);
-}
-
-napi_status napi_get_element(
-    napi_env env,
-    napi_value object,
-    uint32_t index,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getElement(object, index, result);
-}
-
-napi_status napi_delete_element(
-    napi_env env,
-    napi_value object,
-    uint32_t index,
-    bool *result) {
-  return CHECKED_ENV(env)->deleteElement(object, index, result);
-}
-
-napi_status napi_define_properties(
-    napi_env env,
-    napi_value object,
-    size_t property_count,
-    const napi_property_descriptor *properties) {
-  return CHECKED_ENV(env)->defineProperties(object, property_count, properties);
-}
-
-napi_status napi_object_freeze(napi_env env, napi_value object) {
-  return CHECKED_ENV(env)->objectFreeze(object);
-}
-
-napi_status napi_object_seal(napi_env env, napi_value object) {
-  return CHECKED_ENV(env)->objectSeal(object);
-}
-
-napi_status napi_is_array(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->isArray(value, result);
-}
-
-napi_status
-napi_get_array_length(napi_env env, napi_value value, uint32_t *result) {
-  return CHECKED_ENV(env)->getArrayLength(value, result);
-}
-
-napi_status
-napi_strict_equals(napi_env env, napi_value lhs, napi_value rhs, bool *result) {
-  return CHECKED_ENV(env)->strictEquals(lhs, rhs, result);
-}
-
-napi_status
-napi_get_prototype(napi_env env, napi_value object, napi_value *result) {
-  return CHECKED_ENV(env)->getPrototype(object, result);
-}
-
-napi_status napi_create_object(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->createObject(result);
-}
-
-napi_status napi_create_array(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->createArray(result);
-}
-
-napi_status
-napi_create_array_with_length(napi_env env, size_t length, napi_value *result) {
-  return CHECKED_ENV(env)->createArray(length, result);
-}
-
-napi_status napi_create_string_latin1(
-    napi_env env,
-    const char *str,
-    size_t length,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createStringLatin1(str, length, result);
-}
-
-napi_status napi_create_string_utf8(
-    napi_env env,
-    const char *str,
-    size_t length,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createStringUtf8(str, length, result);
-}
-
-napi_status napi_create_string_utf16(
-    napi_env env,
-    const char16_t *str,
-    size_t length,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createStringUtf16(str, length, result);
-}
-
-napi_status napi_create_double(napi_env env, double value, napi_value *result) {
-  return CHECKED_ENV(env)->createNumber(value, result);
-}
-
-napi_status napi_create_int32(napi_env env, int32_t value, napi_value *result) {
-  return CHECKED_ENV(env)->createNumber(value, result);
-}
-
-napi_status
-napi_create_uint32(napi_env env, uint32_t value, napi_value *result) {
-  return CHECKED_ENV(env)->createNumber(value, result);
-}
-
-napi_status napi_create_int64(napi_env env, int64_t value, napi_value *result) {
-  return CHECKED_ENV(env)->createNumber(value, result);
-}
-
-napi_status
-napi_create_bigint_int64(napi_env env, int64_t value, napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status
-napi_create_bigint_uint64(napi_env env, uint64_t value, napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status napi_create_bigint_words(
-    napi_env env,
-    int sign_bit,
-    size_t word_count,
-    const uint64_t *words,
-    napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status napi_get_boolean(napi_env env, bool value, napi_value *result) {
-  return CHECKED_ENV(env)->getBoolean(value, result);
-}
-
-napi_status
-napi_create_symbol(napi_env env, napi_value description, napi_value *result) {
-  return CHECKED_ENV(env)->createSymbol(description, result);
-}
-
-napi_status napi_create_error(
-    napi_env env,
-    napi_value code,
-    napi_value msg,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createError(code, msg, result);
-}
-
-napi_status napi_create_type_error(
-    napi_env env,
-    napi_value code,
-    napi_value msg,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createTypeError(code, msg, result);
-}
-
-napi_status napi_create_range_error(
-    napi_env env,
-    napi_value code,
-    napi_value msg,
-    napi_value *result) {
-  return CHECKED_ENV(env)->createRangeError(code, msg, result);
-}
-
-napi_status
-napi_typeof(napi_env env, napi_value value, napi_valuetype *result) {
-  return CHECKED_ENV(env)->typeOf(value, result);
-}
-
-napi_status napi_get_undefined(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->getUndefined(result);
-}
-
-napi_status napi_get_null(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->getNull(result);
-}
-
-napi_status napi_get_cb_info(
-    napi_env env,
-    napi_callback_info cbinfo,
-    size_t *argc,
-    napi_value *argv,
-    napi_value *this_arg,
-    void **data) {
-  return CHECKED_ENV(env)->getCallbackInfo(
-      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo),
-      argc,
-      argv,
-      this_arg,
-      data);
-}
-
-napi_status napi_get_new_target(
-    napi_env env,
-    napi_callback_info cbinfo,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getNewTarget(
-      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo), result);
-}
-
-napi_status napi_call_function(
-    napi_env env,
-    napi_value recv,
-    napi_value func,
-    size_t argc,
-    const napi_value *argv,
-    napi_value *result) {
-  return CHECKED_ENV(env)->callFunction(recv, func, argc, argv, result);
-}
-
-napi_status napi_get_global(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->getGlobal(result);
-}
-
-napi_status napi_throw(napi_env env, napi_value error) {
-  return CHECKED_ENV(env)->throwError(error);
-}
-
-napi_status napi_throw_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->throwError(code, msg);
-}
-
-napi_status
-napi_throw_type_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->throwTypeError(code, msg);
-}
-
-napi_status
-napi_throw_range_error(napi_env env, const char *code, const char *msg) {
-  return CHECKED_ENV(env)->throwRangeError(code, msg);
-}
-
-napi_status napi_is_error(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->isError(value, result);
-}
-
-napi_status
-napi_get_value_double(napi_env env, napi_value value, double *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
-}
-
-napi_status
-napi_get_value_int32(napi_env env, napi_value value, int32_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
-}
-
-napi_status
-napi_get_value_uint32(napi_env env, napi_value value, uint32_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
-}
-
-napi_status
-napi_get_value_int64(napi_env env, napi_value value, int64_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
-}
-
-napi_status napi_get_value_bigint_int64(
-    napi_env env,
-    napi_value value,
-    int64_t *result,
-    bool *lossless) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status napi_get_value_bigint_uint64(
-    napi_env env,
-    napi_value value,
-    uint64_t *result,
-    bool *lossless) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status napi_get_value_bigint_words(
-    napi_env env,
-    napi_value value,
-    int *sign_bit,
-    size_t *word_count,
-    uint64_t *words) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
-}
-
-napi_status napi_get_value_bool(napi_env env, napi_value value, bool *result) {
-  return CHECKED_ENV(env)->getBoolValue(value, result);
-}
-
-// Copies a JavaScript string into a LATIN-1 string buffer. The result is the
-// number of bytes (excluding the null terminator) copied into buf.
-// A sufficient buffer size should be greater than the length of string,
-// reserving space for null terminator.
-// If bufsize is insufficient, the string will be truncated and null terminated.
-// If buf is NULL, this method returns the length of the string (in bytes)
-// via the result parameter.
-// The result argument is optional unless buf is NULL.
-napi_status napi_get_value_string_latin1(
-    napi_env env,
-    napi_value value,
-    char *buf,
-    size_t bufsize,
-    size_t *result) {
-  return CHECKED_ENV(env)->getValueStringLatin1(value, buf, bufsize, result);
-}
-
-// Copies a JavaScript string into a UTF-8 string buffer. The result is the
-// number of bytes (excluding the null terminator) copied into buf.
-// A sufficient buffer size should be greater than the length of string,
-// reserving space for null terminator.
-// If bufsize is insufficient, the string will be truncated and null terminated.
-// If buf is NULL, this method returns the length of the string (in bytes)
-// via the result parameter.
-// The result argument is optional unless buf is NULL.
-napi_status napi_get_value_string_utf8(
-    napi_env env,
-    napi_value value,
-    char *buf,
-    size_t bufsize,
-    size_t *result) {
-  return CHECKED_ENV(env)->getValueStringUtf8(value, buf, bufsize, result);
-}
-
-// Copies a JavaScript string into a UTF-16 string buffer. The result is the
-// number of 2-byte code units (excluding the null terminator) copied into buf.
-// A sufficient buffer size should be greater than the length of string,
-// reserving space for null terminator.
-// If bufsize is insufficient, the string will be truncated and null terminated.
-// If buf is NULL, this method returns the length of the string (in 2-byte
-// code units) via the result parameter.
-// The result argument is optional unless buf is NULL.
-napi_status napi_get_value_string_utf16(
-    napi_env env,
-    napi_value value,
-    char16_t *buf,
-    size_t bufsize,
-    size_t *result) {
-  return CHECKED_ENV(env)->getValueStringUtf16(value, buf, bufsize, result);
-}
-
-napi_status
-napi_coerce_to_bool(napi_env env, napi_value value, napi_value *result) {
-  return CHECKED_ENV(env)->coerceToBool(value, result);
-}
-
-#define GEN_COERCE_FUNCTION(UpperCaseName, MixedCaseName, LowerCaseName) \
-  napi_status napi_coerce_to_##LowerCaseName(                            \
-      napi_env env, napi_value value, napi_value *result) {              \
-    return CHECKED_ENV(env)->coerceTo##MixedCaseName(value, result);     \
-  }
-
-GEN_COERCE_FUNCTION(NUMBER, Number, number)
-GEN_COERCE_FUNCTION(OBJECT, Object, object)
-GEN_COERCE_FUNCTION(STRING, String, string)
-
-#undef GEN_COERCE_FUNCTION
-
-napi_status napi_wrap(
+//-----------------------------------------------------------------------------
+// Methods to work with external data objects
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_wrap(
     napi_env env,
     napi_value js_object,
     void *native_object,
@@ -6237,17 +6257,20 @@ napi_status napi_wrap(
       js_object, native_object, finalize_cb, finalize_hint, result);
 }
 
-napi_status napi_unwrap(napi_env env, napi_value obj, void **result) {
+napi_status __cdecl napi_unwrap(napi_env env, napi_value obj, void **result) {
   return CHECKED_ENV(env)->unwrapObject(
       obj, hermes::napi::UnwrapAction::KeepWrap, result);
 }
 
-napi_status napi_remove_wrap(napi_env env, napi_value obj, void **result) {
+napi_status __cdecl napi_remove_wrap(
+    napi_env env,
+    napi_value obj,
+    void **result) {
   return CHECKED_ENV(env)->unwrapObject(
       obj, hermes::napi::UnwrapAction::RemoveWrap, result);
 }
 
-napi_status napi_create_external(
+napi_status __cdecl napi_create_external(
     napi_env env,
     void *data,
     napi_finalize finalize_cb,
@@ -6257,27 +6280,18 @@ napi_status napi_create_external(
       data, finalize_cb, finalize_hint, result);
 }
 
-NAPI_EXTERN napi_status napi_type_tag_object(
+napi_status __cdecl napi_get_value_external(
     napi_env env,
-    napi_value object,
-    const napi_type_tag *type_tag) {
-  return CHECKED_ENV(env)->typeTagObject(object, type_tag);
-}
-
-NAPI_EXTERN napi_status napi_check_object_type_tag(
-    napi_env env,
-    napi_value object,
-    const napi_type_tag *type_tag,
-    bool *result) {
-  return CHECKED_ENV(env)->checkObjectTypeTag(object, type_tag, result);
-}
-
-napi_status
-napi_get_value_external(napi_env env, napi_value value, void **result) {
+    napi_value value,
+    void **result) {
   return CHECKED_ENV(env)->getValueExternal(value, result);
 }
 
-napi_status napi_create_reference(
+//-----------------------------------------------------------------------------
+// Methods to control object lifespan
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_create_reference(
     napi_env env,
     napi_value value,
     uint32_t initial_refcount,
@@ -6285,44 +6299,56 @@ napi_status napi_create_reference(
   return CHECKED_ENV(env)->createReference(value, initial_refcount, result);
 }
 
-napi_status napi_delete_reference(napi_env env, napi_ref ref) {
+napi_status __cdecl napi_delete_reference(napi_env env, napi_ref ref) {
   return CHECKED_ENV(env)->deleteReference(ref);
 }
 
-napi_status napi_reference_ref(napi_env env, napi_ref ref, uint32_t *result) {
+napi_status __cdecl napi_reference_ref(
+    napi_env env,
+    napi_ref ref,
+    uint32_t *result) {
   return CHECKED_ENV(env)->incReference(ref, result);
 }
 
-napi_status napi_reference_unref(napi_env env, napi_ref ref, uint32_t *result) {
+napi_status __cdecl napi_reference_unref(
+    napi_env env,
+    napi_ref ref,
+    uint32_t *result) {
   return CHECKED_ENV(env)->decReference(ref, result);
 }
 
-napi_status
-napi_get_reference_value(napi_env env, napi_ref ref, napi_value *result) {
+napi_status __cdecl napi_get_reference_value(
+    napi_env env,
+    napi_ref ref,
+    napi_value *result) {
   return CHECKED_ENV(env)->getReferenceValue(ref, result);
 }
 
-napi_status napi_open_handle_scope(napi_env env, napi_handle_scope *result) {
+napi_status __cdecl napi_open_handle_scope(
+    napi_env env,
+    napi_handle_scope *result) {
   return CHECKED_ENV(env)->openHandleScope(result);
 }
 
-napi_status napi_close_handle_scope(napi_env env, napi_handle_scope scope) {
+napi_status __cdecl napi_close_handle_scope(
+    napi_env env,
+    napi_handle_scope scope) {
   return CHECKED_ENV(env)->closeHandleScope(scope);
 }
 
-napi_status napi_open_escapable_handle_scope(
+napi_status __cdecl napi_open_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope *result) {
   return CHECKED_ENV(env)->openEscapableHandleScope(result);
 }
 
-napi_status napi_close_escapable_handle_scope(
+napi_status __cdecl napi_close_escapable_handle_scope(
     napi_env env,
     napi_escapable_handle_scope scope) {
   return CHECKED_ENV(env)->closeEscapableHandleScope(scope);
 }
 
-napi_status napi_escape_handle(
+napi_status __cdecl napi_escape_handle(
     napi_env env,
     napi_escapable_handle_scope scope,
     napi_value escapee,
@@ -6330,39 +6356,68 @@ napi_status napi_escape_handle(
   return CHECKED_ENV(env)->escapeHandle(scope, escapee, result);
 }
 
-napi_status napi_new_instance(
-    napi_env env,
-    napi_value constructor,
-    size_t argc,
-    const napi_value *argv,
-    napi_value *result) {
-  return CHECKED_ENV(env)->newInstance(constructor, argc, argv, result);
+//-----------------------------------------------------------------------------
+// Methods to support error handling
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_throw(napi_env env, napi_value error) {
+  return CHECKED_ENV(env)->throwError(error);
 }
 
-napi_status napi_instanceof(
+napi_status __cdecl napi_throw_error(
     napi_env env,
-    napi_value object,
-    napi_value constructor,
+    const char *code,
+    const char *msg) {
+  return CHECKED_ENV(env)->throwError(code, msg);
+}
+
+napi_status __cdecl napi_throw_type_error(
+    napi_env env,
+    const char *code,
+    const char *msg) {
+  return CHECKED_ENV(env)->throwTypeError(code, msg);
+}
+
+napi_status __cdecl napi_throw_range_error(
+    napi_env env,
+    const char *code,
+    const char *msg) {
+  return CHECKED_ENV(env)->throwRangeError(code, msg);
+}
+
+napi_status __cdecl napi_is_error(
+    napi_env env,
+    napi_value value,
     bool *result) {
-  return CHECKED_ENV(env)->instanceOf(object, constructor, result);
+  return CHECKED_ENV(env)->isError(value, result);
 }
 
+//-----------------------------------------------------------------------------
 // Methods to support catching exceptions
-napi_status napi_is_exception_pending(napi_env env, bool *result) {
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_is_exception_pending(napi_env env, bool *result) {
   return CHECKED_ENV(env)->isExceptionPending(result);
 }
 
-napi_status napi_get_and_clear_last_exception(
+napi_status __cdecl napi_get_and_clear_last_exception(
     napi_env env,
     napi_value *result) {
   return CHECKED_ENV(env)->getAndClearLastException(result);
 }
 
-napi_status napi_is_arraybuffer(napi_env env, napi_value value, bool *result) {
+//-----------------------------------------------------------------------------
+// Methods to work with array buffers and typed arrays
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_is_arraybuffer(
+    napi_env env,
+    napi_value value,
+    bool *result) {
   return CHECKED_ENV(env)->isArrayBuffer(value, result);
 }
 
-napi_status napi_create_arraybuffer(
+napi_status __cdecl napi_create_arraybuffer(
     napi_env env,
     size_t byte_length,
     void **data,
@@ -6370,7 +6425,7 @@ napi_status napi_create_arraybuffer(
   return CHECKED_ENV(env)->createArrayBuffer(byte_length, data, result);
 }
 
-napi_status napi_create_external_arraybuffer(
+napi_status __cdecl napi_create_external_arraybuffer(
     napi_env env,
     void *external_data,
     size_t byte_length,
@@ -6381,7 +6436,7 @@ napi_status napi_create_external_arraybuffer(
       external_data, byte_length, finalize_cb, finalize_hint, result);
 }
 
-napi_status napi_get_arraybuffer_info(
+napi_status __cdecl napi_get_arraybuffer_info(
     napi_env env,
     napi_value arraybuffer,
     void **data,
@@ -6389,11 +6444,14 @@ napi_status napi_get_arraybuffer_info(
   return CHECKED_ENV(env)->getArrayBufferInfo(arraybuffer, data, byte_length);
 }
 
-napi_status napi_is_typedarray(napi_env env, napi_value value, bool *result) {
+napi_status __cdecl napi_is_typedarray(
+    napi_env env,
+    napi_value value,
+    bool *result) {
   return CHECKED_ENV(env)->isTypedArray(value, result);
 }
 
-napi_status napi_create_typedarray(
+napi_status __cdecl napi_create_typedarray(
     napi_env env,
     napi_typedarray_type type,
     size_t length,
@@ -6404,7 +6462,7 @@ napi_status napi_create_typedarray(
       type, length, arraybuffer, byte_offset, result);
 }
 
-napi_status napi_get_typedarray_info(
+napi_status __cdecl napi_get_typedarray_info(
     napi_env env,
     napi_value typedarray,
     napi_typedarray_type *type,
@@ -6416,7 +6474,7 @@ napi_status napi_get_typedarray_info(
       typedarray, type, length, data, arraybuffer, byte_offset);
 }
 
-napi_status napi_create_dataview(
+napi_status __cdecl napi_create_dataview(
     napi_env env,
     size_t byte_length,
     napi_value arraybuffer,
@@ -6426,11 +6484,14 @@ napi_status napi_create_dataview(
       byte_length, arraybuffer, byte_offset, result);
 }
 
-napi_status napi_is_dataview(napi_env env, napi_value value, bool *result) {
+napi_status __cdecl napi_is_dataview(
+    napi_env env,
+    napi_value value,
+    bool *result) {
   return CHECKED_ENV(env)->isDataView(value, result);
 }
 
-napi_status napi_get_dataview_info(
+napi_status __cdecl napi_get_dataview_info(
     napi_env env,
     napi_value dataview,
     size_t *byte_length,
@@ -6441,54 +6502,101 @@ napi_status napi_get_dataview_info(
       dataview, byte_length, data, arraybuffer, byte_offset);
 }
 
-napi_status napi_get_version(napi_env env, uint32_t *result) {
+//-----------------------------------------------------------------------------
+// Version management
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_get_version(napi_env env, uint32_t *result) {
   return CHECKED_ENV(env)->getVersion(result);
 }
 
-napi_status napi_create_promise(
+//-----------------------------------------------------------------------------
+// Promises
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_create_promise(
     napi_env env,
     napi_deferred *deferred,
     napi_value *promise) {
   return CHECKED_ENV(env)->createPromise(deferred, promise);
 }
 
-napi_status napi_resolve_deferred(
+napi_status __cdecl napi_resolve_deferred(
     napi_env env,
     napi_deferred deferred,
     napi_value resolution) {
   return CHECKED_ENV(env)->resolveDeferred(deferred, resolution);
 }
 
-napi_status napi_reject_deferred(
+napi_status __cdecl napi_reject_deferred(
     napi_env env,
     napi_deferred deferred,
     napi_value resolution) {
   return CHECKED_ENV(env)->rejectDeferred(deferred, resolution);
 }
 
-napi_status napi_is_promise(napi_env env, napi_value value, bool *is_promise) {
+napi_status __cdecl napi_is_promise(
+    napi_env env,
+    napi_value value,
+    bool *is_promise) {
   return CHECKED_ENV(env)->isPromise(value, is_promise);
 }
 
-napi_status napi_create_date(napi_env env, double time, napi_value *result) {
-  return CHECKED_ENV(env)->createDate(time, result);
-}
+//-----------------------------------------------------------------------------
+// Running a script
+//-----------------------------------------------------------------------------
 
-napi_status napi_is_date(napi_env env, napi_value value, bool *is_date) {
-  return CHECKED_ENV(env)->isDate(value, is_date);
-}
-
-napi_status
-napi_get_date_value(napi_env env, napi_value value, double *result) {
-  return CHECKED_ENV(env)->getDateValue(value, result);
-}
-
-napi_status
-napi_run_script(napi_env env, napi_value script, napi_value *result) {
+napi_status __cdecl napi_run_script(
+    napi_env env,
+    napi_value script,
+    napi_value *result) {
   return CHECKED_ENV(env)->runScript(script, nullptr, result);
 }
 
-napi_status napi_add_finalizer(
+//-----------------------------------------------------------------------------
+// Memory management
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_adjust_external_memory(
+    napi_env env,
+    int64_t change_in_bytes,
+    int64_t *adjusted_value) {
+  return CHECKED_ENV(env)->adjustExternalMemory(
+      change_in_bytes, adjusted_value);
+}
+
+#if NAPI_VERSION >= 5
+
+//-----------------------------------------------------------------------------
+// Dates
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_create_date(
+    napi_env env,
+    double time,
+    napi_value *result) {
+  return CHECKED_ENV(env)->createDate(time, result);
+}
+
+napi_status __cdecl napi_is_date(
+    napi_env env,
+    napi_value value,
+    bool *is_date) {
+  return CHECKED_ENV(env)->isDate(value, is_date);
+}
+
+napi_status __cdecl napi_get_date_value(
+    napi_env env,
+    napi_value value,
+    double *result) {
+  return CHECKED_ENV(env)->getDateValue(value, result);
+}
+
+//-----------------------------------------------------------------------------
+// Add finalizer for pointer
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_add_finalizer(
     napi_env env,
     napi_value js_object,
     void *native_object,
@@ -6499,15 +6607,88 @@ napi_status napi_add_finalizer(
       js_object, native_object, finalize_cb, finalize_hint, result);
 }
 
-napi_status napi_adjust_external_memory(
+#endif // NAPI_VERSION >= 5
+
+#if NAPI_VERSION >= 6
+
+//-----------------------------------------------------------------------------
+// BigInt
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_create_bigint_int64(
     napi_env env,
-    int64_t change_in_bytes,
-    int64_t *adjusted_value) {
-  return CHECKED_ENV(env)->adjustExternalMemory(
-      change_in_bytes, adjusted_value);
+    int64_t value,
+    napi_value *result) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
 }
 
-napi_status napi_set_instance_data(
+napi_status __cdecl napi_create_bigint_uint64(
+    napi_env env,
+    uint64_t value,
+    napi_value *result) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+}
+
+napi_status __cdecl napi_create_bigint_words(
+    napi_env env,
+    int sign_bit,
+    size_t word_count,
+    const uint64_t *words,
+    napi_value *result) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+}
+
+napi_status __cdecl napi_get_value_bigint_int64(
+    napi_env env,
+    napi_value value,
+    int64_t *result,
+    bool *lossless) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+}
+
+napi_status __cdecl napi_get_value_bigint_uint64(
+    napi_env env,
+    napi_value value,
+    uint64_t *result,
+    bool *lossless) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+}
+
+napi_status __cdecl napi_get_value_bigint_words(
+    napi_env env,
+    napi_value value,
+    int *sign_bit,
+    size_t *word_count,
+    uint64_t *words) {
+  // Not implemented in Hermes
+  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+}
+
+//-----------------------------------------------------------------------------
+// Object
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_get_all_property_names(
+    napi_env env,
+    napi_value object,
+    napi_key_collection_mode key_mode,
+    napi_key_filter key_filter,
+    napi_key_conversion key_conversion,
+    napi_value *result) {
+  return CHECKED_ENV(env)->getAllPropertyNames(
+      object, key_mode, key_filter, key_conversion, result);
+}
+
+//-----------------------------------------------------------------------------
+// Instance data
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_set_instance_data(
     napi_env env,
     void *data,
     napi_finalize finalize_cb,
@@ -6515,26 +6696,69 @@ napi_status napi_set_instance_data(
   return CHECKED_ENV(env)->setInstanceData(data, finalize_cb, finalize_hint);
 }
 
-napi_status napi_get_instance_data(napi_env env, void **data) {
+napi_status __cdecl napi_get_instance_data(napi_env env, void **data) {
   return CHECKED_ENV(env)->getInstanceData(data);
 }
 
-napi_status napi_detach_arraybuffer(napi_env env, napi_value arraybuffer) {
+#endif // NAPI_VERSION >= 6
+
+#if NAPI_VERSION >= 7
+
+//-----------------------------------------------------------------------------
+// ArrayBuffer detaching
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_detach_arraybuffer(
+    napi_env env,
+    napi_value arraybuffer) {
   return CHECKED_ENV(env)->detachArrayBuffer(arraybuffer);
 }
 
-napi_status napi_is_detached_arraybuffer(
+napi_status __cdecl napi_is_detached_arraybuffer(
     napi_env env,
     napi_value arraybuffer,
     bool *result) {
   return CHECKED_ENV(env)->isDetachedArrayBuffer(arraybuffer, result);
 }
 
+#endif // NAPI_VERSION >= 7
+
+#if NAPI_VERSION >= 8
+
+//-----------------------------------------------------------------------------
+// Type tagging
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_type_tag_object(
+    napi_env env,
+    napi_value object,
+    const napi_type_tag *type_tag) {
+  return CHECKED_ENV(env)->typeTagObject(object, type_tag);
+}
+
+napi_status __cdecl napi_check_object_type_tag(
+    napi_env env,
+    napi_value object,
+    const napi_type_tag *type_tag,
+    bool *result) {
+  return CHECKED_ENV(env)->checkObjectTypeTag(object, type_tag, result);
+}
+
+napi_status __cdecl napi_object_freeze(napi_env env, napi_value object) {
+  return CHECKED_ENV(env)->objectFreeze(object);
+}
+
+napi_status __cdecl napi_object_seal(napi_env env, napi_value object) {
+  return CHECKED_ENV(env)->objectSeal(object);
+}
+
+#endif // NAPI_VERSION >= 8
+
 //=============================================================================
-// Node-API extensions to host JS engine and to implement JSI
+// Hermes specific API
 //=============================================================================
 
-napi_status napi_create_hermes_env(napi_env *env) {
+napi_status __cdecl napi_create_hermes_env(napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
@@ -6542,114 +6766,78 @@ napi_status napi_create_hermes_env(napi_env *env) {
   return napi_status::napi_ok;
 }
 
-napi_status napi_ext_env_ref(napi_env env) {
+//=============================================================================
+// Node-API extensions to host JS engine and to implement JSI
+//=============================================================================
+
+napi_status __cdecl napi_ext_create_env(
+    napi_ext_env_settings *settings,
+    napi_env *env) {
+  return napi_create_hermes_env(env);
+}
+
+napi_status __cdecl napi_ext_env_ref(napi_env env) {
   return CHECKED_ENV(env)->incRefCount();
 }
 
-napi_status napi_ext_env_unref(napi_env env) {
+napi_status __cdecl napi_ext_env_unref(napi_env env) {
   return CHECKED_ENV(env)->decRefCount();
 }
 
-// Runs script with the provided source_url origin.
-napi_status __cdecl napi_ext_run_script(
+napi_status __cdecl napi_ext_open_env_scope(
     napi_env env,
-    napi_value source,
-    const char *source_url,
-    napi_value *result) {
-  return CHECKED_ENV(env)->runScript(source, source_url, result);
+    napi_ext_env_scope *result) {
+  // TODO: implement
+  return napi_generic_failure;
 }
 
-// Runs serialized script with the provided source_url origin.
-napi_status __cdecl napi_ext_run_serialized_script(
+napi_status __cdecl napi_ext_close_env_scope(
     napi_env env,
-    const uint8_t *buffer,
-    size_t buffer_length,
-    napi_value source,
-    const char *source_url,
-    napi_value *result) {
-  return CHECKED_ENV(env)->runSerializedScript(
-      buffer, buffer_length, source, source_url, result);
-}
-
-// Creates a serialized script.
-napi_status __cdecl napi_ext_serialize_script(
-    napi_env env,
-    napi_value source,
-    const char *source_url,
-    napi_ext_buffer_callback buffer_cb,
-    void *buffer_hint) {
-  return CHECKED_ENV(env)->serializeScript(
-      source, source_url, buffer_cb, buffer_hint);
-}
-
-// Run the script with the source map that can be used for the script debugging.
-napi_status __cdecl napi_ext_run_script_with_source_map(
-    napi_env env,
-    napi_ext_buffer script,
-    napi_ext_get_buffer_range get_script_range,
-    napi_ext_delete_buffer delete_script,
-    napi_ext_buffer source_map,
-    napi_ext_get_buffer_range get_source_map_range,
-    napi_ext_delete_buffer delete_source_map,
-    const char *source_url,
-    napi_value *result) {
-  return CHECKED_ENV(env)->runScriptWithSourceMap(
-      hermes::napi::makeHermesBuffer(
-          env, script, get_script_range, delete_script),
-      hermes::napi::makeHermesBuffer(
-          env, source_map, get_source_map_range, delete_source_map),
-      source_url,
-      result);
-}
-
-// Prepare the script for running.
-napi_status __cdecl napi_ext_prepare_script_with_source_map(
-    napi_env env,
-    napi_ext_buffer script,
-    napi_ext_get_buffer_range get_script_range,
-    napi_ext_delete_buffer delete_script,
-    napi_ext_buffer source_map,
-    napi_ext_get_buffer_range get_source_map_range,
-    napi_ext_delete_buffer delete_source_map,
-    const char *source_url,
-    napi_ext_prepared_script *prepared_script) {
-  return CHECKED_ENV(env)->prepareScriptWithSourceMap(
-      hermes::napi::makeHermesBuffer(
-          env, script, get_script_range, delete_script),
-      hermes::napi::makeHermesBuffer(
-          env, source_map, get_source_map_range, delete_source_map),
-      source_url,
-      prepared_script);
-}
-
-// Run the prepared script.
-napi_status __cdecl napi_ext_run_prepared_script(
-    napi_env env,
-    napi_ext_prepared_script prepared_script,
-    napi_value *result) {
-  return CHECKED_ENV(env)->runPreparedScript(prepared_script, result);
-}
-
-// Delete the prepared script.
-napi_status __cdecl napi_ext_delete_prepared_script(
-    napi_env env,
-    napi_ext_prepared_script prepared_script) {
-  return CHECKED_ENV(env)->deletePreparedScript(prepared_script);
-}
-
-// Serialize the prepared script.
-napi_status __cdecl napi_ext_serialize_prepared_script(
-    napi_env env,
-    napi_ext_prepared_script prepared_script,
-    napi_ext_buffer_callback buffer_cb,
-    void *buffer_hint) {
-  return CHECKED_ENV(env)->serializePreparedScript(
-      prepared_script, buffer_cb, buffer_hint);
+    napi_ext_env_scope scope) {
+  // TODO: implement
+  return napi_generic_failure;
 }
 
 napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
   return CHECKED_ENV(env)->collectGarbage();
 }
+
+napi_status __cdecl napi_ext_has_unhandled_promise_rejection(
+    napi_env env,
+    bool *result) {
+  // TODO: implement
+  return napi_generic_failure;
+}
+
+napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(
+    napi_env env,
+    napi_value *result) {
+  // TODO: implement
+  return napi_generic_failure;
+}
+
+napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
+    napi_env env,
+    const char *str,
+    size_t length,
+    napi_ext_ref *result) {
+  // TODO: implement
+  return napi_generic_failure;
+}
+
+napi_status __cdecl napi_ext_get_unique_string_ref(
+    napi_env env,
+    napi_value str_value,
+    napi_ext_ref *result) {
+  // TODO: implement
+  return napi_generic_failure;
+}
+
+//-----------------------------------------------------------------------------
+// Methods to control object lifespan.
+// The NAPI's napi_ref can be used only for objects.
+// The napi_ext_ref can be used for any value type.
+//-----------------------------------------------------------------------------
 
 napi_status __cdecl napi_ext_create_reference(
     napi_env env,
@@ -6689,4 +6877,102 @@ napi_status __cdecl napi_ext_get_reference_value(
     napi_ext_ref ref,
     napi_value *result) {
   return CHECKED_ENV(env)->getReferenceValue(ref, result);
+}
+
+//-----------------------------------------------------------------------------
+// Script running, preparing, and serialization.
+//
+// Script is usually converted to byte code, or in other words - prepared - for
+// execution. The APIs below allow not only running the script, but also control
+// its preparation phase where we can explicitly prepare the script for running,
+// run the prepared script, and serialize or deserialize the prepared script.
+//-----------------------------------------------------------------------------
+
+napi_status __cdecl napi_ext_run_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runScript(source, source_url, result);
+}
+
+napi_status __cdecl napi_ext_run_serialized_script(
+    napi_env env,
+    const uint8_t *buffer,
+    size_t buffer_length,
+    napi_value source,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runSerializedScript(
+      buffer, buffer_length, source, source_url, result);
+}
+
+napi_status __cdecl napi_ext_serialize_script(
+    napi_env env,
+    napi_value source,
+    const char *source_url,
+    napi_ext_buffer_callback buffer_cb,
+    void *buffer_hint) {
+  return CHECKED_ENV(env)->serializeScript(
+      source, source_url, buffer_cb, buffer_hint);
+}
+
+napi_status __cdecl napi_ext_run_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_script_range,
+    napi_ext_delete_buffer delete_script,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_delete_buffer delete_source_map,
+    const char *source_url,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runScriptWithSourceMap(
+      hermes::napi::makeHermesBuffer(
+          env, script, get_script_range, delete_script),
+      hermes::napi::makeHermesBuffer(
+          env, source_map, get_source_map_range, delete_source_map),
+      source_url,
+      result);
+}
+
+napi_status __cdecl napi_ext_prepare_script_with_source_map(
+    napi_env env,
+    napi_ext_buffer script,
+    napi_ext_get_buffer_range get_script_range,
+    napi_ext_delete_buffer delete_script,
+    napi_ext_buffer source_map,
+    napi_ext_get_buffer_range get_source_map_range,
+    napi_ext_delete_buffer delete_source_map,
+    const char *source_url,
+    napi_ext_prepared_script *prepared_script) {
+  return CHECKED_ENV(env)->prepareScriptWithSourceMap(
+      hermes::napi::makeHermesBuffer(
+          env, script, get_script_range, delete_script),
+      hermes::napi::makeHermesBuffer(
+          env, source_map, get_source_map_range, delete_source_map),
+      source_url,
+      prepared_script);
+}
+
+napi_status __cdecl napi_ext_run_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script,
+    napi_value *result) {
+  return CHECKED_ENV(env)->runPreparedScript(prepared_script, result);
+}
+
+napi_status __cdecl napi_ext_delete_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script) {
+  return CHECKED_ENV(env)->deletePreparedScript(prepared_script);
+}
+
+napi_status __cdecl napi_ext_serialize_prepared_script(
+    napi_env env,
+    napi_ext_prepared_script prepared_script,
+    napi_ext_buffer_callback buffer_cb,
+    void *buffer_hint) {
+  return CHECKED_ENV(env)->serializePreparedScript(
+      prepared_script, buffer_cb, buffer_hint);
 }
