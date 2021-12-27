@@ -529,6 +529,18 @@ struct NodeApiEnvironment {
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
   virtual ~NodeApiEnvironment();
 
+  template <class TObject>
+  napi_status convertToObject(
+      TObject object,
+      vm::Handle<vm::JSObject> *result) noexcept;
+
+  template <class TName, class TValue>
+  napi_status putComputed(
+      vm::Handle<vm::JSObject> objHandle,
+      TName name,
+      TValue value,
+      bool *result) noexcept;
+
   template <class T>
   vm::MutableHandle<T> makeMutableHandle() noexcept;
 
@@ -544,6 +556,7 @@ struct NodeApiEnvironment {
   vm::Handle<> makeHandle(const vm::PinnedHermesValue *value) noexcept;
   vm::Handle<> makeHandle(napi_value value) noexcept;
   vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
+  vm::Handle<> makeHandle(vm::Handle<> value) noexcept;
 
   template <class T>
   vm::CallResult<vm::Handle<T>> makeHandle(
@@ -645,19 +658,29 @@ struct NodeApiEnvironment {
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
 
-  template <class T>
-  napi_status setResult(T value, T *result) noexcept;
-  napi_status setResult(vm::HermesValue value, napi_value *result) noexcept;
-  template <class T>
-  napi_status setResult(vm::Handle<T> handle, napi_value *result) noexcept;
-  template <class T>
-  napi_status setResult(
-      vm::PseudoHandle<T> handle,
-      napi_value *result) noexcept;
-  template <class T>
-  napi_status setOptionalResult(T value, T *result) noexcept;
+  template <class TValue, class TResult>
+  napi_status setResult(TValue &&value, TResult *result) noexcept;
+  template <class TValue, class TResult>
+  napi_status setOptionalResult(TValue &&value, TResult *result) noexcept;
   template <class T>
   napi_status setOptionalResult(T value, std::nullptr_t) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(T value, T *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      const vm::CallResult<T> &value,
+      T *result) noexcept;
+  napi_status setResultUnsafe(
+      vm::HermesValue value,
+      napi_value *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      vm::Handle<T> handle,
+      napi_value *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      vm::PseudoHandle<T> handle,
+      napi_value *result) noexcept;
 
   napi_status
   setProperty(napi_value object, napi_value key, napi_value value) noexcept;
@@ -1051,6 +1074,12 @@ struct NodeApiEnvironment {
       const uint8_t *utf8,
       size_t length) noexcept;
   vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
+  napi_status stringHVFromUtf8(
+      const uint8_t *utf8,
+      size_t length,
+      vm::Handle<> *result) noexcept;
+  napi_status stringHVFromUtf8(const char *utf8, vm::Handle<> *result) noexcept;
+
   napi_value addStackValue(vm::HermesValue value) noexcept;
   napi_value toNapiValue(const vm::PinnedHermesValue &value) noexcept;
   napi_status checkStatus(
@@ -2638,6 +2667,21 @@ vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
   return stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8), length);
 }
 
+napi_status NodeApiEnvironment::stringHVFromUtf8(
+    const char *utf8,
+    vm::Handle<> *result) noexcept {
+  vm::CallResult<vm::HermesValue> res = stringHVFromUtf8(utf8);
+  return setResult(makeHandle(*res), result);
+}
+
+napi_status NodeApiEnvironment::stringHVFromUtf8(
+    const uint8_t *utf8,
+    size_t length,
+    vm::Handle<> *result) noexcept {
+  vm::CallResult<vm::HermesValue> res = stringHVFromUtf8(utf8, length);
+  return setResult(makeHandle(*res), result);
+}
+
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   stackValues_.emplaceBack(value);
   return reinterpret_cast<napi_value>(&stackValues_.back());
@@ -2769,6 +2813,10 @@ vm::Handle<> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
 
 vm::Handle<> NodeApiEnvironment::makeHandle(vm::HermesValue value) noexcept {
   return vm::Handle<>(&runtime_, value);
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(vm::Handle<> value) noexcept {
+  return value;
 }
 
 template <class T>
@@ -3049,39 +3097,20 @@ vm::CallResult<vm::Handle<>> NodeApiEnvironment::convertIndexToString(
   return StringBuilder(*index).makeStringHV(runtime_);
 }
 
-template <class T>
-napi_status NodeApiEnvironment::setResult(T value, T *result) noexcept {
+template <class TValue, class TResult>
+napi_status NodeApiEnvironment::setResult(
+    TValue &&value,
+    TResult *result) noexcept {
   CHECK_ARG(result);
-  *result = value;
-  return clearLastError();
+  return setResultUnsafe(std::forward<TValue>(value), result);
 }
 
-napi_status NodeApiEnvironment::setResult(
-    vm::HermesValue value,
-    napi_value *result) noexcept {
-  CHECK_ARG(result);
-  *result = addStackValue(value);
-  return clearLastError();
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResult(
-    vm::Handle<T> handle,
-    napi_value *result) noexcept {
-  return setResult(handle.getHermesValue(), result);
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResult(
-    vm::PseudoHandle<T> handle,
-    napi_value *result) noexcept {
-  return setResult(handle.getHermesValue(), result);
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setOptionalResult(T value, T *result) noexcept {
+template <class TValue, class TResult>
+napi_status NodeApiEnvironment::setOptionalResult(
+    TValue &&value,
+    TResult *result) noexcept {
   if (result) {
-    *result = value;
+    return setResultUnsafe(std::forward<TValue>(value), result);
   }
   return clearLastError();
 }
@@ -3091,6 +3120,66 @@ napi_status NodeApiEnvironment::setOptionalResult(
     T /*value*/,
     std::nullptr_t) noexcept {
   return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(T value, T *result) noexcept {
+  *result = value;
+  return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    const vm::CallResult<T> &value,
+    T *result) noexcept {
+  CHECK_STATUS(value.getStatus());
+  return setResultUnsafe(*value, result);
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::HermesValue value,
+    napi_value *result) noexcept {
+  *result = addStackValue(value);
+  return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::Handle<T> handle,
+    napi_value *result) noexcept {
+  return setResultUnsafe(handle.getHermesValue(), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::PseudoHandle<T> handle,
+    napi_value *result) noexcept {
+  return setResultUnsafe(handle.getHermesValue(), result);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::convertToObject(
+    TObject object,
+    vm::Handle<vm::JSObject> *result) noexcept {
+  vm::CallResult<vm::HermesValue> obj =
+      vm::toObject(&runtime_, makeHandle(object));
+  CHECK_STATUS(obj.getStatus());
+  return setResult(vm::Handle<vm::JSObject>::vmcast(&runtime_, *obj), result);
+}
+
+template <class TName, class TValue>
+napi_status NodeApiEnvironment::putComputed(
+    vm::Handle<vm::JSObject> objHandle,
+    TName name,
+    TValue value,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
+      objHandle,
+      &runtime_,
+      makeHandle(name),
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(res, result);
 }
 
 napi_status NodeApiEnvironment::setProperty(
@@ -3181,20 +3270,14 @@ napi_status NodeApiEnvironment::setNamedProperty(
     const char *utf8Name,
     napi_value value) noexcept {
   return handleExceptions([&] {
+    CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     CHECK_ARG(value);
-    CHECK_TO_OBJECT(vm::Handle<vm::JSObject> objHandle /*=*/, object);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue name /*=*/, stringHVFromUtf8(utf8Name));
-    ASSIGN_ELSE_RETURN_FAILURE(
-        bool res /*=*/,
-        vm::JSObject::putComputed_RJS(
-            objHandle,
-            &runtime_,
-            makeHandle(name),
-            makeHandle(value),
-            vm::PropOpFlags().plusThrowOnError()));
-    return setOptionalResult(res, nullptr);
+    vm::Handle<vm::JSObject> objHandle(&runtime_);
+    vm::Handle<> name(&runtime_);
+    CHECK_NAPI(convertToObject(object, &objHandle));
+    CHECK_NAPI(stringHVFromUtf8(utf8Name, &name));
+    return putComputed(objHandle, name, value, nullptr);
   });
 }
 
