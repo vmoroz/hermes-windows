@@ -524,11 +524,375 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
   LinkedList<Finalizer> finalizers_;
 };
 
-struct NodeApiEnvironment {
+struct NodeApiEnvironment final {
   explicit NodeApiEnvironment(
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
-  virtual ~NodeApiEnvironment();
+  ~NodeApiEnvironment();
 
+ public: // Function accessed from the C-base NAPI
+  template <typename... TArgs>
+  napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
+  napi_status clearLastError() noexcept;
+  napi_status getLastErrorInfo(
+      const napi_extended_error_info **result) noexcept;
+
+  napi_status getUndefined(napi_value *result) noexcept;
+  napi_status getNull(napi_value *result) noexcept;
+  napi_status getGlobal(napi_value *result) noexcept;
+  napi_status getBoolean(bool value, napi_value *result) noexcept;
+
+  napi_status createObject(napi_value *result) noexcept;
+  napi_status createArray(napi_value *result) noexcept;
+  napi_status createArray(size_t length, napi_value *result) noexcept;
+  template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
+  napi_status createNumber(T value, napi_value *result) noexcept;
+  napi_status createStringLatin1(
+      const char *str,
+      size_t length,
+      napi_value *result) noexcept;
+  napi_status
+  createStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status createStringUtf16(
+      const char16_t *str,
+      size_t length,
+      napi_value *result) noexcept;
+  napi_status createSymbol(napi_value description, napi_value *result) noexcept;
+  napi_status createFunction(
+      const char *utf8Name,
+      size_t length,
+      napi_callback callback,
+      void *callbackData,
+      napi_value *result) noexcept;
+  napi_status
+  createError(napi_value code, napi_value msg, napi_value *result) noexcept;
+  napi_status
+  createTypeError(napi_value code, napi_value msg, napi_value *result) noexcept;
+  napi_status createRangeError(
+      napi_value code,
+      napi_value msg,
+      napi_value *result) noexcept;
+
+  napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
+  napi_status getNumberValue(napi_value value, double *result) noexcept;
+  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
+  napi_status getBoolValue(napi_value value, bool *result) noexcept;
+  napi_status getValueStringLatin1(
+      napi_value value,
+      char *buf,
+      size_t bufsize,
+      size_t *result) noexcept;
+  napi_status getValueStringUtf8(
+      napi_value value,
+      char *buf,
+      size_t bufsize,
+      size_t *result) noexcept;
+  napi_status getValueStringUtf16(
+      napi_value value,
+      char16_t *buf,
+      size_t bufsize,
+      size_t *result) noexcept;
+
+  napi_status coerceToBool(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToNumber(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToObject(napi_value value, napi_value *result) noexcept;
+  napi_status coerceToString(napi_value value, napi_value *result) noexcept;
+
+  napi_status getPrototype(napi_value object, napi_value *result) noexcept;
+  napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
+  napi_status getForInPropertyNames(
+      vm::Handle<vm::JSObject> object,
+      napi_key_conversion keyConversion,
+      napi_value *result) noexcept;
+  napi_status getAllPropertyNames(
+      napi_value object,
+      napi_key_collection_mode keyMode,
+      napi_key_filter keyFilter,
+      napi_key_conversion keyConversion,
+      napi_value *result) noexcept;
+  napi_status
+  setProperty(napi_value object, napi_value key, napi_value value) noexcept;
+  napi_status
+  hasProperty(napi_value object, napi_value key, bool *result) noexcept;
+  napi_status
+  getProperty(napi_value object, napi_value key, napi_value *result) noexcept;
+  napi_status
+  deleteProperty(napi_value object, napi_value key, bool *result) noexcept;
+  napi_status
+  hasOwnProperty(napi_value object, napi_value key, bool *result) noexcept;
+  napi_status setNamedProperty(
+      napi_value object,
+      const char *utf8Name,
+      napi_value value) noexcept;
+  napi_status hasNamedProperty(
+      napi_value object,
+      const char *utf8Name,
+      bool *result) noexcept;
+  napi_status getNamedProperty(
+      napi_value object,
+      const char *utf8Name,
+      napi_value *result) noexcept;
+  napi_status
+  setElement(napi_value object, uint32_t index, napi_value value) noexcept;
+  napi_status
+  hasElement(napi_value object, uint32_t index, bool *result) noexcept;
+  napi_status
+  getElement(napi_value object, uint32_t index, napi_value *result) noexcept;
+  napi_status
+  deleteElement(napi_value object, uint32_t index, bool *result) noexcept;
+  napi_status defineProperties(
+      napi_value object,
+      size_t propertyCount,
+      const napi_property_descriptor *properties) noexcept;
+
+  napi_status isArray(napi_value value, bool *result) noexcept;
+  napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
+
+  napi_status
+  strictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
+
+  napi_status callFunction(
+      napi_value object,
+      napi_value func,
+      size_t argCount,
+      const napi_value *args,
+      napi_value *result) noexcept;
+  napi_status newInstance(
+      napi_value constructor,
+      size_t argc,
+      const napi_value *argv,
+      napi_value *result) noexcept;
+  napi_status
+  instanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
+
+  napi_status getCallbackInfo(
+      CallbackInfo *callbackInfo,
+      size_t *argCount,
+      napi_value *args,
+      napi_value *thisArg,
+      void **data) noexcept;
+  napi_status getNewTarget(
+      CallbackInfo *callbackInfo,
+      napi_value *result) noexcept;
+  napi_status defineClass(
+      const char *utf8Name,
+      size_t length,
+      napi_callback constructor,
+      void *callbackData,
+      size_t propertyCount,
+      const napi_property_descriptor *properties,
+      napi_value *result) noexcept;
+
+  napi_status wrapObject(
+      napi_value object,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_ref *result) noexcept;
+  napi_status
+  unwrapObject(napi_value object, UnwrapAction action, void **result) noexcept;
+  napi_status createExternal(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_value *result) noexcept;
+  napi_status getValueExternal(napi_value value, void **result) noexcept;
+
+  napi_status createReference(
+      napi_value value,
+      uint32_t initialRefCount,
+      napi_ref *result) noexcept;
+  napi_status deleteReference(napi_ref ref) noexcept;
+  napi_status incReference(napi_ref ref, uint32_t *result) noexcept;
+  napi_status decReference(napi_ref ref, uint32_t *result) noexcept;
+  napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
+  napi_status openHandleScope(napi_handle_scope *result) noexcept;
+  napi_status closeHandleScope(napi_handle_scope scope) noexcept;
+  napi_status openEscapableHandleScope(
+      napi_escapable_handle_scope *result) noexcept;
+  napi_status closeEscapableHandleScope(
+      napi_escapable_handle_scope scope) noexcept;
+  napi_status escapeHandle(
+      napi_escapable_handle_scope scope,
+      napi_value escapee,
+      napi_value *result) noexcept;
+
+  napi_status throwError(napi_value error) noexcept;
+  napi_status throwError(
+      const char *code,
+      const char *message,
+      const vm::PinnedHermesValue &prototype) noexcept;
+  napi_status throwError(const char *code, const char *message) noexcept;
+  napi_status throwTypeError(const char *code, const char *message) noexcept;
+  napi_status throwRangeError(const char *code, const char *message) noexcept;
+  napi_status isError(napi_value value, bool *result) noexcept;
+
+  napi_status isExceptionPending(bool *result) noexcept;
+  napi_status getAndClearLastException(napi_value *result) noexcept;
+
+  napi_status isArrayBuffer(napi_value value, bool *result) noexcept;
+  napi_status createArrayBuffer(
+      size_t byteLength,
+      void **data,
+      napi_value *result) noexcept;
+  napi_status createExternalArrayBuffer(
+      void *externalData,
+      size_t byteLength,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_value *result) noexcept;
+  napi_status getArrayBufferInfo(
+      napi_value arrayBuffer,
+      void **data,
+      size_t *byteLength) noexcept;
+  napi_status isTypedArray(napi_value value, bool *result) noexcept;
+  template <typename TItem, vm::CellKind CellKind>
+  napi_status createTypedArray(
+      size_t length,
+      vm::JSArrayBuffer *buffer,
+      size_t byteOffset,
+      vm::JSTypedArrayBase **result) noexcept;
+  napi_status createTypedArray(
+      napi_typedarray_type type,
+      size_t length,
+      napi_value arrayBuffer,
+      size_t byteOffset,
+      napi_value *result) noexcept;
+  napi_status getTypedArrayInfo(
+      napi_value typedArray,
+      napi_typedarray_type *type,
+      size_t *length,
+      void **data,
+      napi_value *arrayBuffer,
+      size_t *byteOffset) noexcept;
+  napi_status createDataView(
+      size_t byteLength,
+      napi_value arrayBuffer,
+      size_t byteOffset,
+      napi_value *result) noexcept;
+  napi_status isDataView(napi_value value, bool *result) noexcept;
+  napi_status getDataViewInfo(
+      napi_value dataView,
+      size_t *byteLength,
+      void **data,
+      napi_value *arrayBuffer,
+      size_t *byteOffset) noexcept;
+
+  napi_status getVersion(uint32_t *result) noexcept;
+
+  napi_status createPromise(
+      napi_value *promise,
+      napi_value *resolveFunction,
+      napi_value *rejectFunction) noexcept;
+  napi_status createPromise(
+      napi_deferred *deferred,
+      napi_value *result) noexcept;
+  napi_status resolveDeferred(
+      napi_deferred deferred,
+      napi_value resolution) noexcept;
+  napi_status rejectDeferred(
+      napi_deferred deferred,
+      napi_value resolution) noexcept;
+  napi_status concludeDeferred(
+      napi_deferred deferred,
+      const char *propertyName,
+      napi_value result) noexcept;
+  napi_status isPromise(napi_value value, bool *result) noexcept;
+
+  napi_status adjustExternalMemory(
+      int64_t change_in_bytes,
+      int64_t *adjusted_value) noexcept;
+
+  napi_status createDate(double dateTime, napi_value *result) noexcept;
+  napi_status isDate(napi_value value, bool *result) noexcept;
+  napi_status getDateValue(napi_value value, double *result) noexcept;
+
+  napi_status addFinalizer(
+      napi_value object,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_ref *result) noexcept;
+
+  napi_status setInstanceData(
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept;
+  napi_status getInstanceData(void **nativeData) noexcept;
+
+  napi_status detachArrayBuffer(napi_value arrayBuffer) noexcept;
+  napi_status isDetachedArrayBuffer(
+      napi_value arrayBuffer,
+      bool *result) noexcept;
+
+  napi_status typeTagObject(
+      napi_value object,
+      const napi_type_tag *typeTag) noexcept;
+  napi_status checkObjectTypeTag(
+      napi_value object,
+      const napi_type_tag *typeTag,
+      bool *result) noexcept;
+  napi_status objectFreeze(napi_value object) noexcept;
+  napi_status objectSeal(napi_value object) noexcept;
+
+ public: // Extension methods
+  napi_status incRefCount() noexcept;
+  napi_status decRefCount() noexcept;
+  napi_status collectGarbage() noexcept;
+
+  napi_status createStrongReference(
+      napi_value value,
+      napi_ext_ref *result) noexcept;
+  napi_status createStrongReferenceWithData(
+      napi_value value,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_ext_ref *result) noexcept;
+  napi_status createWeakReference(
+      napi_value value,
+      napi_ext_ref *result) noexcept;
+  napi_status incReference(napi_ext_ref ref) noexcept;
+  napi_status decReference(napi_ext_ref ref) noexcept;
+  napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
+
+  napi_status runScript(
+      napi_value source,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+  napi_status runSerializedScript(
+      const uint8_t *buffer,
+      size_t bufferLength,
+      napi_value source,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+  napi_status serializeScript(
+      napi_value source,
+      const char *sourceURL,
+      napi_ext_buffer_callback bufferCallback,
+      void *bufferHint) noexcept;
+  napi_status runScriptWithSourceMap(
+      std::unique_ptr<HermesBuffer> script,
+      std::unique_ptr<HermesBuffer> sourceMap,
+      const char *sourceURL,
+      napi_value *result) noexcept;
+  napi_status prepareScriptWithSourceMap(
+      std::unique_ptr<HermesBuffer> script,
+      std::unique_ptr<HermesBuffer> sourceMap,
+      const char *sourceURL,
+      napi_ext_prepared_script *preparedScript) noexcept;
+  napi_status runPreparedScript(
+      napi_ext_prepared_script preparedScript,
+      napi_value *result) noexcept;
+  napi_status deletePreparedScript(
+      napi_ext_prepared_script preparedScript) noexcept;
+  napi_status serializePreparedScript(
+      napi_ext_prepared_script preparedScript,
+      napi_ext_buffer_callback bufferCallback,
+      void *bufferHint) noexcept;
+
+ public:
   template <class TObject>
   napi_status convertToObject(
       TObject object,
@@ -599,8 +963,6 @@ struct NodeApiEnvironment {
 
   vm::Handle<> toHandle(napi_value value) noexcept;
 
-  napi_status incRefCount() noexcept;
-  napi_status decRefCount() noexcept;
   napi_status genericFailure(const char *message) noexcept;
 
   vm::WeakRoot<vm::JSObject> createWeakRoot(vm::JSObject *object) noexcept;
@@ -616,20 +978,6 @@ struct NodeApiEnvironment {
       void *nativeData,
       void *finalizeHint) noexcept;
 
-  // We store references in two different lists, depending on whether they
-  // have `napi_finalizer` callbacks, because we must first finalize the
-  // ones that have such a callback. See `~NodeApiEnvironment()` above for
-  // details.
-  LinkedList<Reference> gcRoots_{};
-  LinkedList<Reference> finalizingGCRoots_{};
-  LinkedList<Finalizer> finalizerQueue_{};
-  bool isRunningFinalizers_{};
-
-  std::string lastErrorMessage_;
-  napi_extended_error_info lastError_{"", 0, 0, napi_ok};
-  int openCallbackScopeCount_{};
-  InstanceData *instanceData_{};
-
   static vm::JSObject *getObject(const vm::HermesValue &value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
@@ -644,48 +992,9 @@ struct NodeApiEnvironment {
   void pushOrderedSet(OrderedSet &set) noexcept;
   void popOrderedSet() noexcept;
 
-  llvh::SmallVector<OrderedSet *, 16> orderedSets_;
-
-  template <typename... TArgs>
-  napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
-  napi_status clearLastError() noexcept;
-  napi_status getLastErrorInfo(
-      const napi_extended_error_info **result) noexcept;
-
-  napi_status createFunction(
-      const char *utf8Name,
-      size_t length,
-      napi_callback callback,
-      void *callbackData,
-      napi_value *result) noexcept;
-
-  napi_status defineClass(
-      const char *utf8Name,
-      size_t length,
-      napi_callback constructor,
-      void *callbackData,
-      size_t propertyCount,
-      const napi_property_descriptor *properties,
-      napi_value *result) noexcept;
-
   vm::CallResult<vm::Handle<>> convertIndexToString(double value) noexcept;
-
   vm::ExecutionStatus convertKeyNumbersToStrings(
       vm::Handle<vm::JSArray> array) noexcept;
-
-  napi_status getForInPropertyNames(
-      vm::Handle<vm::JSObject> object,
-      napi_key_conversion keyConversion,
-      napi_value *result) noexcept;
-
-  napi_status getPropertyNames(napi_value object, napi_value *result) noexcept;
-
-  napi_status getAllPropertyNames(
-      napi_value object,
-      napi_key_collection_mode keyMode,
-      napi_key_filter keyFilter,
-      napi_key_conversion keyConversion,
-      napi_value *result) noexcept;
 
   template <class T, class TResult>
   napi_status setResult(T &&value, TResult *result) noexcept;
@@ -720,79 +1029,6 @@ struct NodeApiEnvironment {
       napi_status onException,
       TResult *result) noexcept;
 
-  napi_status
-  setProperty(napi_value object, napi_value key, napi_value value) noexcept;
-
-  napi_status
-  hasProperty(napi_value object, napi_value key, bool *result) noexcept;
-
-  napi_status
-  getProperty(napi_value object, napi_value key, napi_value *result) noexcept;
-
-  napi_status
-  deleteProperty(napi_value object, napi_value key, bool *result) noexcept;
-
-  napi_status
-  hasOwnProperty(napi_value object, napi_value key, bool *result) noexcept;
-
-  napi_status setNamedProperty(
-      napi_value object,
-      const char *utf8Name,
-      napi_value value) noexcept;
-
-  napi_status hasNamedProperty(
-      napi_value object,
-      const char *utf8Name,
-      bool *result) noexcept;
-
-  napi_status getNamedProperty(
-      napi_value object,
-      const char *utf8Name,
-      napi_value *result) noexcept;
-
-  // Array functions
-  napi_status createArray(napi_value *result) noexcept;
-  napi_status createArray(size_t length, napi_value *result) noexcept;
-  napi_status isArray(napi_value value, bool *result) noexcept;
-  napi_status getArrayLength(napi_value value, uint32_t *result) noexcept;
-  napi_status
-  hasElement(napi_value object, uint32_t index, bool *result) noexcept;
-  napi_status
-  getElement(napi_value object, uint32_t index, napi_value *result) noexcept;
-  napi_status
-  setElement(napi_value object, uint32_t index, napi_value value) noexcept;
-  napi_status
-  deleteElement(napi_value object, uint32_t index, bool *result) noexcept;
-
-  napi_status defineProperties(
-      napi_value object,
-      size_t propertyCount,
-      const napi_property_descriptor *properties) noexcept;
-
-  napi_status objectFreeze(napi_value object) noexcept;
-
-  napi_status objectSeal(napi_value object) noexcept;
-
-  napi_status
-  strictEquals(napi_value lhs, napi_value rhs, bool *result) noexcept;
-
-  napi_status getPrototype(napi_value object, napi_value *result) noexcept;
-
-  napi_status createObject(napi_value *result) noexcept;
-
-  napi_status createStringLatin1(
-      const char *str,
-      size_t length,
-      napi_value *result) noexcept;
-
-  napi_status
-  createStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
-
-  napi_status createStringUtf16(
-      const char16_t *str,
-      size_t length,
-      napi_value *result) noexcept;
-
   napi_status createSymbolID(
       const char *str,
       size_t length,
@@ -802,304 +1038,6 @@ struct NodeApiEnvironment {
       napi_value str,
       vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
-  template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
-  napi_status createNumber(T value, napi_value *result) noexcept;
-
-  napi_status getBoolean(bool value, napi_value *result) noexcept;
-
-  napi_status createSymbol(napi_value description, napi_value *result) noexcept;
-
-  napi_status
-  createError(napi_value code, napi_value msg, napi_value *result) noexcept;
-
-  napi_status
-  createTypeError(napi_value code, napi_value msg, napi_value *result) noexcept;
-
-  napi_status createRangeError(
-      napi_value code,
-      napi_value msg,
-      napi_value *result) noexcept;
-
-  napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
-
-  napi_status getUndefined(napi_value *result) noexcept;
-
-  napi_status getNull(napi_value *result) noexcept;
-
-  napi_status getCallbackInfo(
-      CallbackInfo *callbackInfo,
-      size_t *argCount,
-      napi_value *args,
-      napi_value *thisArg,
-      void **data) noexcept;
-
-  napi_status getNewTarget(
-      CallbackInfo *callbackInfo,
-      napi_value *result) noexcept;
-
-  napi_status callFunction(
-      napi_value object,
-      napi_value func,
-      size_t argCount,
-      const napi_value *args,
-      napi_value *result) noexcept;
-
-  napi_status getGlobal(napi_value *result) noexcept;
-
-  napi_status throwError(napi_value error) noexcept;
-  napi_status throwError(
-      const char *code,
-      const char *message,
-      const vm::PinnedHermesValue &prototype) noexcept;
-  napi_status throwError(const char *code, const char *message) noexcept;
-  napi_status throwTypeError(const char *code, const char *message) noexcept;
-  napi_status throwRangeError(const char *code, const char *message) noexcept;
-
-  napi_status isError(napi_value value, bool *result) noexcept;
-
-  napi_status getNumberValue(napi_value value, double *result) noexcept;
-
-  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
-
-  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
-
-  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
-
-  napi_status getBoolValue(napi_value value, bool *result) noexcept;
-
-  napi_status getValueStringLatin1(
-      napi_value value,
-      char *buf,
-      size_t bufsize,
-      size_t *result) noexcept;
-
-  napi_status getValueStringUtf8(
-      napi_value value,
-      char *buf,
-      size_t bufsize,
-      size_t *result) noexcept;
-
-  napi_status getValueStringUtf16(
-      napi_value value,
-      char16_t *buf,
-      size_t bufsize,
-      size_t *result) noexcept;
-
-  napi_status coerceToBool(napi_value value, napi_value *result) noexcept;
-  napi_status coerceToNumber(napi_value value, napi_value *result) noexcept;
-  napi_status coerceToObject(napi_value value, napi_value *result) noexcept;
-  napi_status coerceToString(napi_value value, napi_value *result) noexcept;
-
-  napi_status createExternal(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_value *result) noexcept;
-
-  napi_status typeTagObject(
-      napi_value object,
-      const napi_type_tag *typeTag) noexcept;
-
-  napi_status checkObjectTypeTag(
-      napi_value object,
-      const napi_type_tag *typeTag,
-      bool *result) noexcept;
-
-  napi_status getValueExternal(napi_value value, void **result) noexcept;
-
-  napi_status createReference(
-      napi_value value,
-      uint32_t initialRefCount,
-      napi_ref *result) noexcept;
-
-  napi_status deleteReference(napi_ref ref) noexcept;
-
-  napi_status incReference(napi_ref ref, uint32_t *result) noexcept;
-
-  napi_status decReference(napi_ref ref, uint32_t *result) noexcept;
-
-  napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
-
-  napi_status openHandleScope(napi_handle_scope *result) noexcept;
-
-  napi_status closeHandleScope(napi_handle_scope scope) noexcept;
-
-  napi_status openEscapableHandleScope(
-      napi_escapable_handle_scope *result) noexcept;
-
-  napi_status closeEscapableHandleScope(
-      napi_escapable_handle_scope scope) noexcept;
-
-  napi_status escapeHandle(
-      napi_escapable_handle_scope scope,
-      napi_value escapee,
-      napi_value *result) noexcept;
-
-  napi_status newInstance(
-      napi_value constructor,
-      size_t argc,
-      const napi_value *argv,
-      napi_value *result) noexcept;
-
-  napi_status
-  instanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
-
-  napi_status isExceptionPending(bool *result) noexcept;
-
-  napi_status getAndClearLastException(napi_value *result) noexcept;
-
-  napi_status isArrayBuffer(napi_value value, bool *result) noexcept;
-
-  napi_status createArrayBuffer(
-      size_t byteLength,
-      void **data,
-      napi_value *result) noexcept;
-
-  napi_status createExternalArrayBuffer(
-      void *externalData,
-      size_t byteLength,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_value *result) noexcept;
-
-  napi_status getArrayBufferInfo(
-      napi_value arrayBuffer,
-      void **data,
-      size_t *byteLength) noexcept;
-
-  napi_status isTypedArray(napi_value value, bool *result) noexcept;
-
-  template <typename TItem, vm::CellKind CellKind>
-  napi_status createTypedArray(
-      size_t length,
-      vm::JSArrayBuffer *buffer,
-      size_t byteOffset,
-      vm::JSTypedArrayBase **result) noexcept;
-
-  napi_status createTypedArray(
-      napi_typedarray_type type,
-      size_t length,
-      napi_value arrayBuffer,
-      size_t byteOffset,
-      napi_value *result) noexcept;
-
-  napi_status getTypedArrayInfo(
-      napi_value typedArray,
-      napi_typedarray_type *type,
-      size_t *length,
-      void **data,
-      napi_value *arrayBuffer,
-      size_t *byteOffset) noexcept;
-
-  napi_status createDataView(
-      size_t byteLength,
-      napi_value arrayBuffer,
-      size_t byteOffset,
-      napi_value *result) noexcept;
-
-  napi_status isDataView(napi_value value, bool *result) noexcept;
-
-  napi_status getDataViewInfo(
-      napi_value dataView,
-      size_t *byteLength,
-      void **data,
-      napi_value *arrayBuffer,
-      size_t *byteOffset) noexcept;
-
-  napi_status getVersion(uint32_t *result) noexcept;
-
-  napi_status createPromise(
-      napi_value *promise,
-      napi_value *resolveFunction,
-      napi_value *rejectFunction) noexcept;
-
-  napi_status createPromise(
-      napi_deferred *deferred,
-      napi_value *result) noexcept;
-
-  napi_status resolveDeferred(
-      napi_deferred deferred,
-      napi_value resolution) noexcept;
-
-  napi_status rejectDeferred(
-      napi_deferred deferred,
-      napi_value resolution) noexcept;
-
-  napi_status concludeDeferred(
-      napi_deferred deferred,
-      const char *propertyName,
-      napi_value result) noexcept;
-
-  napi_status isPromise(napi_value value, bool *result) noexcept;
-
-  //=======================================================================
-  // Date functions
-  napi_status createDate(double dateTime, napi_value *result) noexcept;
-  napi_status isDate(napi_value value, bool *result) noexcept;
-  napi_status getDateValue(napi_value value, double *result) noexcept;
-
-  napi_status adjustExternalMemory(
-      int64_t change_in_bytes,
-      int64_t *adjusted_value) noexcept;
-
-  napi_status setInstanceData(
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept;
-
-  napi_status getInstanceData(void **nativeData) noexcept;
-
-  napi_status detachArrayBuffer(napi_value arrayBuffer) noexcept;
-  napi_status isDetachedArrayBuffer(
-      napi_value arrayBuffer,
-      bool *result) noexcept;
-
-  // Extensions
-  napi_status runScript(
-      napi_value source,
-      const char *sourceURL,
-      napi_value *result) noexcept;
-
-  napi_status runSerializedScript(
-      const uint8_t *buffer,
-      size_t bufferLength,
-      napi_value source,
-      const char *sourceURL,
-      napi_value *result) noexcept;
-
-  napi_status serializeScript(
-      napi_value source,
-      const char *sourceURL,
-      napi_ext_buffer_callback bufferCallback,
-      void *bufferHint) noexcept;
-
-  napi_status runScriptWithSourceMap(
-      std::unique_ptr<HermesBuffer> script,
-      std::unique_ptr<HermesBuffer> sourceMap,
-      const char *sourceURL,
-      napi_value *result) noexcept;
-
-  napi_status prepareScriptWithSourceMap(
-      std::unique_ptr<HermesBuffer> script,
-      std::unique_ptr<HermesBuffer> sourceMap,
-      const char *sourceURL,
-      napi_ext_prepared_script *preparedScript) noexcept;
-
-  napi_status runPreparedScript(
-      napi_ext_prepared_script preparedScript,
-      napi_value *result) noexcept;
-
-  napi_status deletePreparedScript(
-      napi_ext_prepared_script preparedScript) noexcept;
-
-  napi_status serializePreparedScript(
-      napi_ext_prepared_script preparedScript,
-      napi_ext_buffer_callback bufferCallback,
-      void *bufferHint) noexcept;
-
-  napi_status collectGarbage() noexcept;
-
-  // Utility
   napi_status runReferenceFinalizers() noexcept;
 
   vm::CallResult<vm::HermesValue> stringHVFromAscii(
@@ -1136,23 +1074,6 @@ struct NodeApiEnvironment {
       const napi_property_descriptor *p,
       vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
-  napi_status addFinalizer(
-      napi_value object,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_ref *result) noexcept;
-
-  napi_status wrapObject(
-      napi_value object,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_ref *result) noexcept;
-
-  napi_status
-  unwrapObject(napi_value object, UnwrapAction action, void **result) noexcept;
-
   const vm::PinnedHermesValue &getPredefined(
       NapiPredefined predefinedKey) noexcept;
 
@@ -1188,27 +1109,6 @@ struct NodeApiEnvironment {
       IfNotFound ifNotFound,
       ExternalValue **result) noexcept;
 
-  napi_status createStrongReference(
-      napi_value value,
-      napi_ext_ref *result) noexcept;
-
-  napi_status createStrongReferenceWithData(
-      napi_value value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_ext_ref *result) noexcept;
-
-  napi_status createWeakReference(
-      napi_value value,
-      napi_ext_ref *result) noexcept;
-
-  napi_status incReference(napi_ext_ref ref) noexcept;
-
-  napi_status decReference(napi_ext_ref ref) noexcept;
-
-  napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
-
   vm::Runtime &runtime() noexcept;
 
   struct RuntimeAccessor : vm::Runtime {
@@ -1238,7 +1138,7 @@ struct NodeApiEnvironment {
   /// The default setting of "emit async break check" in this runtime.
   bool defaultEmitAsyncBreakCheck_{false};
 
-  std::atomic<int> refCount{1};
+  std::atomic<int> refCount_{1};
 
   vm::PinnedHermesValue lastException_{EmptyHermesValue};
   std::array<
@@ -1258,6 +1158,22 @@ struct NodeApiEnvironment {
 
   int openHandleScopes_{};
   int openCallbackScopes_{};
+
+  // We store references in two different lists, depending on whether they
+  // have `napi_finalizer` callbacks, because we must first finalize the
+  // ones that have such a callback. See `~NodeApiEnvironment()` above for
+  // details.
+  LinkedList<Reference> gcRoots_{};
+  LinkedList<Reference> finalizingGCRoots_{};
+  LinkedList<Finalizer> finalizerQueue_{};
+  bool isRunningFinalizers_{};
+
+  std::string lastErrorMessage_;
+  napi_extended_error_info lastError_{"", 0, 0, napi_ok};
+  int openCallbackScopeCount_{};
+  InstanceData *instanceData_{};
+
+  llvh::SmallVector<OrderedSet *, 16> orderedSets_;
 
   NodeApiEnvironment &env{*this};
 };
@@ -2188,12 +2104,12 @@ NodeApiEnvironment::~NodeApiEnvironment() {
 }
 
 napi_status NodeApiEnvironment::incRefCount() noexcept {
-  refCount++;
+  refCount_++;
   return napi_status::napi_ok;
 }
 
 napi_status NodeApiEnvironment::decRefCount() noexcept {
-  if (--refCount == 0) {
+  if (--refCount_ == 0) {
     delete this;
   }
   return napi_status::napi_ok;
