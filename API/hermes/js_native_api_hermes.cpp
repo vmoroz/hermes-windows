@@ -955,7 +955,6 @@ struct NodeApiEnvironment final {
   static vm::Handle<vm::JSObject> toObjectHandle(
       const vm::PinnedHermesValue *value) noexcept;
   static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
-  static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
@@ -2434,7 +2433,7 @@ napi_status NodeApiEnvironment::createError(
     CHECK_STATUS(vm::JSError::setMessage(
         vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
-        stringHandle(msg)));
+        makeHandle(msg)));
     // TODO:
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
@@ -2459,7 +2458,7 @@ napi_status NodeApiEnvironment::createTypeError(
     CHECK_STATUS(vm::JSError::setMessage(
         vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
-        stringHandle(msg)));
+        makeHandle(msg)));
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
     *result = addStackValue(err_phv);
@@ -2483,7 +2482,7 @@ napi_status NodeApiEnvironment::createRangeError(
     CHECK_STATUS(vm::JSError::setMessage(
         vm::Handle<vm::JSError>::vmcast(&err_phv),
         &runtime_,
-        stringHandle(msg)));
+        makeHandle(msg)));
     // TODO:
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
@@ -2595,7 +2594,7 @@ napi_status NodeApiEnvironment::getValueStringLatin1(
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
     vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, stringHandle(value)->getString());
+        &runtime_, makeHandle(value)->getString());
     auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
@@ -2627,7 +2626,7 @@ napi_status NodeApiEnvironment::getValueStringUtf8(
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
     vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, stringHandle(value)->getString());
+        &runtime_, makeHandle(value)->getString());
     auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
@@ -2666,7 +2665,7 @@ napi_status NodeApiEnvironment::getValueStringUtf16(
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
     vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, stringHandle(value)->getString());
+        &runtime_, makeHandle(value)->getString());
     auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
 
     if (!buf) {
@@ -5515,11 +5514,6 @@ vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
 vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::JSArray>::vmcast(phv(value));
-}
-
-vm::Handle<vm::HermesValue> NodeApiEnvironment::stringHandle(
-    napi_value value) noexcept {
-  return vm::Handle<vm::HermesValue>::vmcast(phv(value));
 }
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
