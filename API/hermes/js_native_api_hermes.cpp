@@ -859,9 +859,8 @@ struct NodeApiEnvironment final {
       void *bufferHint) noexcept;
 
  public:
-  template <class TObject>
   napi_status convertToObject(
-      TObject object,
+      napi_value object,
       vm::MutableHandle<vm::JSObject> *result) noexcept;
 
   template <class TKey, class TValue>
@@ -2721,7 +2720,6 @@ napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
     return getForInPropertyNames(
@@ -2736,7 +2734,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
     RETURN_STATUS_IF_FALSE(
@@ -2913,7 +2910,6 @@ napi_status NodeApiEnvironment::setProperty(
     napi_value key,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(key);
     CHECK_ARG(value);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
@@ -2927,7 +2923,6 @@ napi_status NodeApiEnvironment::hasProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(key);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -2940,7 +2935,6 @@ napi_status NodeApiEnvironment::getProperty(
     napi_value key,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(key);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -2953,7 +2947,6 @@ napi_status NodeApiEnvironment::deleteProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(key);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -2966,7 +2959,6 @@ napi_status NodeApiEnvironment::hasOwnProperty(
     napi_value key,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(key);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -2982,7 +2974,6 @@ napi_status NodeApiEnvironment::setNamedProperty(
     const char *utf8Name,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     CHECK_ARG(value);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
@@ -2998,7 +2989,6 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     const char *utf8Name,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     napi_value name;
@@ -3013,7 +3003,6 @@ napi_status NodeApiEnvironment::getNamedProperty(
     const char *utf8Name,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     napi_value name;
@@ -3028,7 +3017,6 @@ napi_status NodeApiEnvironment::setElement(
     uint32_t index,
     napi_value value) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(value);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -3041,7 +3029,6 @@ napi_status NodeApiEnvironment::hasElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
     return hasComputed(objHandle, index, result);
@@ -3053,7 +3040,6 @@ napi_status NodeApiEnvironment::getElement(
     uint32_t index,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
     return getComputed(objHandle, index, result);
@@ -3065,7 +3051,6 @@ napi_status NodeApiEnvironment::deleteElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
     return deleteComputed(objHandle, index, result);
@@ -4390,7 +4375,6 @@ napi_status NodeApiEnvironment::typeTagObject(
     napi_value object,
     const napi_type_tag *typeTag) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(object);
     CHECK_ARG(typeTag);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
@@ -5343,10 +5327,10 @@ napi_status NodeApiEnvironment::setResultUnsafe(
   return setResultUnsafe(std::move(*value), result);
 }
 
-template <class TObject>
 napi_status NodeApiEnvironment::convertToObject(
-    TObject object,
+    napi_value object,
     vm::MutableHandle<vm::JSObject> *result) noexcept {
+      CHECK_ARG(object);
   vm::CallResult<vm::HermesValue> obj =
       vm::toObject(&runtime_, makeHandle(object));
   CHECK_HERMES_STATUS(obj.getStatus(), napi_object_expected);
