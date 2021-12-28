@@ -900,9 +900,6 @@ struct NodeApiEnvironment final {
   template <class T>
   vm::MutableHandle<T> makeMutableHandle() noexcept;
 
-  vm::CallResult<vm::Handle<vm::JSObject>> convertToObject(
-      vm::Handle<> value) noexcept;
-
   napi_status convertKeyStorageToArray(
       vm::Handle<vm::BigStorage> keyStorage,
       uint32_t startIndex,
@@ -970,6 +967,7 @@ struct NodeApiEnvironment final {
       vm::HermesValue value,
       napi_value *result) noexcept;
   napi_status setResultUnsafe(vm::SymbolID value, napi_value *result) noexcept;
+  napi_status setResultUnsafe(bool value, napi_value *result) noexcept;
   template <class T>
   napi_status setResultUnsafe(
       vm::Handle<T> &&handle,
@@ -2677,10 +2675,7 @@ napi_status NodeApiEnvironment::coerceToBool(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
-    bool res = vm::toBoolean(*phv(value));
-    CHECK_NAPI(getBoolean(res, result));
-    return clearLastError();
+    return setResult(vm::toBoolean(*phv(value)), result);
   });
 }
 
@@ -2689,11 +2684,7 @@ napi_status NodeApiEnvironment::coerceToNumber(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
-    auto res = vm::toNumber_RJS(&runtime_, makeHandle(value));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    return setResult(vm::toNumber_RJS(&runtime_, makeHandle(value)), result);
   });
 }
 
@@ -2702,11 +2693,7 @@ napi_status NodeApiEnvironment::coerceToObject(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
-    auto res = vm::toObject(&runtime_, makeHandle(value));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    return setResult(vm::toObject(&runtime_, makeHandle(value)), result);
   });
 }
 
@@ -2750,10 +2737,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(object);
-    ASSIGN_ELSE_RETURN_STATUS(
-        vm::Handle<vm::JSObject> objHandle /*=*/,
-        convertToObject(makeHandle(object)),
-        /*else return*/ napi_object_expected);
+    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
+    CHECK_NAPI(convertToObject(object, &objHandle));
     RETURN_STATUS_IF_FALSE(
         isInEnumRange(keyMode, napi_key_include_prototypes, napi_key_own_only),
         napi_invalid_arg);
@@ -4409,9 +4394,8 @@ napi_status NodeApiEnvironment::typeTagObject(
   return handleExceptions([&] {
     CHECK_ARG(object);
     CHECK_ARG(typeTag);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, makeHandle(object)));
-    auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
+    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
+    CHECK_NAPI(convertToObject(object, &objHandle));
     ASSIGN_ELSE_RETURN_FAILURE(
         auto hasTag, hasPrivate(objHandle, NapiPredefined::TypeTagSymbol));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
@@ -5171,13 +5155,6 @@ napi_status NodeApiEnvironment::newFunction(
   return clearLastError();
 }
 
-vm::CallResult<vm::Handle<vm::JSObject>> NodeApiEnvironment::convertToObject(
-    vm::Handle<> value) noexcept {
-  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
-      vm::HermesValue obj /*=*/, vm::toObject(&runtime_, value));
-  return vm::Handle<vm::JSObject>::vmcast(&runtime_, obj);
-}
-
 vm::Handle<> NodeApiEnvironment::makeHandle(
     const vm::PinnedHermesValue *value) noexcept {
   return vm::Handle<>(value);
@@ -5322,6 +5299,12 @@ napi_status NodeApiEnvironment::setResultUnsafe(
     vm::SymbolID value,
     napi_value *result) noexcept {
   return setResultUnsafe(vm::HermesValue::encodeSymbolValue(value), result);
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    bool value,
+    napi_value *result) noexcept {
+  return setResultUnsafe(vm::HermesValue::encodeBoolValue(value), result);
 }
 
 template <class T>
