@@ -3883,12 +3883,10 @@ napi_status NodeApiEnvironment::getArrayBufferInfo(
 
   vm::JSArrayBuffer *buffer = vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
   if (data != nullptr) {
-    // TODO: make it right for attached data blocks
     *data = buffer->attached() ? buffer->getDataBlock() : nullptr;
   }
 
   if (byteLength != nullptr) {
-    // TODO: make it right for attached data blocks
     *byteLength = buffer->attached() ? buffer->size() : 0;
   }
 
