@@ -1112,7 +1112,10 @@ struct NodeApiEnvironment final {
   vm::Runtime &runtime() noexcept;
 
   struct RuntimeAccessor : vm::Runtime {
-    using vm::Runtime::nullPointer_;
+    using vm::Runtime::falseValue_;
+    using vm::Runtime::nullValue_;
+    using vm::Runtime::trueValue_;
+    using vm::Runtime::undefinedValue_;
   };
   RuntimeAccessor &runtimeAccessor() noexcept {
     return static_cast<RuntimeAccessor &>(runtime_);
@@ -3654,12 +3657,6 @@ napi_status NodeApiEnvironment::createNumber(
       vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
 }
 
-napi_status NodeApiEnvironment::getBoolean(
-    bool value,
-    napi_value *result) noexcept {
-  return setResult(runtime_.getBoolValue(value).getHermesValue(), result);
-}
-
 napi_status NodeApiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
@@ -3794,17 +3791,20 @@ napi_status NodeApiEnvironment::typeOf(
 }
 
 napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_ARG(result);
-  *result = addStackValue(runtime_.getUndefinedValue().getHermesValue());
-  return clearLastError();
+  return setResult(napiValue(&runtimeAccessor().undefinedValue_), result);
 }
 
 napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_ARG(result);
-  *result = addStackValue(runtime_.getNullValue().getHermesValue());
-  return clearLastError();
+  return setResult(napiValue(&runtimeAccessor().nullValue_), result);
+}
+
+napi_status NodeApiEnvironment::getBoolean(
+    bool value,
+    napi_value *result) noexcept {
+  return setResult(
+      value ? napiValue(&runtimeAccessor().trueValue_)
+            : napiValue(&runtimeAccessor().falseValue_),
+      result);
 }
 
 napi_status NodeApiEnvironment::getCallbackInfo(
