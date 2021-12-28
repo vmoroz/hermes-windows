@@ -2728,12 +2728,9 @@ napi_status NodeApiEnvironment::getPrototype(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_ARG(result);
-    auto res = vm::JSObject::getPrototypeOf(
-        vm::PseudoHandle<vm::JSObject>(toObjectHandle(object)), &runtime_);
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(res->getHermesValue());
-    return clearLastError();
+    return setResult(
+        vm::JSObject::getPrototypeOf(toObjectHandle(object), &runtime_),
+        result);
   });
 }
 
