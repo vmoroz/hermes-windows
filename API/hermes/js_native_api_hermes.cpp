@@ -935,8 +935,6 @@ struct NodeApiEnvironment final {
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
 
-  vm::Handle<> toHandle(napi_value value) noexcept;
-
   napi_status genericFailure(const char *message) noexcept;
 
   vm::WeakRoot<vm::JSObject> createWeakRoot(vm::JSObject *object) noexcept;
@@ -958,7 +956,6 @@ struct NodeApiEnvironment final {
       const vm::PinnedHermesValue *value) noexcept;
   static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
   static vm::Handle<vm::HermesValue> stringHandle(napi_value value) noexcept;
-  vm::Handle<vm::HermesValue> toHandle(const vm::HermesValue &value) noexcept;
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
@@ -2708,7 +2705,7 @@ napi_status NodeApiEnvironment::coerceToNumber(
   return handleExceptions([&] {
     CHECK_ARG(value);
     CHECK_ARG(result);
-    auto res = vm::toNumber_RJS(&runtime_, toHandle(value));
+    auto res = vm::toNumber_RJS(&runtime_, makeHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
     return clearLastError();
@@ -2721,7 +2718,7 @@ napi_status NodeApiEnvironment::coerceToObject(
   return handleExceptions([&] {
     CHECK_ARG(value);
     CHECK_ARG(result);
-    auto res = vm::toObject(&runtime_, toHandle(value));
+    auto res = vm::toObject(&runtime_, makeHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(*res);
     return clearLastError();
@@ -2734,7 +2731,7 @@ napi_status NodeApiEnvironment::coerceToString(
   return handleExceptions([&] {
     CHECK_ARG(value);
     CHECK_ARG(result);
-    auto res = vm::toString_RJS(&runtime_, toHandle(value));
+    auto res = vm::toString_RJS(&runtime_, makeHandle(value));
     CHECK_STATUS(res.getStatus());
     *result = addStackValue(vm::HermesValue::encodeStringValue(res->get()));
     return clearLastError();
@@ -3170,7 +3167,7 @@ napi_status NodeApiEnvironment::defineProperties(
                          &runtime_,
                          name.get(),
                          dpFlags,
-                         toHandle(*propRes),
+                         makeHandle(*propRes),
                          vm::PropOpFlags().plusThrowOnError())
                          .getStatus());
       } else if (p->method != nullptr) {
@@ -3181,7 +3178,7 @@ napi_status NodeApiEnvironment::defineProperties(
                          &runtime_,
                          name.get(),
                          dpFlags,
-                         toHandle(method),
+                         makeHandle(method),
                          vm::PropOpFlags().plusThrowOnError())
                          .getStatus());
       } else {
@@ -3190,7 +3187,7 @@ napi_status NodeApiEnvironment::defineProperties(
                          &runtime_,
                          name.get(),
                          dpFlags,
-                         toHandle(p->value),
+                         makeHandle(p->value),
                          vm::PropOpFlags().plusThrowOnError())
                          .getStatus());
       }
@@ -4437,7 +4434,7 @@ napi_status NodeApiEnvironment::typeTagObject(
     CHECK_ARG(object);
     CHECK_ARG(typeTag);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
+        auto obj, vm::toObject(&runtime_, makeHandle(object)));
     auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
     ASSIGN_ELSE_RETURN_FAILURE(
         auto hasTag, hasPrivate(objHandle, NapiPredefined::TypeTagSymbol));
@@ -4471,7 +4468,7 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     CHECK_ARG(typeTag);
     CHECK_ARG(result);
     ASSIGN_ELSE_RETURN_FAILURE(
-        auto obj, vm::toObject(&runtime_, toHandle(object)));
+        auto obj, vm::toObject(&runtime_, makeHandle(object)));
     auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
     ASSIGN_ELSE_RETURN_FAILURE(
         auto tagHV, getPrivate(objHandle, NapiPredefined::TypeTagSymbol));
@@ -5027,7 +5024,7 @@ vm::CallResult<bool> NodeApiEnvironment::setPrivate(
       objHandle,
       &runtime_,
       name,
-      toHandle(value),
+      makeHandle(value),
       vm::PropOpFlags().plusThrowOnError());
 }
 
@@ -5523,29 +5520,6 @@ vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
 vm::Handle<vm::HermesValue> NodeApiEnvironment::stringHandle(
     napi_value value) noexcept {
   return vm::Handle<vm::HermesValue>::vmcast(phv(value));
-}
-
-vm::Handle<vm::HermesValue> NodeApiEnvironment::toHandle(
-    const vm::HermesValue &value) noexcept {
-  return runtime_.makeHandle(value);
-}
-
-vm::Handle<> NodeApiEnvironment::toHandle(napi_value value) noexcept {
-  auto &hv = *phv(value);
-  if (hv.isUndefined()) {
-    return vm::Runtime::getUndefinedValue();
-  } else if (hv.isNull()) {
-    return vm::Runtime::getNullValue();
-  } else if (hv.isBool()) {
-    return vm::Runtime::getBoolValue(hv.getBool());
-  } else if (hv.isNumber()) {
-    return runtime_.makeHandle(
-        vm::HermesValue::encodeUntrustedDoubleValue(hv.getNumber()));
-  } else if (hv.isSymbol() || hv.isString() || hv.isObject()) {
-    return vm::Handle<vm::HermesValue>(&hv);
-  } else {
-    llvm_unreachable("unknown value kind");
-  }
 }
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
