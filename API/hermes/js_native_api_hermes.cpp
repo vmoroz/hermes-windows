@@ -1113,6 +1113,7 @@ struct NodeApiEnvironment final {
 
   struct RuntimeAccessor : vm::Runtime {
     using vm::Runtime::falseValue_;
+    using vm::Runtime::global_;
     using vm::Runtime::nullValue_;
     using vm::Runtime::trueValue_;
     using vm::Runtime::undefinedValue_;
@@ -2104,6 +2105,112 @@ NodeApiEnvironment::~NodeApiEnvironment() {
   CRASH_IF_FALSE(finalizerQueue_.isEmpty());
   CRASH_IF_FALSE(finalizingGCRoots_.isEmpty());
   CRASH_IF_FALSE(gcRoots_.isEmpty());
+}
+
+napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
+  return setResult(napiValue(&runtimeAccessor().undefinedValue_), result);
+}
+
+napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
+  return setResult(napiValue(&runtimeAccessor().nullValue_), result);
+}
+
+napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
+  return setResult(napiValue(&runtimeAccessor().global_), result);
+}
+
+napi_status NodeApiEnvironment::getBoolean(
+    bool value,
+    napi_value *result) noexcept {
+  return setResult(
+      value ? napiValue(&runtimeAccessor().trueValue_)
+            : napiValue(&runtimeAccessor().falseValue_),
+      result);
+}
+
+napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
+  return handleExceptions(
+      [&] { return setResult(vm::JSObject::create(&runtime_), result); });
+}
+
+napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
+  return handleExceptions([&] {
+    return setResult(
+        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0), result);
+  });
+}
+
+napi_status NodeApiEnvironment::createArray(
+    size_t length,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    return setResult(
+        vm::JSArray::create(
+            &runtime_, /*capacity:*/ length, /*length:*/ length),
+        result);
+  });
+}
+
+template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
+napi_status NodeApiEnvironment::createNumber(
+    T value,
+    napi_value *result) noexcept {
+  return setResult(
+      vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
+}
+
+napi_status NodeApiEnvironment::createStringLatin1(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(str);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char>::length(str);
+    }
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/, stringHVFromLatin1(str, length));
+    return setResult(std::move(res), result);
+  });
+}
+
+napi_status NodeApiEnvironment::createStringUtf8(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(str);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char>::length(str);
+    }
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/,
+        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length));
+    return setResult(res, result);
+  });
+}
+
+napi_status NodeApiEnvironment::createStringUtf16(
+    const char16_t *str,
+    size_t length,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(str);
+    if (length == NAPI_AUTO_LENGTH) {
+      length = std::char_traits<char16_t>::length(str);
+    }
+    RETURN_STATUS_IF_FALSE(
+        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
+    ASSIGN_ELSE_RETURN_FAILURE(
+        vm::HermesValue res /*=*/,
+        vm::StringPrimitive::createEfficient(
+            &runtime_, llvh::makeArrayRef(str, length)));
+    return setResult(res, result);
+  });
 }
 
 napi_status NodeApiEnvironment::incRefCount() noexcept {
@@ -3474,31 +3581,6 @@ napi_status NodeApiEnvironment::getPrototype(
   });
 }
 
-napi_status NodeApiEnvironment::createObject(napi_value *result) noexcept {
-  return handleExceptions(
-      [&] { return setResult(vm::JSObject::create(&runtime_), result); });
-}
-
-napi_status NodeApiEnvironment::createArray(napi_value *result) noexcept {
-  return handleExceptions([&] {
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::Handle<vm::JSArray> arrHandle /*=*/,
-        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0));
-    return setResult(std::move(arrHandle), result);
-  });
-}
-
-napi_status NodeApiEnvironment::createArray(
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::Handle<vm::JSArray> arrHandle /*=*/,
-        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ length));
-    return setResult(std::move(arrHandle), result);
-  });
-}
-
 napi_status NodeApiEnvironment::isArray(
     napi_value value,
     bool *result) noexcept {
@@ -3574,59 +3656,6 @@ napi_status NodeApiEnvironment::deleteElement(
   });
 }
 
-napi_status NodeApiEnvironment::createStringLatin1(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/, stringHVFromLatin1(str, length));
-    return setResult(std::move(res), result);
-  });
-}
-
-napi_status NodeApiEnvironment::createStringUtf8(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/,
-        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length));
-    return setResult(res, result);
-  });
-}
-
-napi_status NodeApiEnvironment::createStringUtf16(
-    const char16_t *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char16_t>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/,
-        vm::StringPrimitive::createEfficient(
-            &runtime_, llvh::makeArrayRef(str, length)));
-    return setResult(res, result);
-  });
-}
 
 napi_status NodeApiEnvironment::createSymbolID(
     const char *str,
@@ -3649,13 +3678,6 @@ napi_status NodeApiEnvironment::createSymbolID(
   return napi_ok;
 }
 
-template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
-napi_status NodeApiEnvironment::createNumber(
-    T value,
-    napi_value *result) noexcept {
-  return setResult(
-      vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
-}
 
 napi_status NodeApiEnvironment::createSymbol(
     napi_value description,
@@ -3790,23 +3812,6 @@ napi_status NodeApiEnvironment::typeOf(
   return clearLastError();
 }
 
-napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
-  return setResult(napiValue(&runtimeAccessor().undefinedValue_), result);
-}
-
-napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
-  return setResult(napiValue(&runtimeAccessor().nullValue_), result);
-}
-
-napi_status NodeApiEnvironment::getBoolean(
-    bool value,
-    napi_value *result) noexcept {
-  return setResult(
-      value ? napiValue(&runtimeAccessor().trueValue_)
-            : napiValue(&runtimeAccessor().falseValue_),
-      result);
-}
-
 napi_status NodeApiEnvironment::getCallbackInfo(
     CallbackInfo *callbackInfo,
     size_t *argCount,
@@ -3893,13 +3898,6 @@ napi_status NodeApiEnvironment::callFunction(
     }
     return clearLastError();
   });
-}
-
-napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_ARG(result);
-  *result = addStackValue(runtime_.getGlobal().getHermesValue());
-  return clearLastError();
 }
 
 napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
