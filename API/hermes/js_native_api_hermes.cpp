@@ -11,7 +11,6 @@
 // TODO: Fix references for Unwrap
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
-// TODO: stop using private Runtime fields
 
 #define NAPI_EXPERIMENTAL
 
@@ -1112,17 +1111,6 @@ struct NodeApiEnvironment final {
 
   vm::Runtime &runtime() noexcept;
 
-  struct RuntimeAccessor : vm::Runtime {
-    using vm::Runtime::falseValue_;
-    using vm::Runtime::global_;
-    using vm::Runtime::nullValue_;
-    using vm::Runtime::trueValue_;
-    using vm::Runtime::undefinedValue_;
-  };
-  RuntimeAccessor &runtimeAccessor() noexcept {
-    return static_cast<RuntimeAccessor &>(runtime_);
-  }
-
  private:
 #ifdef HERMESJSI_ON_STACK
   StackRuntime stackRuntime_;
@@ -2111,23 +2099,26 @@ NodeApiEnvironment::~NodeApiEnvironment() {
 }
 
 napi_status NodeApiEnvironment::getUndefined(napi_value *result) noexcept {
-  return setResult(napiValue(&runtimeAccessor().undefinedValue_), result);
+  return setResult(
+      napiValue(runtime_.getUndefinedValue().unsafeGetPinnedHermesValue()),
+      result);
 }
 
 napi_status NodeApiEnvironment::getNull(napi_value *result) noexcept {
-  return setResult(napiValue(&runtimeAccessor().nullValue_), result);
+  return setResult(
+      napiValue(runtime_.getNullValue().unsafeGetPinnedHermesValue()), result);
 }
 
 napi_status NodeApiEnvironment::getGlobal(napi_value *result) noexcept {
-  return setResult(napiValue(&runtimeAccessor().global_), result);
+  return setResult(
+      napiValue(runtime_.getGlobal().unsafeGetPinnedHermesValue()), result);
 }
 
 napi_status NodeApiEnvironment::getBoolean(
     bool value,
     napi_value *result) noexcept {
   return setResult(
-      value ? napiValue(&runtimeAccessor().trueValue_)
-            : napiValue(&runtimeAccessor().falseValue_),
+      napiValue(runtime_.getBoolValue(value).unsafeGetPinnedHermesValue()),
       result);
 }
 
