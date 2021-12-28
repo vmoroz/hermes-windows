@@ -1040,21 +1040,17 @@ struct NodeApiEnvironment final {
 
   napi_status runReferenceFinalizers() noexcept;
 
-  vm::CallResult<vm::HermesValue> stringHVFromAscii(
-      const char *str,
-      size_t length) noexcept;
-  vm::CallResult<vm::HermesValue> stringHVFromLatin1(
-      const char *str,
-      size_t length) noexcept;
-  vm::CallResult<vm::HermesValue> stringHVFromUtf8(
-      const uint8_t *utf8,
-      size_t length) noexcept;
-  vm::CallResult<vm::HermesValue> stringHVFromUtf8(const char *utf8) noexcept;
-  napi_status stringHVFromUtf8(
-      const uint8_t *utf8,
+  napi_status
+  stringFromAscii(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status
+  stringFromLatin1(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status
+  stringFromUtf8(const char *utf8, size_t length, napi_value *result) noexcept;
+  napi_status stringFromUtf8(const char *utf8, napi_value *result) noexcept;
+  static void convertUtf8ToUtf16(
+      const char *utf8,
       size_t length,
-      vm::Handle<> *result) noexcept;
-  napi_status stringHVFromUtf8(const char *utf8, vm::Handle<> *result) noexcept;
+      std::u16string &out) noexcept;
 
   napi_value addStackValue(vm::HermesValue value) noexcept;
   napi_value toNapiValue(const vm::PinnedHermesValue &value) noexcept;
@@ -2170,9 +2166,7 @@ napi_status NodeApiEnvironment::createStringLatin1(
     }
     RETURN_STATUS_IF_FALSE(
         length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/, stringHVFromLatin1(str, length));
-    return setResult(std::move(res), result);
+    return stringFromLatin1(str, length, result);
   });
 }
 
@@ -2187,10 +2181,7 @@ napi_status NodeApiEnvironment::createStringUtf8(
     }
     RETURN_STATUS_IF_FALSE(
         length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/,
-        stringHVFromUtf8(reinterpret_cast<const uint8_t *>(str), length));
-    return setResult(res, result);
+    return stringFromUtf8(str, length, result);
   });
 }
 
@@ -2205,11 +2196,10 @@ napi_status NodeApiEnvironment::createStringUtf16(
     }
     RETURN_STATUS_IF_FALSE(
         length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::HermesValue res /*=*/,
+    return setResult(
         vm::StringPrimitive::createEfficient(
-            &runtime_, llvh::makeArrayRef(str, length)));
-    return setResult(res, result);
+            &runtime_, llvh::makeArrayRef(str, length)),
+        result);
   });
 }
 
@@ -2667,38 +2657,65 @@ napi_status NodeApiEnvironment::getExternalValue(
   });
 }
 
-vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromAscii(
+napi_status NodeApiEnvironment::stringFromAscii(
     const char *str,
-    size_t length) noexcept {
-  return vm::StringPrimitive::createEfficient(
-      &runtime_, llvh::makeArrayRef(str, length));
+    size_t length,
+    napi_value *result) noexcept {
+  return setResult(
+      vm::StringPrimitive::createEfficient(
+          &runtime_, llvh::makeArrayRef(str, length)),
+      result);
 }
 
-vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromLatin1(
+napi_status NodeApiEnvironment::stringFromLatin1(
     const char *str,
-    size_t length) noexcept {
+    size_t length,
+    napi_value *result) noexcept {
   if (isAllASCII(str, str + length)) {
-    return stringHVFromAscii(str, length);
+    return stringFromAscii(str, length, result);
   }
 
   // Latin1 has the same codes as Unicode. We just need to expand char to
   // char16_t.
-  std::u16string out(length, u' ');
+  std::u16string u16str(length, u' ');
   for (auto i = 0; i < length; ++i) {
-    out[i] = str[i];
+    u16str[i] = str[i];
   }
-  return vm::StringPrimitive::createEfficient(&runtime_, std::move(out));
+  return setResult(
+      vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
+      result);
 }
 
-static void convertUtf8ToUtf16(
-    const uint8_t *utf8,
+napi_status NodeApiEnvironment::stringFromUtf8(
+    const char *utf8,
+    napi_value *result) noexcept {
+  size_t length = std::char_traits<char>::length(utf8);
+  return stringFromUtf8(utf8, length, result);
+}
+
+napi_status NodeApiEnvironment::stringFromUtf8(
+    const char *utf8,
+    size_t length,
+    napi_value *result) noexcept {
+  if (isAllASCII(utf8, utf8 + length)) {
+    return stringFromAscii((const char *)utf8, length, result);
+  }
+  std::u16string utf16;
+  convertUtf8ToUtf16(utf8, length, utf16);
+  return setResult(
+      vm::StringPrimitive::createEfficient(&runtime_, std::move(utf16)),
+      result);
+}
+
+/*static*/ void NodeApiEnvironment::convertUtf8ToUtf16(
+    const char *utf8,
     size_t length,
     std::u16string &out) noexcept {
   // length is the number of input bytes
   out.resize(length);
-  const llvh::UTF8 *sourceStart = (const llvh::UTF8 *)utf8;
+  const llvh::UTF8 *sourceStart = reinterpret_cast<const llvh::UTF8 *>(utf8);
   const llvh::UTF8 *sourceEnd = sourceStart + length;
-  llvh::UTF16 *targetStart = (llvh::UTF16 *)&out[0];
+  llvh::UTF16 *targetStart = reinterpret_cast<llvh::UTF16 *>(&out[0]);
   llvh::UTF16 *targetEnd = targetStart + out.size();
   llvh::ConversionResult cRes;
   cRes = ConvertUTF8toUTF16(
@@ -2712,38 +2729,6 @@ static void convertUtf8ToUtf16(
       cRes != llvh::ConversionResult::targetExhausted &&
       "not enough space allocated for UTF16 conversion");
   out.resize((char16_t *)targetStart - &out[0]);
-}
-
-vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
-    const uint8_t *utf8,
-    size_t length) noexcept {
-  if (isAllASCII(utf8, utf8 + length)) {
-    return stringHVFromAscii((const char *)utf8, length);
-  }
-  std::u16string out;
-  convertUtf8ToUtf16(utf8, length, out);
-  return vm::StringPrimitive::createEfficient(&runtime_, std::move(out));
-}
-
-vm::CallResult<vm::HermesValue> NodeApiEnvironment::stringHVFromUtf8(
-    const char *utf8) noexcept {
-  size_t length = std::char_traits<char>::length(utf8);
-  return stringHVFromUtf8(reinterpret_cast<const uint8_t *>(utf8), length);
-}
-
-napi_status NodeApiEnvironment::stringHVFromUtf8(
-    const char *utf8,
-    vm::Handle<> *result) noexcept {
-  vm::CallResult<vm::HermesValue> res = stringHVFromUtf8(utf8);
-  return setResult(makeHandle(*res), result);
-}
-
-napi_status NodeApiEnvironment::stringHVFromUtf8(
-    const uint8_t *utf8,
-    size_t length,
-    vm::Handle<> *result) noexcept {
-  vm::CallResult<vm::HermesValue> res = stringHVFromUtf8(utf8, length);
-  return setResult(makeHandle(*res), result);
 }
 
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
@@ -3387,9 +3372,9 @@ napi_status NodeApiEnvironment::setNamedProperty(
     CHECK_ARG(utf8Name);
     CHECK_ARG(value);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    vm::Handle<> name(&runtime_);
+    napi_value name;
     CHECK_NAPI(convertToObject(object, &objHandle));
-    CHECK_NAPI(stringHVFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
     return putComputed(objHandle, name, value, nullptr);
   });
 }
@@ -3402,9 +3387,9 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    vm::Handle<> name(&runtime_);
+    napi_value name;
     CHECK_NAPI(convertToObject(object, &objHandle));
-    CHECK_NAPI(stringHVFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
     return hasComputed(objHandle, name, result);
   });
 }
@@ -3417,9 +3402,9 @@ napi_status NodeApiEnvironment::getNamedProperty(
     CHECK_ARG(object);
     CHECK_ARG(utf8Name);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    vm::Handle<> name(&runtime_);
+    napi_value name;
     CHECK_NAPI(convertToObject(object, &objHandle));
-    CHECK_NAPI(stringHVFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
     return getComputed(objHandle, name, result);
   });
 }
@@ -3656,7 +3641,6 @@ napi_status NodeApiEnvironment::deleteElement(
   });
 }
 
-
 napi_status NodeApiEnvironment::createSymbolID(
     const char *str,
     size_t length,
@@ -3677,7 +3661,6 @@ napi_status NodeApiEnvironment::createSymbolID(
           &runtime_, vm::createPseudoHandle(phv(str)->getString())));
   return napi_ok;
 }
-
 
 napi_status NodeApiEnvironment::createSymbol(
     napi_value description,
@@ -3914,8 +3897,9 @@ napi_status NodeApiEnvironment::throwError(
     const vm::PinnedHermesValue &prototype) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(message);
-    ASSIGN_ELSE_RETURN_FAILURE(auto messageHV, stringHVFromUtf8(message));
-    auto messageHandle = runtime_.makeHandle(messageHV);
+    napi_value messageHV;
+    CHECK_NAPI(stringFromUtf8(message, &messageHV));
+    auto messageHandle = makeHandle(messageHV);
 
     auto errorObj = runtime_.makeHandle(vm::JSError::create(
         &runtime_, runtime_.makeHandle<vm::JSObject>(prototype)));
@@ -3923,8 +3907,9 @@ napi_status NodeApiEnvironment::throwError(
     CHECK_STATUS(vm::JSError::setupStack(errorObj, &runtime_));
     CHECK_STATUS(vm::JSError::setMessage(errorObj, &runtime_, messageHandle));
     if (code) {
-      ASSIGN_ELSE_RETURN_FAILURE(auto codeHV, stringHVFromUtf8(code));
-      auto codeHandle = runtime_.makeHandle(codeHV);
+      napi_value codeHV;
+      CHECK_NAPI(stringFromUtf8(code, &codeHV));
+      auto codeHandle = makeHandle(codeHV);
       CHECK_STATUS(vm::JSObject::putNamed_RJS(
                        errorObj,
                        &runtime_,
