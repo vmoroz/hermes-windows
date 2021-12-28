@@ -1028,7 +1028,6 @@ struct NodeApiEnvironment final {
       std::u16string &out) noexcept;
 
   napi_value addStackValue(vm::HermesValue value) noexcept;
-  napi_value toNapiValue(const vm::PinnedHermesValue &value) noexcept;
   napi_status checkStatus(
       vm::ExecutionStatus hermesStatus,
       napi_status status) noexcept;
@@ -5165,12 +5164,6 @@ napi_status NodeApiEnvironment::stringFromUtf8(
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   stackValues_.emplaceBack(value);
   return reinterpret_cast<napi_value>(&stackValues_.back());
-}
-
-napi_value NodeApiEnvironment::toNapiValue(
-    const vm::PinnedHermesValue &value) noexcept {
-  return reinterpret_cast<napi_value>(
-      const_cast<vm::PinnedHermesValue *>(&value));
 }
 
 napi_status NodeApiEnvironment::checkStatus(
