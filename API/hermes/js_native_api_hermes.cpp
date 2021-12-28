@@ -954,7 +954,7 @@ struct NodeApiEnvironment final {
   static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
   static vm::Handle<vm::JSObject> toObjectHandle(
       const vm::PinnedHermesValue *value) noexcept;
-  static vm::Handle<vm::JSArray> toArrayHandle(napi_value value) noexcept;
+
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
@@ -5509,11 +5509,6 @@ vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
 vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
     const vm::PinnedHermesValue *value) noexcept {
   return vm::Handle<vm::JSObject>::vmcast(value);
-}
-
-vm::Handle<vm::JSArray> NodeApiEnvironment::toArrayHandle(
-    napi_value value) noexcept {
-  return vm::Handle<vm::JSArray>::vmcast(phv(value));
 }
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
