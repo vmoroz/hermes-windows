@@ -11,6 +11,7 @@
 // TODO: Fix references for Unwrap
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
+// TODO: stop using private Runtime fields
 
 #define NAPI_EXPERIMENTAL
 
@@ -168,9 +169,9 @@ namespace napi {
 
 // Forward declarations
 struct Finalizer;
+struct FunctionContext;
 struct HermesBuffer;
 struct InstanceData;
-struct HFContext;
 struct NodeApiEnvironment;
 struct Reference;
 struct OrderedSet;
@@ -429,7 +430,7 @@ Reference *asReference(void *ref) noexcept {
 } // namespace
 
 struct CallbackInfo final {
-  CallbackInfo(HFContext &context, vm::NativeArgs &hvArgs) noexcept
+  CallbackInfo(FunctionContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
 
   void args(napi_value *args, size_t *argCount) noexcept {
@@ -452,19 +453,22 @@ struct CallbackInfo final {
   }
 
  private:
-  HFContext &context_;
+  FunctionContext &context_;
   vm::NativeArgs &hvArgs_;
 };
 
-struct HFContext final {
-  HFContext(NodeApiEnvironment &env, napi_callback hostCallback, void *data)
+struct FunctionContext final {
+  FunctionContext(
+      NodeApiEnvironment &env,
+      napi_callback hostCallback,
+      void *data) noexcept
       : env_(env), hostCallback_(hostCallback), data_(data) {}
 
   static vm::CallResult<vm::HermesValue>
   func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
 
   static void finalize(void *context) {
-    delete reinterpret_cast<HFContext *>(context);
+    delete reinterpret_cast<FunctionContext *>(context);
   }
 
   NodeApiEnvironment &env_;
@@ -1007,6 +1011,7 @@ struct NodeApiEnvironment final {
   napi_status setResultUnsafe(
       vm::HermesValue value,
       napi_value *result) noexcept;
+  napi_status setResultUnsafe(vm::SymbolID value, napi_value *result) noexcept;
   template <class T>
   napi_status setResultUnsafe(
       vm::Handle<T> &&handle,
@@ -1865,9 +1870,11 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
   finalizers_.pushBack(finalizer);
 }
 
-/*static*/ vm::CallResult<vm::HermesValue>
-HFContext::func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
-  HFContext *hfc = reinterpret_cast<HFContext *>(context);
+/*static*/ vm::CallResult<vm::HermesValue> FunctionContext::func(
+    void *context,
+    vm::Runtime *runtime,
+    vm::NativeArgs hvArgs) {
+  FunctionContext *hfc = reinterpret_cast<FunctionContext *>(context);
   NodeApiEnvironment &env = hfc->env_;
   assert(runtime == &env.runtime());
   auto &stats = env.runtime().getRuntimeStats();
@@ -2200,6 +2207,112 @@ napi_status NodeApiEnvironment::createStringUtf16(
         vm::StringPrimitive::createEfficient(
             &runtime_, llvh::makeArrayRef(str, length)),
         result);
+  });
+}
+
+napi_status NodeApiEnvironment::createSymbol(
+    napi_value description,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
+    if (description) {
+      CHECK_STRING_ARG(description);
+      descString = phv(description)->getString();
+    } else {
+      // If description is undefined, the descString will eventually be "".
+      descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
+    }
+    return setResult(
+        runtime_.getIdentifierTable().createNotUniquedSymbol(
+            &runtime_, descString),
+        result);
+  });
+}
+
+napi_status NodeApiEnvironment::createFunction(
+    const char *utf8Name,
+    size_t length,
+    napi_callback callback,
+    void *callbackData,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    napi_value nameValue{};
+    CHECK_NAPI(createStringUtf8(utf8Name, length, &nameValue));
+    auto nameRes = vm::stringToSymbolID(
+        &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
+    CHECK_STATUS(nameRes.getStatus());
+    return newFunction(nameRes->get(), callback, callbackData, result);
+  });
+}
+
+napi_status NodeApiEnvironment::createError(
+    napi_value code,
+    napi_value msg,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(msg);
+    CHECK_ARG(result);
+
+    auto err = vm::JSError::create(
+        &runtime_, vm::Handle<vm::JSObject>::vmcast(&runtime_.ErrorPrototype));
+
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
+        &runtime_,
+        stringHandle(msg)));
+    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
+
+    *result = addStackValue(err_phv);
+    return clearLastError();
+  });
+}
+
+napi_status NodeApiEnvironment::createTypeError(
+    napi_value code,
+    napi_value msg,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(msg);
+    CHECK_ARG(result);
+
+    auto err = vm::JSError::create(
+        &runtime_,
+        vm::Handle<vm::JSObject>::vmcast(&runtime_.TypeErrorPrototype));
+
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
+        &runtime_,
+        stringHandle(msg)));
+    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
+
+    *result = addStackValue(err_phv);
+    return clearLastError();
+  });
+}
+
+napi_status NodeApiEnvironment::createRangeError(
+    napi_value code,
+    napi_value msg,
+    napi_value *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(msg);
+    CHECK_ARG(result);
+
+    auto err = vm::JSError::create(
+        &runtime_,
+        vm::Handle<vm::JSObject>::vmcast(&runtime_.RangeErrorPrototype));
+
+    vm::PinnedHermesValue err_phv{err.getHermesValue()};
+    CHECK_STATUS(vm::JSError::setMessage(
+        vm::Handle<vm::JSError>::vmcast(&err_phv),
+        &runtime_,
+        stringHandle(msg)));
+    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
+
+    *result = addStackValue(err_phv);
+    return clearLastError();
   });
 }
 
@@ -2759,35 +2872,19 @@ napi_status NodeApiEnvironment::newFunction(
     napi_callback callback,
     void *callbackData,
     napi_value *result) noexcept {
-  auto context = std::make_unique<HFContext>(*this, callback, callbackData);
+  auto context =
+      std::make_unique<FunctionContext>(*this, callback, callbackData);
   auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
       &runtime_,
       context.get(),
-      &HFContext::func,
-      &HFContext::finalize,
+      &FunctionContext::func,
+      &FunctionContext::finalize,
       name,
       /*paramCount:*/ 0);
   CHECK_STATUS(funcRes.getStatus());
   context.release();
   *result = addStackValue(*funcRes);
   return clearLastError();
-}
-
-napi_status NodeApiEnvironment::createFunction(
-    const char *utf8Name,
-    size_t length,
-    napi_callback callback,
-    void *callbackData,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    napi_value nameValue{};
-    CHECK_NAPI(createStringUtf8(utf8Name, length, &nameValue));
-    auto nameRes = vm::stringToSymbolID(
-        &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
-    CHECK_STATUS(nameRes.getStatus());
-    CHECK_NAPI(newFunction(nameRes->get(), callback, callbackData, result));
-    return clearLastError();
-  });
 }
 
 napi_status NodeApiEnvironment::defineClass(
@@ -3184,6 +3281,12 @@ napi_status NodeApiEnvironment::setResultUnsafe(
     napi_value *result) noexcept {
   *result = addStackValue(value);
   return clearLastError();
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::SymbolID value,
+    napi_value *result) noexcept {
+  return setResultUnsafe(vm::HermesValue::encodeSymbolValue(value), result);
 }
 
 template <class T>
@@ -3660,99 +3763,6 @@ napi_status NodeApiEnvironment::createSymbolID(
       vm::stringToSymbolID(
           &runtime_, vm::createPseudoHandle(phv(str)->getString())));
   return napi_ok;
-}
-
-napi_status NodeApiEnvironment::createSymbol(
-    napi_value description,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(result);
-    vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
-    if (description) {
-      CHECK_STRING_ARG(description);
-      descString = phv(description)->getString();
-    } else {
-      // If description is undefined, the descString will eventually be "".
-      descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
-    }
-
-    auto symbolRes = runtime_.getIdentifierTable().createNotUniquedSymbol(
-        &runtime_, descString);
-    CHECK_STATUS(symbolRes.getStatus());
-    *result = addStackValue(vm::HermesValue::encodeSymbolValue(*symbolRes));
-    return clearLastError();
-  });
-}
-
-napi_status NodeApiEnvironment::createError(
-    napi_value code,
-    napi_value msg,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_, vm::Handle<vm::JSObject>::vmcast(&runtime_.ErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        stringHandle(msg)));
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
-  });
-}
-
-napi_status NodeApiEnvironment::createTypeError(
-    napi_value code,
-    napi_value msg,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_,
-        vm::Handle<vm::JSObject>::vmcast(&runtime_.TypeErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        stringHandle(msg)));
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
-  });
-}
-
-napi_status NodeApiEnvironment::createRangeError(
-    napi_value code,
-    napi_value msg,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_,
-        vm::Handle<vm::JSObject>::vmcast(&runtime_.RangeErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        stringHandle(msg)));
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
-  });
 }
 
 napi_status NodeApiEnvironment::typeOf(
