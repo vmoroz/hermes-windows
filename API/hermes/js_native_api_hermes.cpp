@@ -2769,10 +2769,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // We can use optimized code if object has no parent.
     bool hasParent;
     {
-      ASSIGN_ELSE_RETURN_FAILURE(
-          vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
-          vm::JSObject::getPrototypeOf(objHandle, &runtime_));
-      hasParent = parentObj.get();
+      napi_value parent;
+      CHECK_NAPI(getPrototype(object, &parent));
+      hasParent = phv(parent)->isObject();
     }
 
     // The fast path used for the 'for..in' implementation.
@@ -2904,10 +2903,9 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       }
 
       // Continue to follow the prototype chain.
-      ASSIGN_ELSE_RETURN_FAILURE(
-          vm::PseudoHandle<vm::JSObject> parentObj /*=*/,
-          vm::JSObject::getPrototypeOf(currentObj, &runtime_));
-      currentObj = parentObj.get();
+      napi_value parent;
+      CHECK_NAPI(getPrototype(object, &parent));
+      currentObj = toObjectHandle(parent);
     }
 
     return convertKeyStorageToArray(keyStorage, 0, size, keyConversion, result);
