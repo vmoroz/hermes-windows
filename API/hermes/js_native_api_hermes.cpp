@@ -96,10 +96,6 @@ using ::hermes::hermesLog;
 #define CHECK_OBJECT_ARG(arg) \
   CHECK_TYPED_ARG((arg), isObject, napi_object_expected)
 
-#define CHECK_EXTERNAL_ARG(arg) \
-  CHECK_ARG(arg);               \
-  RETURN_STATUS_IF_FALSE(getExternalValue(*phv(arg)), napi_invalid_arg)
-
 #define CHECK_FUNCTION_ARG(arg)                    \
   do {                                             \
     CHECK_OBJECT_ARG(arg);                         \
