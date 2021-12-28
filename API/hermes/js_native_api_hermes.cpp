@@ -2715,11 +2715,7 @@ napi_status NodeApiEnvironment::coerceToString(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
-    auto res = vm::toString_RJS(&runtime_, makeHandle(value));
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(vm::HermesValue::encodeStringValue(res->get()));
-    return clearLastError();
+    return setResult(vm::toString_RJS(&runtime_, makeHandle(value)), result);
   });
 }
 
