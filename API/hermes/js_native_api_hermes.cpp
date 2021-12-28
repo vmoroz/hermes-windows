@@ -175,17 +175,34 @@ struct NodeApiEnvironment;
 struct Reference;
 struct OrderedSet;
 
+enum class UnwrapAction { KeepWrap, RemoveWrap };
+
+enum class NapiPredefined {
+  UndefinedValue,
+  NullValue,
+  TrueValue,
+  FalseValue,
+  ExternalValueSymbol,
+  CodeSymbol,
+  TypeTagSymbol,
+  PredefinedCount // a special value that must be last in the enum
+};
+
+enum class IfNotFound {
+  ThenCreate,
+  ThenReturnNull,
+};
+
+// It should be added to the napi_status enum
 const napi_status napi_not_implemented = napi_generic_failure;
 
-template <class T, std::size_t N>
-constexpr std::size_t size(const T (&array)[N]) noexcept {
-  return N;
-}
+namespace {
 
-template <class TEnum>
-bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept {
-  return lowerBound <= value && value <= upperBound;
-}
+napi_value napiValue(const vm::PinnedHermesValue *value) noexcept;
+const vm::PinnedHermesValue *phv(napi_value value) noexcept;
+const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept;
+
+} // namespace
 
 struct Marker {
   size_t chunkIndex{0};
@@ -400,34 +417,6 @@ struct LinkedList {
   Item head_;
 };
 
-napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
-  return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
-}
-
-namespace {
-
-const vm::PinnedHermesValue *phv(napi_value value) noexcept {
-  return reinterpret_cast<vm::PinnedHermesValue *>(value);
-}
-
-const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
-  return value;
-}
-
-Reference *asReference(napi_ext_ref ref) noexcept {
-  return reinterpret_cast<Reference *>(ref);
-}
-
-Reference *asReference(napi_ref ref) noexcept {
-  return reinterpret_cast<Reference *>(ref);
-}
-
-Reference *asReference(void *ref) noexcept {
-  return reinterpret_cast<Reference *>(ref);
-}
-
-} // namespace
-
 struct CallbackInfo final {
   CallbackInfo(FunctionContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
@@ -478,24 +467,6 @@ struct FunctionContext final {
 void *CallbackInfo::data() noexcept {
   return context_.data_;
 }
-
-enum class UnwrapAction { KeepWrap, RemoveWrap };
-
-enum class NapiPredefined {
-  UndefinedValue,
-  NullValue,
-  TrueValue,
-  FalseValue,
-  ExternalValueSymbol,
-  CodeSymbol,
-  TypeTagSymbol,
-  PredefinedCount // a special value that must be last in the enum
-};
-
-enum class IfNotFound {
-  ThenCreate,
-  ThenReturnNull,
-};
 
 struct ExternalValue : vm::DecoratedObject::Decoration {
   ExternalValue(NodeApiEnvironment &env) noexcept : env_(env) {}
@@ -1192,16 +1163,6 @@ struct HermesBuffer : Buffer {
   napi_ext_buffer buffer_;
   napi_ext_delete_buffer deleteBuffer_;
 };
-
-std::unique_ptr<HermesBuffer> makeHermesBuffer(
-    napi_env env,
-    napi_ext_buffer buffer,
-    napi_ext_get_buffer_range getBufferRange,
-    napi_ext_delete_buffer deleteBuffer) noexcept {
-  return buffer ? std::make_unique<HermesBuffer>(
-                      env, buffer, getBufferRange, deleteBuffer)
-                : nullptr;
-}
 
 /// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
 struct HermesPreparedJavaScript {
@@ -2005,8 +1966,62 @@ struct ExternalBuffer : Buffer {
   FinalizingAnonymousReference *finalizer_;
 };
 
+namespace {
 
-static size_t utf8Length(llvh::ArrayRef<char16_t> input) {
+// Max size of the runtime's register stack.
+// The runtime register stack needs to be small enough to be allocated on the
+// native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
+// Calculated by: (thread stack size - size of runtime -
+// 8 memory pages for other stuff in the thread)
+static constexpr unsigned kMaxNumRegisters =
+    (512 * 1024 - sizeof(vm::Runtime) - 4096 * 8) /
+    sizeof(vm::PinnedHermesValue);
+
+template <class T, std::size_t N>
+constexpr std::size_t size(const T (&array)[N]) noexcept {
+  return N;
+}
+
+template <class TEnum>
+bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept {
+  return lowerBound <= value && value <= upperBound;
+}
+
+napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
+  return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
+}
+
+const vm::PinnedHermesValue *phv(napi_value value) noexcept {
+  return reinterpret_cast<vm::PinnedHermesValue *>(value);
+}
+
+const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
+  return value;
+}
+
+Reference *asReference(napi_ext_ref ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
+Reference *asReference(napi_ref ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
+Reference *asReference(void *ref) noexcept {
+  return reinterpret_cast<Reference *>(ref);
+}
+
+std::unique_ptr<HermesBuffer> makeHermesBuffer(
+    napi_env env,
+    napi_ext_buffer buffer,
+    napi_ext_get_buffer_range getBufferRange,
+    napi_ext_delete_buffer deleteBuffer) noexcept {
+  return buffer ? std::make_unique<HermesBuffer>(
+                      env, buffer, getBufferRange, deleteBuffer)
+                : nullptr;
+}
+
+size_t utf8Length(llvh::ArrayRef<char16_t> input) {
   size_t length{0};
   for (auto cur = input.begin(), end = input.end(); cur < end; ++cur) {
     char16_t c = cur[0];
@@ -2051,7 +2066,7 @@ static size_t utf8Length(llvh::ArrayRef<char16_t> input) {
   return length;
 }
 
-static char *convertASCIIToUTF8(
+char *convertASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
     size_t maxCharacters) {
@@ -2066,7 +2081,7 @@ static char *convertASCIIToUTF8(
   return curBuf;
 }
 
-static char *convertUTF16ToUTF8WithReplacements(
+char *convertUTF16ToUTF8WithReplacements(
     llvh::ArrayRef<char16_t> input,
     char *buf,
     size_t maxCharacters) {
@@ -2116,21 +2131,11 @@ static char *convertUTF16ToUTF8WithReplacements(
 
   return curBuf;
 }
+} // namespace
 
 //=============================================================================
 // NodeApiEnvironment implementation
 //=============================================================================
-
-namespace {
-// Max size of the runtime's register stack.
-// The runtime register stack needs to be small enough to be allocated on the
-// native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
-// Calculated by: (thread stack size - size of runtime -
-// 8 memory pages for other stuff in the thread)
-static constexpr unsigned kMaxNumRegisters =
-    (512 * 1024 - sizeof(vm::Runtime) - 4096 * 8) /
-    sizeof(vm::PinnedHermesValue);
-} // namespace
 
 NodeApiEnvironment::NodeApiEnvironment(
     const vm::RuntimeConfig &runtimeConfig) noexcept
