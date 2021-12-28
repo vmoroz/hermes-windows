@@ -11,6 +11,7 @@
 // TODO: Fix references for Unwrap
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
+// TODO: review and rename macros
 
 #define NAPI_EXPERIMENTAL
 
@@ -58,7 +59,6 @@ using ::hermes::hermesLog;
   } while (0)
 #endif
 
-// TODO: review and rename macros
 #define CHECK_NAPI(...)                       \
   do {                                        \
     if (napi_status status = (__VA_ARGS__)) { \
@@ -89,19 +89,20 @@ using ::hermes::hermesLog;
 #define CHECK_ARG(arg) \
   RETURN_STATUS_IF_FALSE(((arg) != nullptr), napi_invalid_arg)
 
-#define CHECK_TYPED_ARG(arg, isCheck, status) \
-  CHECK_ARG(arg);                             \
-  RETURN_STATUS_IF_FALSE(phv(arg)->isCheck(), status)
+#define CHECK_TYPED_ARG(arg, isCheck, status)            \
+  do {                                                   \
+    CHECK_ARG(arg);                                      \
+    RETURN_STATUS_IF_FALSE(phv(arg)->isCheck(), status); \
+  } while (false)
 
 #define CHECK_OBJECT_ARG(arg) \
   CHECK_TYPED_ARG((arg), isObject, napi_object_expected)
 
-#define CHECK_FUNCTION_ARG(arg)                    \
-  do {                                             \
-    CHECK_OBJECT_ARG(arg);                         \
-    if (!vm::vmisa<vm::Callable>(*phv(arg))) {     \
-      return setLastError(napi_function_expected); \
-    }                                              \
+#define CHECK_FUNCTION_ARG(arg)                                      \
+  do {                                                               \
+    CHECK_ARG(arg);                                                  \
+    RETURN_STATUS_IF_FALSE(                                          \
+        vm::vmisa<vm::Callable>(*phv(arg)), napi_function_expected); \
   } while (false)
 
 #define CHECK_STRING_ARG(arg) \
@@ -153,11 +154,6 @@ using ::hermes::hermesLog;
       return setLastError(napi_pending_exception, message.c_str()); \
     }                                                               \
   } while (0)
-
-#define CHECK_TO_OBJECT(var, value) \
-  CHECK_ARG(value);                 \
-  ASSIGN_ELSE_RETURN_STATUS(        \
-      var, convertToObject(makeHandle(value)), napi_object_expected)
 
 namespace hermes {
 namespace napi {
@@ -2427,9 +2423,7 @@ napi_status NodeApiEnvironment::createError(
 
     vm::PinnedHermesValue err_phv{err.getHermesValue()};
     CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        makeHandle(msg)));
+        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
     // TODO:
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
@@ -2452,9 +2446,7 @@ napi_status NodeApiEnvironment::createTypeError(
 
     vm::PinnedHermesValue err_phv{err.getHermesValue()};
     CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        makeHandle(msg)));
+        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
     *result = addStackValue(err_phv);
@@ -2476,9 +2468,7 @@ napi_status NodeApiEnvironment::createRangeError(
 
     vm::PinnedHermesValue err_phv{err.getHermesValue()};
     CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv),
-        &runtime_,
-        makeHandle(msg)));
+        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
     // TODO:
     // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
 
