@@ -12,6 +12,7 @@
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
 // TODO: review and rename macros
+// TODO: rename NodeApiEnvironment
 
 #define NAPI_EXPERIMENTAL
 
@@ -4080,7 +4081,6 @@ napi_status NodeApiEnvironment::createPromise(
   return newInstance(promiseConstructor, 1, &func, promise);
 }
 
-// TODO: predefine names for Promises
 napi_status NodeApiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *result) noexcept {
@@ -5007,7 +5007,7 @@ vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
   return decoratedObj;
 }
 
-// TODO: simply handling the external value
+// TODO: simplify handling the external value
 template <class TObject>
 napi_status NodeApiEnvironment::getExternalValue(
     TObject object,
