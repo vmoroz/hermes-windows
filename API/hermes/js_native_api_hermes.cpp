@@ -170,10 +170,13 @@ struct OrderedSet;
 enum class UnwrapAction { KeepWrap, RemoveWrap };
 
 enum class NapiPredefined {
-  UndefinedValue,
-  ExternalValueSymbol,
+  Promise,
   code,
-  TypeTagSymbol,
+  napi_externalValue,
+  napi_typeTag,
+  reject,
+  resolve,
+  undefined,
   PredefinedCount // a special value that must be last in the enum
 };
 
@@ -765,7 +768,7 @@ struct NodeApiEnvironment final {
       napi_value resolution) noexcept;
   napi_status concludeDeferred(
       napi_deferred deferred,
-      const char *propertyName,
+      NapiPredefined predefinedProperty,
       napi_value result) noexcept;
   napi_status isPromise(napi_value value, bool *result) noexcept;
 
@@ -1257,7 +1260,7 @@ struct Reference : LinkedList<Reference>::Item {
   }
 
   virtual const vm::PinnedHermesValue &value(NodeApiEnvironment &env) noexcept {
-    return env.getPredefined(NapiPredefined::UndefinedValue);
+    return env.getPredefined(NapiPredefined::undefined);
   }
 
   virtual void *nativeData() noexcept {
@@ -2248,21 +2251,33 @@ NodeApiEnvironment::NodeApiEnvironment(
     predefinedValues_[static_cast<size_t>(key)] = value;
   };
   setPredefined(
-      NapiPredefined::UndefinedValue,  vm::HermesValue::encodeUndefinedValue());
-  setPredefined(
-      NapiPredefined::ExternalValueSymbol,
+      NapiPredefined::Promise,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().createNotUniquedLazySymbol(
-              "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
+          runtime_.getIdentifierTable().registerLazyIdentifier("Promise")));
   setPredefined(
       NapiPredefined::code,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier("code")));
   setPredefined(
-      NapiPredefined::TypeTagSymbol,
+      NapiPredefined::napi_externalValue,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().createNotUniquedLazySymbol(
+              "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
+  setPredefined(
+      NapiPredefined::napi_typeTag,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
               "napi.typeTag.026ae0ec-b391-49da-a935-0cab733ab615")));
+  setPredefined(
+      NapiPredefined::reject,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier("reject")));
+  setPredefined(
+      NapiPredefined::resolve,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier("resolve")));
+  setPredefined(
+      NapiPredefined::undefined, vm::HermesValue::encodeUndefinedValue());
 }
 
 NodeApiEnvironment::~NodeApiEnvironment() {
@@ -3927,7 +3942,7 @@ napi_status NodeApiEnvironment::getTypedArrayInfo(
     *arrayBuffer = array->attached(&runtime_)
         ? addStackValue(
               vm::HermesValue::encodeObjectValue(array->getBuffer(&runtime_)))
-        : (napi_value)&getPredefined(NapiPredefined::UndefinedValue);
+        : (napi_value)&getPredefined(NapiPredefined::undefined);
   }
 
   if (byteOffset != nullptr) {
@@ -3992,7 +4007,7 @@ napi_status NodeApiEnvironment::getDataViewInfo(
   if (arrayBuffer != nullptr) {
     *arrayBuffer = view->attached(&runtime_)
         ? addStackValue(view->getBuffer(&runtime_).getHermesValue())
-        : (napi_value)&getPredefined(NapiPredefined::UndefinedValue);
+        : (napi_value)&getPredefined(NapiPredefined::undefined);
   }
 
   if (byteOffset != nullptr) {
@@ -4013,7 +4028,10 @@ napi_status NodeApiEnvironment::createPromise(
   napi_value global;
   napi_value promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
+  CHECK_NAPI(getPrivate(
+      makeHandle<vm::JSObject>(global),
+      NapiPredefined::Promise,
+      &promiseConstructor));
 
   // The executor function is to be executed by the constructor during the
   // process of constructing the new Promise object. The executor is custom code
@@ -4037,14 +4055,12 @@ napi_status NodeApiEnvironment::createPromise(
     napi_value *reject{};
   } executorData{this, resolveFunction, rejectFunction};
 
-  napi_value nameValue{};
-  CHECK_NAPI(createStringUtf8("Promise", NAPI_AUTO_LENGTH, &nameValue));
-  auto nameRes = vm::stringToSymbolID(
-      &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
-  CHECK_HERMES(nameRes.getStatus());
-
   auto executorFunction = vm::NativeFunction::createWithoutPrototype(
-      &runtime_, &executorData, &ExecutorData::callback, nameRes->get(), 2);
+      &runtime_,
+      &executorData,
+      &ExecutorData::callback,
+      getPredefined(NapiPredefined::Promise).getSymbol(),
+      2);
   napi_value func = addStackValue(executorFunction.getHermesValue());
   return newInstance(promiseConstructor, 1, &func, promise);
 }
@@ -4059,8 +4075,16 @@ napi_status NodeApiEnvironment::createPromise(
     napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
     CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
     CHECK_NAPI(createObject(&jsDeferred));
-    CHECK_NAPI(setNamedProperty(jsDeferred, "resolve", jsResolve));
-    CHECK_NAPI(setNamedProperty(jsDeferred, "reject", jsReject));
+    CHECK_NAPI(setPrivate(
+        makeHandle<vm::JSObject>(jsDeferred),
+        NapiPredefined::resolve,
+        makeHandle(jsResolve),
+        nullptr));
+    CHECK_NAPI(setPrivate(
+        makeHandle<vm::JSObject>(jsDeferred),
+        NapiPredefined::reject,
+        makeHandle(jsReject),
+        nullptr));
 
     CHECK_NAPI(StrongReference::create(
         *this,
@@ -4073,18 +4097,18 @@ napi_status NodeApiEnvironment::createPromise(
 napi_status NodeApiEnvironment::resolveDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
-  return concludeDeferred(deferred, "resolve", resolution);
+  return concludeDeferred(deferred, NapiPredefined::resolve, resolution);
 }
 
 napi_status NodeApiEnvironment::rejectDeferred(
     napi_deferred deferred,
     napi_value resolution) noexcept {
-  return concludeDeferred(deferred, "resolve", resolution);
+  return concludeDeferred(deferred, NapiPredefined::reject, resolution);
 }
 
 napi_status NodeApiEnvironment::concludeDeferred(
     napi_deferred deferred,
-    const char *propertyName,
+    NapiPredefined predefinedProperty,
     napi_value result) noexcept {
   CHECK_ARG(deferred);
   CHECK_ARG(result);
@@ -4093,8 +4117,8 @@ napi_status NodeApiEnvironment::concludeDeferred(
 
   const auto &jsDeferred = ref->value(*this);
   napi_value resolver, callResult;
-  CHECK_NAPI(
-      getNamedProperty(addStackValue(jsDeferred), propertyName, &resolver));
+  CHECK_NAPI(getPrivate(
+      makeHandle<vm::JSObject>(&jsDeferred), predefinedProperty, &resolver));
   CHECK_NAPI(callFunction(nullptr, resolver, 1, &result, &callResult));
   Reference::deleteReference(
       *this, ref, Reference::ReasonToDelete::ZeroRefCount);
@@ -4109,7 +4133,10 @@ napi_status NodeApiEnvironment::isPromise(
   napi_value global;
   napi_value promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
+  CHECK_NAPI(getPrivate(
+      makeHandle<vm::JSObject>(global),
+      NapiPredefined::Promise,
+      &promiseConstructor));
 
   return instanceOf(value, promiseConstructor, result);
 }
@@ -4233,7 +4260,7 @@ napi_status NodeApiEnvironment::typeTagObject(
 
     // Fail if the tag already exists
     bool hasTag{};
-    CHECK_NAPI(hasPrivate(objHandle, NapiPredefined::TypeTagSymbol, &hasTag));
+    CHECK_NAPI(hasPrivate(objHandle, NapiPredefined::napi_typeTag, &hasTag));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
     napi_value tagBuffer;
@@ -4247,7 +4274,7 @@ napi_status NodeApiEnvironment::typeTagObject(
 
     return setPrivate(
         objHandle,
-        NapiPredefined::TypeTagSymbol,
+        NapiPredefined::napi_typeTag,
         makeHandle(tagBuffer),
         nullptr);
   });
@@ -4264,7 +4291,7 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
 
     napi_value tagBufferValue;
     CHECK_NAPI(
-        getPrivate(objHandle, NapiPredefined::TypeTagSymbol, &tagBufferValue));
+        getPrivate(objHandle, NapiPredefined::napi_typeTag, &tagBufferValue));
     auto tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
     RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
@@ -4684,7 +4711,7 @@ napi_status NodeApiEnvironment::getExternalValue(
     ExternalValue *externalValue{};
     napi_value externalNapiValue;
     napi_status status = getPrivate(
-        objHandle, NapiPredefined::ExternalValueSymbol, &externalNapiValue);
+        objHandle, NapiPredefined::napi_externalValue, &externalNapiValue);
     if (status == napi_ok) {
       externalValue = getExternalValue(*phv(externalNapiValue));
       RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
@@ -4693,7 +4720,7 @@ napi_status NodeApiEnvironment::getExternalValue(
           makeHandle(createExternal(nullptr, &externalValue));
       CHECK_NAPI(setPrivate(
           objHandle,
-          NapiPredefined::ExternalValueSymbol,
+          NapiPredefined::napi_externalValue,
           decoratedObj,
           nullptr));
     }
@@ -4839,7 +4866,7 @@ const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
   if (const auto ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
     return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
   }
-  return getPredefined(NapiPredefined::UndefinedValue);
+  return getPredefined(NapiPredefined::undefined);
 }
 
 napi_status NodeApiEnvironment::addObjectFinalizer(
