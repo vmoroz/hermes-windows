@@ -2478,7 +2478,6 @@ napi_status NodeApiEnvironment::createRangeError(
 napi_status NodeApiEnvironment::typeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
-  
   CHECK_ARG(value);
   CHECK_ARG(result);
 
@@ -3546,7 +3545,6 @@ napi_status NodeApiEnvironment::getReferenceValue(
 
 napi_status NodeApiEnvironment::openHandleScope(
     napi_handle_scope *result) noexcept {
-  
   CHECK_ARG(result);
 
   Marker stackMarker = stackValues_.createMarker();
@@ -3557,7 +3555,6 @@ napi_status NodeApiEnvironment::openHandleScope(
 
 napi_status NodeApiEnvironment::closeHandleScope(
     napi_handle_scope scope) noexcept {
-  
   CHECK_ARG(scope);
   if (stackMarkers_.empty()) {
     return napi_handle_scope_mismatch;
@@ -3615,7 +3612,6 @@ napi_status NodeApiEnvironment::escapeHandle(
     napi_escapable_handle_scope scope,
     napi_value escapee,
     napi_value *result) noexcept {
-  
   CHECK_ARG(scope);
   CHECK_ARG(escapee);
   CHECK_ARG(result);
@@ -3719,42 +3715,26 @@ napi_status NodeApiEnvironment::isError(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  *result = vm::vmisa<vm::JSError>(*phv(value));
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSError>(*phv(value)), result);
 }
 
-// Methods to support catching exceptions
 napi_status NodeApiEnvironment::isExceptionPending(bool *result) noexcept {
-  
-  CHECK_ARG(result);
-
-  *result = !lastException_.isEmpty();
-  return clearLastError();
+  return setResult(!lastException_.isEmpty(), result);
 }
 
 napi_status NodeApiEnvironment::getAndClearLastException(
     napi_value *result) noexcept {
-  
-  CHECK_ARG(result);
-
   if (lastException_.isEmpty()) {
     return getUndefined(result);
-  } else {
-    *result = addStackValue(lastException_);
-    lastException_ = EmptyHermesValue;
   }
-
-  return clearLastError();
+  return setResult(std::exchange(lastException_, EmptyHermesValue), result);
 }
 
 napi_status NodeApiEnvironment::isArrayBuffer(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  *result = vm::vmisa<vm::JSArrayBuffer>(*phv(value));
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSArrayBuffer>(*phv(value)), result);
 }
 
 napi_status NodeApiEnvironment::createArrayBuffer(
