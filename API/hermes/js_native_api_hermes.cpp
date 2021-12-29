@@ -115,16 +115,13 @@ using ::hermes::hermesLog;
 #define CHECK_BOOL_ARG(arg) \
   CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
 
-#define CHECK_HERMES(hermesStatus) \
-  CHECK_NAPI(checkHermesStatus(hermesStatus, napi_generic_failure))
-
 #define CONCAT_IMPL(left, right) left##right
 #define CONCAT(left, right) CONCAT_IMPL(left, right)
 #define TEMP_VARNAME(tempSuffix) CONCAT(temp_, tempSuffix)
 
-#define ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, tempSuffix) \
-  auto TEMP_VARNAME(tempSuffix) = (expr);                             \
-  CHECK_NAPI(checkHermesStatus(TEMP_VARNAME(tempSuffix).getStatus(), status));  \
+#define ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, tempSuffix)          \
+  auto TEMP_VARNAME(tempSuffix) = (expr);                                      \
+  CHECK_NAPI(checkHermesStatus(TEMP_VARNAME(tempSuffix).getStatus(), status)); \
   var = std::move(*TEMP_VARNAME(tempSuffix));
 
 #define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
@@ -2449,7 +2446,7 @@ napi_status NodeApiEnvironment::createFunction(
     CHECK_NAPI(createStringUtf8(utf8Name, length, &nameValue));
     auto nameRes = vm::stringToSymbolID(
         &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
-    CHECK_HERMES(nameRes.getStatus());
+    CHECK_NAPI(checkHermesStatus(nameRes.getStatus()));
     return newFunction(nameRes->get(), callback, callbackData, result);
   });
 }
@@ -2463,8 +2460,8 @@ napi_status NodeApiEnvironment::createError(
     CHECK_STRING_ARG(message);
     vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
         &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
-    CHECK_HERMES(
-        vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message)));
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message))));
     CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
     return setResult(std::move(errorHandle), result);
   });
@@ -2745,7 +2742,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           vm::JSObject::getOwnPropertyKeys(
               makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags));
       if (keyConversion == napi_key_numbers_to_strings) {
-        CHECK_HERMES(convertKeyNumbersToStrings(ownKeys));
+        CHECK_NAPI(checkHermesStatus(convertKeyNumbersToStrings(ownKeys)));
       }
       return setResult(ownKeys.getHermesValue(), result);
     }
@@ -2849,7 +2846,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           }
         }
 
-        CHECK_HERMES(vm::BigStorage::push_back(keyStorage, &runtime_, prop));
+        CHECK_NAPI(checkHermesStatus(
+            vm::BigStorage::push_back(keyStorage, &runtime_, prop)));
         ++size;
       }
 
@@ -3081,35 +3079,35 @@ napi_status NodeApiEnvironment::defineProperties(
             &runtime_,
             runtime_.makeHandle<vm::Callable>(*phv(localGetter)),
             runtime_.makeHandle<vm::Callable>(*phv(localSetter)));
-        CHECK_HERMES(propRes.getStatus());
-        CHECK_HERMES(vm::JSObject::defineOwnProperty(
-                         objHandle,
-                         &runtime_,
-                         name.get(),
-                         dpFlags,
-                         makeHandle(*propRes),
-                         vm::PropOpFlags().plusThrowOnError())
-                         .getStatus());
+        CHECK_NAPI(checkHermesStatus(propRes.getStatus()));
+        CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
+                                         objHandle,
+                                         &runtime_,
+                                         name.get(),
+                                         dpFlags,
+                                         makeHandle(*propRes),
+                                         vm::PropOpFlags().plusThrowOnError())
+                                         .getStatus()));
       } else if (p->method != nullptr) {
         napi_value method{};
         CHECK_NAPI(newFunction(name.get(), p->getter, p->data, &method));
-        CHECK_HERMES(vm::JSObject::defineOwnProperty(
-                         objHandle,
-                         &runtime_,
-                         name.get(),
-                         dpFlags,
-                         makeHandle(method),
-                         vm::PropOpFlags().plusThrowOnError())
-                         .getStatus());
+        CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
+                                         objHandle,
+                                         &runtime_,
+                                         name.get(),
+                                         dpFlags,
+                                         makeHandle(method),
+                                         vm::PropOpFlags().plusThrowOnError())
+                                         .getStatus()));
       } else {
-        CHECK_HERMES(vm::JSObject::defineOwnProperty(
-                         objHandle,
-                         &runtime_,
-                         name.get(),
-                         dpFlags,
-                         makeHandle(p->value),
-                         vm::PropOpFlags().plusThrowOnError())
-                         .getStatus());
+        CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
+                                         objHandle,
+                                         &runtime_,
+                                         name.get(),
+                                         dpFlags,
+                                         makeHandle(p->value),
+                                         vm::PropOpFlags().plusThrowOnError())
+                                         .getStatus()));
       }
     }
 
@@ -3188,15 +3186,15 @@ napi_status NodeApiEnvironment::callFunction(
         vm::HermesValue::encodeUndefinedValue(),
         *phv(object)};
     if (LLVM_UNLIKELY(newFrame.overflowed())) {
-      CHECK_HERMES(runtime_.raiseStackOverflow(
-          vm::StackRuntime::StackOverflowKind::NativeStack));
+      CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
+          vm::StackRuntime::StackOverflowKind::NativeStack)));
     }
 
     for (uint32_t i = 0; i < argCount; ++i) {
       newFrame->getArgRef(i) = *phv(args[i]);
     }
     auto callRes = vm::Callable::call(handle, &runtime_);
-    CHECK_HERMES(callRes.getStatus());
+    CHECK_NAPI(checkHermesStatus(callRes.getStatus()));
 
     if (result) {
       RETURN_STATUS_IF_FALSE(!callRes->get().isEmpty(), napi_generic_failure);
@@ -3268,15 +3266,15 @@ napi_status NodeApiEnvironment::newInstance(
         funcHandle.getHermesValue(),
         objHandle.getHermesValue()};
     if (newFrame.overflowed()) {
-      CHECK_HERMES(runtime_.raiseStackOverflow(
-          ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack));
+      CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
+          ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack)));
     }
     for (uint32_t i = 0; i != argc; ++i) {
       newFrame->getArgRef(i) = *phv(argv[i]);
     }
     // The last parameter indicates that this call should construct an object.
     auto callRes = vm::Callable::call(funcHandle, &runtime_);
-    CHECK_HERMES(callRes.getStatus());
+    CHECK_NAPI(checkHermesStatus(callRes.getStatus()));
 
     // 13.2.2.9:
     //    If Type(result) is Object then return result
@@ -3366,19 +3364,19 @@ napi_status NodeApiEnvironment::defineClass(
     pf.enumerable = 0;
     pf.writable = 1;
     pf.configurable = 0;
-    CHECK_HERMES(vm::JSObject::defineNewOwnProperty(
+    CHECK_NAPI(checkHermesStatus(vm::JSObject::defineNewOwnProperty(
         classHandle,
         &runtime_,
         vm::Predefined::getSymbolID(vm::Predefined::prototype),
         pf,
-        prototypeHandle));
+        prototypeHandle)));
     pf.configurable = 1;
-    CHECK_HERMES(vm::JSObject::defineNewOwnProperty(
+    CHECK_NAPI(checkHermesStatus(vm::JSObject::defineNewOwnProperty(
         prototypeHandle,
         &runtime_,
         vm::Predefined::getSymbolID(vm::Predefined::constructor),
         pf,
-        classHandle));
+        classHandle)));
 
     for (size_t i = 0; i < propertyCount; ++i) {
       const napi_property_descriptor *p = properties + i;
@@ -3673,10 +3671,12 @@ napi_status NodeApiEnvironment::throwError(
 
     vm::Handle<vm::JSError> errorHandle = makeHandle(
         vm::JSError::create(&runtime_, makeHandle<vm::JSObject>(&prototype)));
-    CHECK_HERMES(vm::JSError::recordStackTrace(errorHandle, &runtime_));
-    CHECK_HERMES(vm::JSError::setupStack(errorHandle, &runtime_));
-    CHECK_HERMES(vm::JSError::setMessage(
-        errorHandle, &runtime_, makeHandle(messageValue)));
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSError::recordStackTrace(errorHandle, &runtime_)));
+    CHECK_NAPI(
+        checkHermesStatus(vm::JSError::setupStack(errorHandle, &runtime_)));
+    CHECK_NAPI(checkHermesStatus(vm::JSError::setMessage(
+        errorHandle, &runtime_, makeHandle(messageValue))));
     CHECK_NAPI(setErrorCode(errorHandle, nullptr, code));
 
     runtime_.setThrownValue(errorHandle.getHermesValue());
@@ -3738,7 +3738,8 @@ napi_status NodeApiEnvironment::createArrayBuffer(
   return handleExceptions([&] {
     vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
         &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
-    CHECK_HERMES(buffer->createDataBlock(&runtime_, byteLength));
+    CHECK_NAPI(
+        checkHermesStatus(buffer->createDataBlock(&runtime_, byteLength)));
     if (data != nullptr) {
       *data = buffer->getDataBlock();
     }
@@ -4312,8 +4313,8 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
 napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_HERMES(
-        vm::JSObject::freeze(makeHandle<vm::JSObject>(object), &runtime_));
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSObject::freeze(makeHandle<vm::JSObject>(object), &runtime_)));
     return clearLastError();
   });
 }
@@ -4321,8 +4322,8 @@ napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
 napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_HERMES(
-        vm::JSObject::seal(makeHandle<vm::JSObject>(object), &runtime_));
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSObject::seal(makeHandle<vm::JSObject>(object), &runtime_)));
     return clearLastError();
   });
 }
@@ -5276,7 +5277,7 @@ napi_status NodeApiEnvironment::newFunction(
       &FunctionContext::finalize,
       name,
       /*paramCount:*/ 0);
-  CHECK_HERMES(funcRes.getStatus());
+  CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
   context.release();
   *result = addStackValue(*funcRes);
   return clearLastError();
