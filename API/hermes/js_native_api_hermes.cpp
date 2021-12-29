@@ -2476,11 +2476,9 @@ napi_status NodeApiEnvironment::typeOf(
 
   const vm::PinnedHermesValue &hv = *phv(value);
 
+  // BigInt is not supported by Hermes yet.
   if (hv.isNumber()) {
     *result = napi_number;
-    // BigInt is not supported by Hermes yet.
-    //} else if (hv.IsBigInt()) {
-    //   *result = napi_bigint;
   } else if (hv.isString()) {
     *result = napi_string;
   } else if (hv.isObject()) {
