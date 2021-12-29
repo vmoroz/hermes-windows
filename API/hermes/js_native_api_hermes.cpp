@@ -2537,7 +2537,7 @@ napi_status NodeApiEnvironment::getValueStringLatin1(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    auto view = vm::StringPrimitive::createStringView(
+    vm::StringView view = vm::StringPrimitive::createStringView(
         &runtime_, makeHandle<vm::StringPrimitive>(value));
 
     if (!buf) {
@@ -2568,9 +2568,8 @@ napi_status NodeApiEnvironment::getValueStringUtf8(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, makeHandle(value)->getString());
-    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
+    vm::StringView view = vm::StringPrimitive::createStringView(
+        &runtime_, makeHandle<vm::StringPrimitive>(value));
 
     if (!buf) {
       CHECK_ARG(result);
@@ -2607,9 +2606,8 @@ napi_status NodeApiEnvironment::getValueStringUtf16(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, makeHandle(value)->getString());
-    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
+    vm::StringView view = vm::StringPrimitive::createStringView(
+        &runtime_, makeHandle<vm::StringPrimitive>(value));
 
     if (!buf) {
       CHECK_ARG(result);
@@ -3287,14 +3285,10 @@ napi_status NodeApiEnvironment::instanceOf(
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
     CHECK_FUNCTION_ARG(constructor);
-    CHECK_ARG(result);
-    auto res = vm::instanceOfOperator_RJS(
-        &runtime_,
-        runtime_.makeHandle(*phv(object)),
-        runtime_.makeHandle(*phv(constructor)));
-    CHECK_STATUS(res.getStatus());
-    *result = *res;
-    return clearLastError();
+    return setResult(
+        vm::instanceOfOperator_RJS(
+            &runtime_, makeHandle(object), makeHandle(constructor)),
+        result);
   });
 }
 
