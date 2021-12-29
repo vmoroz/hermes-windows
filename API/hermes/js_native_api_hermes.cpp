@@ -171,9 +171,6 @@ enum class UnwrapAction { KeepWrap, RemoveWrap };
 
 enum class NapiPredefined {
   UndefinedValue,
-  NullValue,
-  TrueValue,
-  FalseValue,
   ExternalValueSymbol,
   code,
   TypeTagSymbol,
@@ -2251,12 +2248,7 @@ NodeApiEnvironment::NodeApiEnvironment(
     predefinedValues_[static_cast<size_t>(key)] = value;
   };
   setPredefined(
-      NapiPredefined::UndefinedValue, vm::HermesValue::encodeUndefinedValue());
-  setPredefined(NapiPredefined::NullValue, vm::HermesValue::encodeNullValue());
-  setPredefined(
-      NapiPredefined::TrueValue, vm::HermesValue::encodeBoolValue(true));
-  setPredefined(
-      NapiPredefined::FalseValue, vm::HermesValue::encodeBoolValue(false));
+      NapiPredefined::UndefinedValue,  vm::HermesValue::encodeUndefinedValue());
   setPredefined(
       NapiPredefined::ExternalValueSymbol,
       vm::HermesValue::encodeSymbolValue(
