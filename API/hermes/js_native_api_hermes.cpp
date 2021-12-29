@@ -3268,12 +3268,10 @@ napi_status NodeApiEnvironment::newInstance(
     //    If Type(result) is Object then return result
     // 13.2.2.10:
     //    Return obj
-    auto resultValue = callRes->get();
-    vm::HermesValue resultHValue =
-        resultValue.isObject() ? resultValue : objHandle.getHermesValue();
-    *result = addStackValue(resultHValue);
-
-    return clearLastError();
+    vm::HermesValue resultValue = callRes->get();
+    return setResult(
+        resultValue.isObject() ? resultValue : objHandle.getHermesValue(),
+        result);
   });
 }
 
