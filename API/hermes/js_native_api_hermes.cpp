@@ -2523,12 +2523,8 @@ napi_status NodeApiEnvironment::getNumberValue(
 napi_status NodeApiEnvironment::getBoolValue(
     napi_value value,
     bool *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_BOOL_ARG(value);
-  CHECK_ARG(result);
-
-  *result = phv(value)->getBool();
-  return clearLastError();
+  return setResult(phv(value)->getBool(), result);
 }
 
 napi_status NodeApiEnvironment::getValueStringLatin1(
@@ -5292,7 +5288,7 @@ napi_status NodeApiEnvironment::setResultUnsafe(
 napi_status NodeApiEnvironment::convertToObject(
     napi_value object,
     vm::MutableHandle<vm::JSObject> *result) noexcept {
-      CHECK_ARG(object);
+  CHECK_ARG(object);
   vm::CallResult<vm::HermesValue> obj =
       vm::toObject(&runtime_, makeHandle(object));
   CHECK_HERMES_STATUS(obj.getStatus(), napi_object_expected);
