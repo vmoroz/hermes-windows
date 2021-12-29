@@ -530,7 +530,7 @@ struct NodeApiEnvironment final {
       void *callbackData,
       napi_value *result) noexcept;
   napi_status createError(
-      const vm::PinnedHermesValue *errorPrototype,
+      const vm::PinnedHermesValue &errorPrototype,
       napi_value code,
       napi_value message,
       napi_value *result) noexcept;
@@ -691,9 +691,9 @@ struct NodeApiEnvironment final {
 
   napi_status throwError(napi_value error) noexcept;
   napi_status throwError(
+      const vm::PinnedHermesValue &prototype,
       const char *code,
-      const char *message,
-      const vm::PinnedHermesValue &prototype) noexcept;
+      const char *message) noexcept;
   napi_status throwError(const char *code, const char *message) noexcept;
   napi_status throwTypeError(const char *code, const char *message) noexcept;
   napi_status throwRangeError(const char *code, const char *message) noexcept;
@@ -2432,14 +2432,14 @@ napi_status NodeApiEnvironment::createFunction(
 }
 
 napi_status NodeApiEnvironment::createError(
-    const vm::PinnedHermesValue *errorPrototype,
+    const vm::PinnedHermesValue &errorPrototype,
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(message);
     vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
-        &runtime_, makeHandle<vm::JSObject>(errorPrototype)));
+        &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
     CHECK_STATUS(
         vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message)));
     CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
@@ -2451,21 +2451,21 @@ napi_status NodeApiEnvironment::createError(
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  return createError(&runtime_.ErrorPrototype, code, message, result);
+  return createError(runtime_.ErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::createTypeError(
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  return createError(&runtime_.TypeErrorPrototype, code, message, result);
+  return createError(runtime_.TypeErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::createRangeError(
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  return createError(&runtime_.RangeErrorPrototype, code, message, result);
+  return createError(runtime_.RangeErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::typeOf(
@@ -3642,33 +3642,23 @@ napi_status NodeApiEnvironment::throwError(napi_value error) noexcept {
 }
 
 napi_status NodeApiEnvironment::throwError(
+    const vm::PinnedHermesValue &prototype,
     const char *code,
-    const char *message,
-    const vm::PinnedHermesValue &prototype) noexcept {
+    const char *message) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(message);
-    napi_value messageHV;
-    CHECK_NAPI(stringFromUtf8(message, &messageHV));
-    auto messageHandle = makeHandle(messageHV);
+    // TODO: cleanup intermediate napi_value before return
+    napi_value messageValue;
+    CHECK_NAPI(stringFromUtf8(message, &messageValue));
 
-    auto errorObj = runtime_.makeHandle(vm::JSError::create(
-        &runtime_, runtime_.makeHandle<vm::JSObject>(prototype)));
-    CHECK_STATUS(vm::JSError::recordStackTrace(errorObj, &runtime_));
-    CHECK_STATUS(vm::JSError::setupStack(errorObj, &runtime_));
-    CHECK_STATUS(vm::JSError::setMessage(errorObj, &runtime_, messageHandle));
-    if (code) {
-      napi_value codeHV;
-      CHECK_NAPI(stringFromUtf8(code, &codeHV));
-      auto codeHandle = makeHandle(codeHV);
-      CHECK_STATUS(vm::JSObject::putNamed_RJS(
-                       errorObj,
-                       &runtime_,
-                       getPredefined(NapiPredefined::code).getSymbol(),
-                       codeHandle)
-                       .getStatus());
-    }
+    vm::Handle<vm::JSError> errorHandle = makeHandle(
+        vm::JSError::create(&runtime_, makeHandle<vm::JSObject>(&prototype)));
+    CHECK_STATUS(vm::JSError::recordStackTrace(errorHandle, &runtime_));
+    CHECK_STATUS(vm::JSError::setupStack(errorHandle, &runtime_));
+    CHECK_STATUS(vm::JSError::setMessage(
+        errorHandle, &runtime_, makeHandle(messageValue)));
+    CHECK_NAPI(setErrorCode(errorHandle, nullptr, code));
 
-    runtime_.setThrownValue(errorObj.getHermesValue());
+    runtime_.setThrownValue(errorHandle.getHermesValue());
 
     // any VM calls after this point and before returning
     // to the javascript invoker will fail
@@ -3679,19 +3669,19 @@ napi_status NodeApiEnvironment::throwError(
 napi_status NodeApiEnvironment::throwError(
     const char *code,
     const char *message) noexcept {
-  return throwError(code, message, runtime_.ErrorPrototype);
+  return throwError(runtime_.ErrorPrototype, code, message);
 }
 
 napi_status NodeApiEnvironment::throwTypeError(
     const char *code,
     const char *message) noexcept {
-  return throwError(code, message, runtime_.TypeErrorPrototype);
+  return throwError(runtime_.TypeErrorPrototype, code, message);
 }
 
 napi_status NodeApiEnvironment::throwRangeError(
     const char *code,
     const char *message) noexcept {
-  return throwError(code, message, runtime_.RangeErrorPrototype);
+  return throwError(runtime_.RangeErrorPrototype, code, message);
 }
 
 napi_status NodeApiEnvironment::isError(
