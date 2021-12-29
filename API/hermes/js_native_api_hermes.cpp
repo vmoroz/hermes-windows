@@ -874,42 +874,60 @@ struct NodeApiEnvironment final {
       napi_value object,
       vm::MutableHandle<vm::JSObject> *result) noexcept;
 
-  template <class TValue>
+  //---------------------------------------------------------------------------
+  // Property access helpers
+ public:
+  const vm::PinnedHermesValue &getPredefined(
+      NapiPredefined predefinedKey) noexcept;
+
+  template <class TObject, class TValue>
+  napi_status putPredefined(
+      TObject object,
+      NapiPredefined key,
+      TValue value,
+      bool *optResult = nullptr) noexcept;
+
+  template <class TObject>
+  napi_status
+  hasPredefined(TObject object, NapiPredefined key, bool *result) noexcept;
+
+  template <class TObject>
+  napi_status getPredefined(
+      TObject object,
+      NapiPredefined key,
+      napi_value *result) noexcept;
+
+  template <class TObject, class TValue>
   napi_status putNamed(
-      vm::Handle<vm::JSObject> objHandle,
+      TObject object,
       vm::SymbolID key,
       TValue value,
-      bool *optResult) noexcept;
+      bool *optResult = nullptr) noexcept;
 
-  napi_status getNamed(
-      vm::Handle<vm::JSObject> objHandle,
-      vm::SymbolID key,
-      napi_value *result) noexcept;
+  template <class TObject>
+  napi_status hasNamed(TObject object, vm::SymbolID key, bool *result) noexcept;
 
-  template <class TKey, class TValue>
+  template <class TObject>
+  napi_status
+  getNamed(TObject object, vm::SymbolID key, napi_value *result) noexcept;
+
+  template <class TObject, class TKey, class TValue>
   napi_status putComputed(
-      vm::Handle<vm::JSObject> objHandle,
+      TObject object,
       TKey key,
       TValue value,
-      bool *result) noexcept;
+      bool *optResult = nullptr) noexcept;
 
-  template <class TKey>
-  napi_status hasComputed(
-      vm::Handle<vm::JSObject> objHandle,
-      TKey key,
-      bool *result) noexcept;
+  template <class TObject, class TKey>
+  napi_status hasComputed(TObject object, TKey key, bool *result) noexcept;
 
-  template <class TKey>
-  napi_status getComputed(
-      vm::Handle<vm::JSObject> objHandle,
-      TKey key,
-      napi_value *result) noexcept;
+  template <class TObject, class TKey>
+  napi_status
+  getComputed(TObject object, TKey key, napi_value *result) noexcept;
 
-  template <class TKey>
-  napi_status deleteComputed(
-      vm::Handle<vm::JSObject> objHandle,
-      TKey key,
-      bool *result) noexcept;
+  template <class TObject, class TKey>
+  napi_status
+  deleteComputed(TObject object, TKey key, bool *optResult = nullptr) noexcept;
 
   template <class TKey>
   napi_status getOwnComputedDescriptor(
@@ -937,6 +955,8 @@ struct NodeApiEnvironment final {
   vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
   template <class T>
   vm::Handle<T> makeHandle(vm::PseudoHandle<T> &&value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(vm::Handle<T> value) noexcept;
   template <class T>
   vm::CallResult<vm::Handle<T>> makeHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
@@ -1050,25 +1070,6 @@ struct NodeApiEnvironment final {
       const napi_property_descriptor *p,
       vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
-  const vm::PinnedHermesValue &getPredefined(
-      NapiPredefined predefinedKey) noexcept;
-
-  napi_status hasPredefined(
-      vm::Handle<vm::JSObject> objHandle,
-      NapiPredefined key,
-      bool *result) noexcept;
-
-  napi_status getPredefined(
-      vm::Handle<vm::JSObject> objHandle,
-      NapiPredefined key,
-      napi_value *result) noexcept;
-
-  napi_status setPredefined(
-      vm::Handle<vm::JSObject> objHandle,
-      NapiPredefined key,
-      vm::Handle<> value,
-      bool *optResult) noexcept;
-
   napi_status addObjectFinalizer(
       const vm::PinnedHermesValue *value,
       Finalizer *finalizer) noexcept;
@@ -1079,8 +1080,9 @@ struct NodeApiEnvironment final {
 
   ExternalValue *getExternalValue(const vm::HermesValue &value) noexcept;
 
+  template <class TObject>
   napi_status getExternalValue(
-      vm::Handle<vm::JSObject> objHandle,
+      TObject object,
       IfNotFound ifNotFound,
       ExternalValue **result) noexcept;
 
@@ -2868,9 +2870,9 @@ napi_status NodeApiEnvironment::setProperty(
   return handleExceptions([&] {
     CHECK_ARG(key);
     CHECK_ARG(value);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return putComputed(objHandle, key, value, nullptr);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return putComputed(objValue, key, value);
   });
 }
 
@@ -2880,9 +2882,9 @@ napi_status NodeApiEnvironment::hasProperty(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(key);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return hasComputed(objHandle, key, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return hasComputed(objValue, key, result);
   });
 }
 
@@ -2892,9 +2894,9 @@ napi_status NodeApiEnvironment::getProperty(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(key);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return getComputed(objHandle, key, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return getComputed(objValue, key, result);
   });
 }
 
@@ -2904,9 +2906,9 @@ napi_status NodeApiEnvironment::deleteProperty(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(key);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return deleteComputed(objHandle, key, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return deleteComputed(objValue, key, result);
   });
 }
 
@@ -2932,11 +2934,11 @@ napi_status NodeApiEnvironment::setNamedProperty(
   return handleExceptions([&] {
     CHECK_ARG(utf8Name);
     CHECK_ARG(value);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
+    napi_value objValue;
     napi_value name;
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    CHECK_NAPI(coerceToObject(object, &objValue));
     CHECK_NAPI(stringFromUtf8(utf8Name, &name));
-    return putComputed(objHandle, name, value, nullptr);
+    return putComputed(objValue, name, value);
   });
 }
 
@@ -2946,11 +2948,11 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(utf8Name);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
+    napi_value objValue;
     napi_value name;
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    CHECK_NAPI(coerceToObject(object, &objValue));
     CHECK_NAPI(stringFromUtf8(utf8Name, &name));
-    return hasComputed(objHandle, name, result);
+    return hasComputed(objValue, name, result);
   });
 }
 
@@ -2960,11 +2962,11 @@ napi_status NodeApiEnvironment::getNamedProperty(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(utf8Name);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
+    napi_value objValue;
     napi_value name;
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    CHECK_NAPI(coerceToObject(object, &objValue));
     CHECK_NAPI(stringFromUtf8(utf8Name, &name));
-    return getComputed(objHandle, name, result);
+    return getComputed(objValue, name, result);
   });
 }
 
@@ -2974,9 +2976,9 @@ napi_status NodeApiEnvironment::setElement(
     napi_value value) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return putComputed(objHandle, index, value, nullptr);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return putComputed(objValue, index, value);
   });
 }
 
@@ -2985,9 +2987,9 @@ napi_status NodeApiEnvironment::hasElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return hasComputed(objHandle, index, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return hasComputed(objValue, index, result);
   });
 }
 
@@ -2996,9 +2998,9 @@ napi_status NodeApiEnvironment::getElement(
     uint32_t index,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return getComputed(objHandle, index, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return getComputed(objValue, index, result);
   });
 }
 
@@ -3007,9 +3009,9 @@ napi_status NodeApiEnvironment::deleteElement(
     uint32_t index,
     bool *result) noexcept {
   return handleExceptions([&] {
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return deleteComputed(objHandle, index, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return deleteComputed(objValue, index, result);
   });
 }
 
@@ -3394,10 +3396,8 @@ napi_status NodeApiEnvironment::wrapObject(
 
     // If we've already wrapped this object, we error out.
     ExternalValue *externalValue{};
-    CHECK_NAPI(getExternalValue(
-        makeHandle<vm::JSObject>(object),
-        IfNotFound::ThenCreate,
-        &externalValue));
+    CHECK_NAPI(
+        getExternalValue(object, IfNotFound::ThenCreate, &externalValue));
     RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
     Reference *reference{};
@@ -3439,10 +3439,8 @@ napi_status NodeApiEnvironment::unwrapObject(
 
     auto externalValue = getExternalValue(*phv(object));
     if (!externalValue) {
-      CHECK_NAPI(getExternalValue(
-          makeHandle<vm::JSObject>(object),
-          IfNotFound::ThenReturnNull,
-          &externalValue));
+      CHECK_NAPI(
+          getExternalValue(object, IfNotFound::ThenReturnNull, &externalValue));
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
@@ -4075,16 +4073,8 @@ napi_status NodeApiEnvironment::createPromise(
     napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
     CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
     CHECK_NAPI(createObject(&jsDeferred));
-    CHECK_NAPI(setPredefined(
-        makeHandle<vm::JSObject>(jsDeferred),
-        NapiPredefined::resolve,
-        makeHandle(jsResolve),
-        nullptr));
-    CHECK_NAPI(setPredefined(
-        makeHandle<vm::JSObject>(jsDeferred),
-        NapiPredefined::reject,
-        makeHandle(jsReject),
-        nullptr));
+    CHECK_NAPI(putPredefined(jsDeferred, NapiPredefined::resolve, jsResolve));
+    CHECK_NAPI(putPredefined(jsDeferred, NapiPredefined::reject, jsReject));
 
     CHECK_NAPI(StrongReference::create(
         *this,
@@ -4255,12 +4245,12 @@ napi_status NodeApiEnvironment::typeTagObject(
     const napi_type_tag *typeTag) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(typeTag);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
 
     // Fail if the tag already exists
     bool hasTag{};
-    CHECK_NAPI(hasPredefined(objHandle, NapiPredefined::napi_typeTag, &hasTag));
+    CHECK_NAPI(hasPredefined(objValue, NapiPredefined::napi_typeTag, &hasTag));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
     napi_value tagBuffer;
@@ -4272,11 +4262,7 @@ napi_status NodeApiEnvironment::typeTagObject(
     uint8_t *dest = reinterpret_cast<uint8_t *>(tagBufferData);
     std::copy(source, source + sizeof(napi_type_tag), dest);
 
-    return setPredefined(
-        objHandle,
-        NapiPredefined::napi_typeTag,
-        makeHandle(tagBuffer),
-        nullptr);
+    return putPredefined(objValue, NapiPredefined::napi_typeTag, tagBuffer);
   });
 }
 
@@ -4286,12 +4272,12 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(typeTag);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
 
     napi_value tagBufferValue;
-    CHECK_NAPI(getPredefined(
-        objHandle, NapiPredefined::napi_typeTag, &tagBufferValue));
+    CHECK_NAPI(
+        getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
     auto tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
     RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
@@ -4672,8 +4658,7 @@ napi_status NodeApiEnvironment::setErrorCode(
     } else {
       CHECK_NAPI(stringFromUtf8(codeCString, &code));
     }
-    return putNamed(
-        error, getPredefined(NapiPredefined::code).getSymbol(), code, nullptr);
+    return putPredefined(error, NapiPredefined::code, code, nullptr);
   }
   return napi_ok;
 }
@@ -4703,26 +4688,24 @@ vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
 }
 
 // TODO: simply handling the external value
+template <class TObject>
 napi_status NodeApiEnvironment::getExternalValue(
-    vm::Handle<vm::JSObject> objHandle,
+    TObject object,
     IfNotFound ifNotFound,
     ExternalValue **result) noexcept {
   return handleExceptions([&] {
     ExternalValue *externalValue{};
     napi_value externalNapiValue;
     napi_status status = getPredefined(
-        objHandle, NapiPredefined::napi_externalValue, &externalNapiValue);
+        object, NapiPredefined::napi_externalValue, &externalNapiValue);
     if (status == napi_ok) {
       externalValue = getExternalValue(*phv(externalNapiValue));
       RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
     } else if (ifNotFound == IfNotFound::ThenCreate) {
       vm::Handle<vm::DecoratedObject> decoratedObj =
           makeHandle(createExternal(nullptr, &externalValue));
-      CHECK_NAPI(setPredefined(
-          objHandle,
-          NapiPredefined::napi_externalValue,
-          decoratedObj,
-          nullptr));
+      CHECK_NAPI(putPredefined(
+          object, NapiPredefined::napi_externalValue, decoratedObj));
     }
     return setResult(std::move(externalValue), result);
   });
@@ -4822,34 +4805,6 @@ napi_status NodeApiEnvironment::getLastErrorInfo(
   return napi_ok;
 }
 
-const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
-    NapiPredefined predefinedKey) noexcept {
-  return predefinedValues_[static_cast<size_t>(predefinedKey)];
-}
-
-napi_status NodeApiEnvironment::hasPredefined(
-    vm::Handle<vm::JSObject> objHandle,
-    NapiPredefined key,
-    bool *result) noexcept {
-  vm::SymbolID name = getPredefined(key).getSymbol();
-  return setResult(vm::JSObject::hasNamed(objHandle, &runtime_, name), result);
-}
-
-napi_status NodeApiEnvironment::getPredefined(
-    vm::Handle<vm::JSObject> objHandle,
-    NapiPredefined key,
-    napi_value *result) noexcept {
-  return getNamed(objHandle, getPredefined(key).getSymbol(), result);
-}
-
-napi_status NodeApiEnvironment::setPredefined(
-    vm::Handle<vm::JSObject> objHandle,
-    NapiPredefined key,
-    vm::Handle<> value,
-    bool *optResult) noexcept {
-  return putNamed(objHandle, getPredefined(key).getSymbol(), value, optResult);
-}
-
 napi_status NodeApiEnvironment::genericFailure(
     const char * /*message*/) noexcept {
   // TODO: set result message
@@ -4875,10 +4830,8 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
   return handleExceptions([&] {
     auto externalValue = getExternalValue(*value);
     if (!externalValue) {
-      CHECK_NAPI(getExternalValue(
-          makeHandle<vm::JSObject>(value),
-          IfNotFound::ThenCreate,
-          &externalValue));
+      CHECK_NAPI(
+          getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
     }
 
     externalValue->addFinalizer(finalizer);
@@ -5047,6 +5000,11 @@ template <class T>
 vm::Handle<T> NodeApiEnvironment::makeHandle(
     vm::PseudoHandle<T> &&value) noexcept {
   return runtime_.makeHandle(std::move(value));
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(vm::Handle<T> value) noexcept {
+  return value;
 }
 
 template <class T>
@@ -5223,77 +5181,124 @@ napi_status NodeApiEnvironment::convertToObject(
   return setResult(vm::Handle<vm::JSObject>::vmcast(&runtime_, *obj), result);
 }
 
-template <class TKey, class TValue>
-napi_status NodeApiEnvironment::putComputed(
-    vm::Handle<vm::JSObject> objHandle,
-    TKey key,
-    TValue value,
-    bool *result) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
-      objHandle,
-      &runtime_,
-      makeHandle(key),
-      makeHandle(value),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), result);
+//-----------------------------------------------------------------------------
+// Property access helpers
+//-----------------------------------------------------------------------------
+
+const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
+    NapiPredefined predefinedKey) noexcept {
+  return predefinedValues_[static_cast<size_t>(predefinedKey)];
 }
 
-template <class TValue>
+template <class TObject, class TValue>
+napi_status NodeApiEnvironment::putPredefined(
+    TObject object,
+    NapiPredefined key,
+    TValue value,
+    bool *optResult) noexcept {
+  return putNamed(object, getPredefined(key).getSymbol(), value, optResult);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::hasPredefined(
+    TObject object,
+    NapiPredefined key,
+    bool *result) noexcept {
+  return hasNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::getPredefined(
+    TObject object,
+    NapiPredefined key,
+    napi_value *result) noexcept {
+  return getNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject, class TValue>
 napi_status NodeApiEnvironment::putNamed(
-    vm::Handle<vm::JSObject> objHandle,
-    vm::SymbolID key,
+    TObject object,
+    vm::SymbolID name,
     TValue value,
     bool *optResult) noexcept {
   vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
-      objHandle,
+      makeHandle<vm::JSObject>(object),
       &runtime_,
-      key,
+      name,
       makeHandle(value),
       vm::PropOpFlags().plusThrowOnError());
   return setOptionalResult(std::move(res), optResult);
 }
 
-napi_status NodeApiEnvironment::getNamed(
-    vm::Handle<vm::JSObject> objHandle,
-    vm::SymbolID key,
-    napi_value *result) noexcept {
-  return setResult(
-      vm::JSObject::getNamed_RJS(
-          objHandle, &runtime_, key, vm::PropOpFlags().plusThrowOnError()),
-      result);
-}
-
-template <class TKey>
-napi_status NodeApiEnvironment::hasComputed(
-    vm::Handle<vm::JSObject> objHandle,
-    TKey key,
+template <class TObject>
+napi_status NodeApiEnvironment::hasNamed(
+    TObject object,
+    vm::SymbolID name,
     bool *result) noexcept {
   vm::CallResult<bool> res =
-      vm::JSObject::hasComputed(objHandle, &runtime_, makeHandle(key));
+      vm::JSObject::hasNamed(makeHandle<vm::JSObject>(object), &runtime_, name);
   return setResult(std::move(res), result);
 }
 
-template <class TKey>
-napi_status NodeApiEnvironment::getComputed(
-    vm::Handle<vm::JSObject> objHandle,
-    TKey key,
+template <class TObject>
+napi_status NodeApiEnvironment::getNamed(
+    TObject object,
+    vm::SymbolID name,
     napi_value *result) noexcept {
-  vm::CallResult<vm::PseudoHandle<>> res =
-      vm::JSObject::getComputed_RJS(objHandle, &runtime_, makeHandle(key));
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getNamed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      vm::PropOpFlags().plusThrowOnError());
   return setResult(std::move(res), result);
 }
 
-template <class TKey>
-napi_status NodeApiEnvironment::deleteComputed(
-    vm::Handle<vm::JSObject> objHandle,
+template <class TObject, class TKey, class TValue>
+napi_status NodeApiEnvironment::putComputed(
+    TObject object,
+    TKey key,
+    TValue value,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::hasComputed(
+    TObject object,
     TKey key,
     bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::hasComputed(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::getComputed(
+    TObject object,
+    TKey key,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getComputed_RJS(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::deleteComputed(
+    TObject object,
+    TKey key,
+    bool *optResult) noexcept {
   vm::CallResult<bool> res = vm::JSObject::deleteComputed(
-      objHandle,
+      makeHandle<vm::JSObject>(object),
       &runtime_,
       makeHandle(key),
       vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), result);
+  return setOptionalResult(std::move(res), optResult);
 }
 
 template <class TKey>
