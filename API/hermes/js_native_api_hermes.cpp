@@ -963,9 +963,6 @@ struct NodeApiEnvironment final {
       void *finalizeHint) noexcept;
 
   static vm::JSObject *getObject(const vm::HermesValue &value) noexcept;
-  static vm::Handle<vm::JSObject> toObjectHandle(napi_value value) noexcept;
-  static vm::Handle<vm::JSObject> toObjectHandle(
-      const vm::PinnedHermesValue *value) noexcept;
 
   void addToFinalizerQueue(Finalizer *finalizer) noexcept;
   void addGCRoot(Reference *reference) noexcept;
@@ -2659,7 +2656,8 @@ napi_status NodeApiEnvironment::getPrototype(
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
     return setResult(
-        vm::JSObject::getPrototypeOf(toObjectHandle(object), &runtime_),
+        vm::JSObject::getPrototypeOf(
+            makeHandle<vm::JSObject>(object), &runtime_),
         result);
   });
 }
@@ -2831,7 +2829,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       // Continue to follow the prototype chain.
       napi_value parent;
       CHECK_NAPI(getPrototype(object, &parent));
-      currentObj = toObjectHandle(parent);
+      currentObj = makeHandle<vm::JSObject>(parent);
     }
 
     return convertKeyStorageToArray(keyStorage, 0, size, keyConversion, result);
@@ -3015,7 +3013,7 @@ napi_status NodeApiEnvironment::defineProperties(
       CHECK_ARG(properties);
     }
 
-    auto objHandle = toObjectHandle(object);
+    auto objHandle = makeHandle<vm::JSObject>(object);
     for (size_t i = 0; i < propertyCount; ++i) {
       const napi_property_descriptor *p = &properties[i];
       vm::MutableHandle<vm::SymbolID> name{&runtime_};
@@ -3390,7 +3388,9 @@ napi_status NodeApiEnvironment::wrapObject(
     // If we've already wrapped this object, we error out.
     ExternalValue *externalValue{};
     CHECK_NAPI(getExternalValue(
-        toObjectHandle(object), IfNotFound::ThenCreate, &externalValue));
+        makeHandle<vm::JSObject>(object),
+        IfNotFound::ThenCreate,
+        &externalValue));
     RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
     Reference *reference{};
@@ -3433,7 +3433,9 @@ napi_status NodeApiEnvironment::unwrapObject(
     auto externalValue = getExternalValue(*phv(object));
     if (!externalValue) {
       CHECK_NAPI(getExternalValue(
-          toObjectHandle(object), IfNotFound::ThenReturnNull, &externalValue));
+          makeHandle<vm::JSObject>(object),
+          IfNotFound::ThenReturnNull,
+          &externalValue));
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
@@ -3713,19 +3715,13 @@ napi_status NodeApiEnvironment::createArrayBuffer(
     void **data,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    auto buffer = vm::JSArrayBuffer::create(
-        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
-    // Add result to the local values before allocating buffer to ensure
-    // GC-safety.
-    CHECK_NAPI(setResult(buffer.getHermesValue(), result));
+    vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
+        &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
     CHECK_HERMES(buffer->createDataBlock(&runtime_, byteLength));
-
-    // Optionally return a pointer to the buffer's data, to avoid another call
-    // to retrieve it.
     if (data != nullptr) {
       *data = buffer->getDataBlock();
     }
-    return clearLastError();
+    return setResult(std::move(buffer), result);
   });
 }
 
@@ -3736,17 +3732,12 @@ napi_status NodeApiEnvironment::createExternalArrayBuffer(
     void *finalizeHint,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    vm::PseudoHandle<vm::JSArrayBuffer> buffer = vm::JSArrayBuffer::create(
-        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
-    // Add result to the local values before allocating buffer to ensure
-    // GC-safety.
-    CHECK_NAPI(setResult(buffer.getHermesValue(), result));
-
-    auto externalBuffer = std::make_unique<ExternalBuffer>(
-        env, externalData, byteLength, finalizeCallback, finalizeHint);
+    vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
+        &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
+    std::unique_ptr<ExternalBuffer> externalBuffer(new ExternalBuffer(
+        env, externalData, byteLength, finalizeCallback, finalizeHint));
     buffer->setExternalBuffer(&runtime_, std::move(externalBuffer));
-
-    return clearLastError();
+    return setResult(std::move(buffer), result);
   });
 }
 
@@ -3972,9 +3963,9 @@ napi_status NodeApiEnvironment::createDataView(
         "byte_offset + byte_length should be less than or "
         "equal to the size in bytes of the array passed in");
     auto viewHandle = vm::JSDataView::create(
-        &runtime_, toObjectHandle(&runtime_.dataViewPrototype));
+        &runtime_, makeHandle<vm::JSObject>(&runtime_.dataViewPrototype));
     viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
-    return setResult(viewHandle.getHermesValue(), result);
+    return setResult(std::move(viewHandle), result);
   });
 }
 
@@ -4142,7 +4133,7 @@ napi_status NodeApiEnvironment::adjustExternalMemory(
   //     env->isolate->AdjustAmountOfExternalAllocatedMemory(change_in_bytes);
 
   // return napi_clear_last_error(env);
-  return napi_ok;
+  return napi_not_implemented;
 }
 
 napi_status NodeApiEnvironment::createDate(
@@ -4150,8 +4141,8 @@ napi_status NodeApiEnvironment::createDate(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     vm::PseudoHandle<vm::JSDate> dateHandle = vm::JSDate::create(
-        &runtime_, dateTime, toObjectHandle(&runtime_.datePrototype));
-    return setResult(dateHandle.getHermesValue(), result);
+        &runtime_, dateTime, makeHandle<vm::JSObject>(&runtime_.datePrototype));
+    return setResult(std::move(dateHandle), result);
   });
 }
 
@@ -4247,12 +4238,13 @@ napi_status NodeApiEnvironment::typeTagObject(
     CHECK_ARG(typeTag);
     vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
     CHECK_NAPI(convertToObject(object, &objHandle));
+    // TODO: change private property API to return napi_status
     ASSIGN_ELSE_RETURN_FAILURE(
         auto hasTag, hasPrivate(objHandle, NapiPredefined::TypeTagSymbol));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
     auto tagBuffer = vm::JSArrayBuffer::create(
-        &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
+        &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype));
     // Create tagBufferHandle for the GC-safety before creating data block.
     auto tagBufferHandle =
         runtime_.makeHandle<vm::JSArrayBuffer>(tagBuffer.get());
@@ -4297,8 +4289,8 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
 napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-
-    CHECK_HERMES(vm::JSObject::freeze(toObjectHandle(object), &runtime_));
+    CHECK_HERMES(
+        vm::JSObject::freeze(makeHandle<vm::JSObject>(object), &runtime_));
     return clearLastError();
   });
 }
@@ -4306,8 +4298,8 @@ napi_status NodeApiEnvironment::objectFreeze(napi_value object) noexcept {
 napi_status NodeApiEnvironment::objectSeal(napi_value object) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-
-    CHECK_HERMES(vm::JSObject::seal(toObjectHandle(object), &runtime_));
+    CHECK_HERMES(
+        vm::JSObject::seal(makeHandle<vm::JSObject>(object), &runtime_));
     return clearLastError();
   });
 }
@@ -4879,7 +4871,9 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
     auto externalValue = getExternalValue(*value);
     if (!externalValue) {
       CHECK_NAPI(getExternalValue(
-          toObjectHandle(value), IfNotFound::ThenCreate, &externalValue));
+          makeHandle<vm::JSObject>(value),
+          IfNotFound::ThenCreate,
+          &externalValue));
     }
 
     externalValue->addFinalizer(finalizer);
@@ -5348,16 +5342,6 @@ napi_status NodeApiEnvironment::createSymbolID(
 vm::JSObject *NodeApiEnvironment::getObject(
     const vm::HermesValue &value) noexcept {
   return reinterpret_cast<vm::JSObject *>(value.getObject());
-}
-
-vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
-    napi_value value) noexcept {
-  return vm::Handle<vm::JSObject>::vmcast(phv(value));
-}
-
-vm::Handle<vm::JSObject> NodeApiEnvironment::toObjectHandle(
-    const vm::PinnedHermesValue *value) noexcept {
-  return vm::Handle<vm::JSObject>::vmcast(value);
 }
 
 void NodeApiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
