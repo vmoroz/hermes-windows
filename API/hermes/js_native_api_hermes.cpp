@@ -3541,9 +3541,7 @@ napi_status NodeApiEnvironment::getReferenceValue(
     napi_ref ref,
     napi_value *result) noexcept {
   CHECK_ARG(ref);
-  CHECK_ARG(result);
-  *result = addStackValue(asReference(ref)->value(env));
-  return clearLastError();
+  return setResult(asReference(ref)->value(env), result);
 }
 
 napi_status NodeApiEnvironment::openHandleScope(
