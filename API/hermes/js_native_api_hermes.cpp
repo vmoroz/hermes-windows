@@ -911,6 +911,9 @@ struct NodeApiEnvironment final {
   vm::Handle<> makeHandle(uint32_t value) noexcept;
 
   template <class T>
+  vm::Handle<T> makeHandle(napi_value value) noexcept;
+
+  template <class T>
   vm::CallResult<vm::Handle<T>> makeHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
 
@@ -2534,9 +2537,8 @@ napi_status NodeApiEnvironment::getValueStringLatin1(
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
-    vm::Handle<vm::StringPrimitive> handle(
-        &runtime_, makeHandle(value)->getString());
-    auto view = vm::StringPrimitive::createStringView(&runtime_, handle);
+    auto view = vm::StringPrimitive::createStringView(
+        &runtime_, makeHandle<vm::StringPrimitive>(value));
 
     if (!buf) {
       CHECK_ARG(result);
@@ -5114,6 +5116,11 @@ vm::Handle<> NodeApiEnvironment::makeHandle(vm::Handle<> value) noexcept {
 
 vm::Handle<> NodeApiEnvironment::makeHandle(uint32_t value) noexcept {
   return makeHandle(vm::HermesValue::encodeDoubleValue(value));
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
+  return vm::Handle<T>::vmcast(phv(value));
 }
 
 template <class T>
