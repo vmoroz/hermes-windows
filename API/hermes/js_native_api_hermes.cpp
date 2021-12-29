@@ -580,7 +580,7 @@ struct NodeApiEnvironment final {
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
   napi_status getForInPropertyNames(
-      vm::Handle<vm::JSObject> object,
+      napi_value object,
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
   napi_status
@@ -870,10 +870,6 @@ struct NodeApiEnvironment final {
       napi_value code,
       const char *codeCString) noexcept;
 
-  napi_status convertToObject(
-      napi_value object,
-      vm::MutableHandle<vm::JSObject> *result) noexcept;
-
   //---------------------------------------------------------------------------
   // Property access helpers
  public:
@@ -929,9 +925,9 @@ struct NodeApiEnvironment final {
   napi_status
   deleteComputed(TObject object, TKey key, bool *optResult = nullptr) noexcept;
 
-  template <class TKey>
+  template <class TObject, class TKey>
   napi_status getOwnComputedDescriptor(
-      vm::Handle<vm::JSObject> objHandle,
+      TObject object,
       TKey key,
       vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
       vm::ComputedPropertyDescriptor &desc,
@@ -2678,10 +2674,9 @@ napi_status NodeApiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
-    return getForInPropertyNames(
-        objHandle, napi_key_numbers_to_strings, result);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+    return getForInPropertyNames(objValue, napi_key_numbers_to_strings, result);
   });
 }
 
@@ -2692,8 +2687,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
     RETURN_STATUS_IF_FALSE(
         isInEnumRange(keyMode, napi_key_include_prototypes, napi_key_own_only),
         napi_invalid_arg);
@@ -2713,7 +2708,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // The fast path used for the 'for..in' implementation.
     if (keyFilter == (napi_key_enumerable | napi_key_skip_symbols) &&
         (keyMode == napi_key_include_prototypes || !hasParent)) {
-      return getForInPropertyNames(objHandle, keyConversion, result);
+      return getForInPropertyNames(objValue, keyConversion, result);
     }
 
     // Flags to request own keys
@@ -2729,7 +2724,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
           (keyFilter & napi_key_enumerable) == 0);
       ASSIGN_ELSE_RETURN_FAILURE(
           vm::Handle<vm::JSArray> ownKeys /*=*/,
-          vm::JSObject::getOwnPropertyKeys(objHandle, &runtime_, ownKeyFlags));
+          vm::JSObject::getOwnPropertyKeys(
+              makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags));
       if (keyConversion == napi_key_numbers_to_strings) {
         CHECK_HERMES(convertKeyNumbersToStrings(ownKeys));
       }
@@ -2760,7 +2756,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         });
 
     // Keep the mutable variables outside of loop for efficiency
-    vm::MutableHandle<vm::JSObject> currentObj(&runtime_, objHandle.get());
+    vm::MutableHandle<vm::JSObject> currentObj(
+        &runtime_, *makeHandle<vm::JSObject>(objValue));
     vm::MutableHandle<> prop(&runtime_);
     OptValue<uint32_t> propIndexOpt{};
     vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
@@ -2849,7 +2846,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
 }
 
 napi_status NodeApiEnvironment::getForInPropertyNames(
-    vm::Handle<vm::JSObject> object,
+    napi_value object,
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   // Hermes optimizes retrieving property names for the 'for..in' implementation
@@ -2858,7 +2855,8 @@ napi_status NodeApiEnvironment::getForInPropertyNames(
   uint32_t endIndex;
   ASSIGN_ELSE_RETURN_FAILURE(
       vm::Handle<vm::BigStorage> keyStorage,
-      vm::getForInPropertyNames(&runtime_, object, beginIndex, endIndex));
+      vm::getForInPropertyNames(
+          &runtime_, makeHandle<vm::JSObject>(object), beginIndex, endIndex));
   return convertKeyStorageToArray(
       keyStorage, 0, endIndex - beginIndex, keyConversion, result);
 }
@@ -2918,12 +2916,12 @@ napi_status NodeApiEnvironment::hasOwnProperty(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(key);
-    vm::MutableHandle<vm::JSObject> objHandle(&runtime_);
-    CHECK_NAPI(convertToObject(object, &objHandle));
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
     vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
     vm::ComputedPropertyDescriptor desc;
     return getOwnComputedDescriptor(
-        objHandle, key, tmpSymbolStorage, desc, result);
+        objValue, key, tmpSymbolStorage, desc, result);
   });
 }
 
@@ -5171,16 +5169,6 @@ napi_status NodeApiEnvironment::setResultUnsafe(
   return setResultUnsafe(std::move(*value), result);
 }
 
-napi_status NodeApiEnvironment::convertToObject(
-    napi_value object,
-    vm::MutableHandle<vm::JSObject> *result) noexcept {
-  CHECK_ARG(object);
-  vm::CallResult<vm::HermesValue> obj =
-      vm::toObject(&runtime_, makeHandle(object));
-  CHECK_HERMES_STATUS(obj.getStatus(), napi_object_expected);
-  return setResult(vm::Handle<vm::JSObject>::vmcast(&runtime_, *obj), result);
-}
-
 //-----------------------------------------------------------------------------
 // Property access helpers
 //-----------------------------------------------------------------------------
@@ -5301,15 +5289,19 @@ napi_status NodeApiEnvironment::deleteComputed(
   return setOptionalResult(std::move(res), optResult);
 }
 
-template <class TKey>
+template <class TObject, class TKey>
 napi_status NodeApiEnvironment::getOwnComputedDescriptor(
-    vm::Handle<vm::JSObject> objHandle,
+    TObject object,
     TKey key,
     vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
     vm::ComputedPropertyDescriptor &desc,
     bool *result) noexcept {
   vm::CallResult<bool> res = vm::JSObject::getOwnComputedDescriptor(
-      objHandle, &runtime_, makeHandle(key), tmpSymbolStorage, desc);
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      tmpSymbolStorage,
+      desc);
   return setResult(std::move(res), result);
 }
 
