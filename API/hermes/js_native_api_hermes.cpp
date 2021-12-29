@@ -3324,12 +3324,8 @@ napi_status NodeApiEnvironment::getNewTarget(
     napi_callback_info callbackInfo,
     napi_value *result) noexcept {
   CHECK_ARG(callbackInfo);
-  CHECK_ARG(result);
-  CallbackInfo *cbInfo = reinterpret_cast<CallbackInfo *>(callbackInfo);
-
-  *result = cbInfo->getNewTarget();
-
-  return clearLastError();
+  return setResult(
+      reinterpret_cast<CallbackInfo *>(callbackInfo)->getNewTarget(), result);
 }
 
 napi_status NodeApiEnvironment::defineClass(
