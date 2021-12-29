@@ -3801,9 +3801,7 @@ napi_status NodeApiEnvironment::isTypedArray(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  *result = vm::vmisa<vm::JSTypedArrayBase>(*phv(value));
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSTypedArrayBase>(*phv(value)), result);
 }
 
 template <vm::CellKind CellKind>
@@ -3992,7 +3990,6 @@ napi_status NodeApiEnvironment::createDataView(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(arrayBuffer);
-    CHECK_ARG(result);
 
     vm::JSArrayBuffer *buffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
@@ -4006,8 +4003,7 @@ napi_status NodeApiEnvironment::createDataView(
     auto viewHandle = vm::JSDataView::create(
         &runtime_, toObjectHandle(&runtime_.dataViewPrototype));
     viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
-    *result = addStackValue(viewHandle.getHermesValue());
-    return clearLastError();
+    return setResult(viewHandle.getHermesValue(), result);
   });
 }
 
@@ -4015,9 +4011,7 @@ napi_status NodeApiEnvironment::isDataView(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  *result = vm::vmisa<vm::JSDataView>(*phv(value));
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSDataView>(*phv(value)), result);
 }
 
 napi_status NodeApiEnvironment::getDataViewInfo(
