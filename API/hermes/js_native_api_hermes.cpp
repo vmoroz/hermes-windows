@@ -175,7 +175,7 @@ enum class NapiPredefined {
   TrueValue,
   FalseValue,
   ExternalValueSymbol,
-  CodeSymbol,
+  code,
   TypeTagSymbol,
   PredefinedCount // a special value that must be last in the enum
 };
@@ -529,13 +529,20 @@ struct NodeApiEnvironment final {
       napi_callback callback,
       void *callbackData,
       napi_value *result) noexcept;
+  napi_status createError(
+      const vm::PinnedHermesValue *errorPrototype,
+      napi_value code,
+      napi_value message,
+      napi_value *result) noexcept;
   napi_status
-  createError(napi_value code, napi_value msg, napi_value *result) noexcept;
-  napi_status
-  createTypeError(napi_value code, napi_value msg, napi_value *result) noexcept;
+  createError(napi_value code, napi_value message, napi_value *result) noexcept;
+  napi_status createTypeError(
+      napi_value code,
+      napi_value message,
+      napi_value *result) noexcept;
   napi_status createRangeError(
       napi_value code,
-      napi_value msg,
+      napi_value message,
       napi_value *result) noexcept;
 
   napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
@@ -857,6 +864,11 @@ struct NodeApiEnvironment final {
       void *bufferHint) noexcept;
 
  public:
+  napi_status setErrorCode(
+      vm::Handle<vm::JSError> error,
+      napi_value code,
+      const char *codeCString) noexcept;
+
   napi_status convertToObject(
       napi_value object,
       vm::MutableHandle<vm::JSObject> *result) noexcept;
@@ -865,6 +877,13 @@ struct NodeApiEnvironment final {
   napi_status putComputed(
       vm::Handle<vm::JSObject> objHandle,
       TKey key,
+      TValue value,
+      bool *result) noexcept;
+
+  template <class TValue>
+  napi_status putNamed(
+      vm::Handle<vm::JSObject> objHandle,
+      vm::SymbolID key,
       TValue value,
       bool *result) noexcept;
 
@@ -912,6 +931,10 @@ struct NodeApiEnvironment final {
 
   template <class T>
   vm::Handle<T> makeHandle(napi_value value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(vm::PseudoHandle<T> &&value) noexcept;
 
   template <class T>
   vm::CallResult<vm::Handle<T>> makeHandle(
@@ -2240,9 +2263,9 @@ NodeApiEnvironment::NodeApiEnvironment(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
               "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
   setPredefined(
-      NapiPredefined::CodeSymbol,
+      NapiPredefined::code,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().createNotUniquedLazySymbol("code")));
+          runtime_.getIdentifierTable().registerLazyIdentifier("code")));
   setPredefined(
       NapiPredefined::TypeTagSymbol,
       vm::HermesValue::encodeSymbolValue(
@@ -2409,70 +2432,40 @@ napi_status NodeApiEnvironment::createFunction(
 }
 
 napi_status NodeApiEnvironment::createError(
+    const vm::PinnedHermesValue *errorPrototype,
     napi_value code,
-    napi_value msg,
+    napi_value message,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_, vm::Handle<vm::JSObject>::vmcast(&runtime_.ErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
-    // TODO:
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
+    CHECK_STRING_ARG(message);
+    vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
+        &runtime_, makeHandle<vm::JSObject>(errorPrototype)));
+    CHECK_STATUS(
+        vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message)));
+    CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
+    return setResult(std::move(errorHandle), result);
   });
+}
+
+napi_status NodeApiEnvironment::createError(
+    napi_value code,
+    napi_value message,
+    napi_value *result) noexcept {
+  return createError(&runtime_.ErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::createTypeError(
     napi_value code,
-    napi_value msg,
+    napi_value message,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_,
-        vm::Handle<vm::JSObject>::vmcast(&runtime_.TypeErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
-  });
+  return createError(&runtime_.TypeErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::createRangeError(
     napi_value code,
-    napi_value msg,
+    napi_value message,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(msg);
-    CHECK_ARG(result);
-
-    auto err = vm::JSError::create(
-        &runtime_,
-        vm::Handle<vm::JSObject>::vmcast(&runtime_.RangeErrorPrototype));
-
-    vm::PinnedHermesValue err_phv{err.getHermesValue()};
-    CHECK_STATUS(vm::JSError::setMessage(
-        vm::Handle<vm::JSError>::vmcast(&err_phv), &runtime_, makeHandle(msg)));
-    // TODO:
-    // CHECK_NAPI(set_error_code(env, error_obj, code, nullptr));
-
-    *result = addStackValue(err_phv);
-    return clearLastError();
-  });
+  return createError(&runtime_.RangeErrorPrototype, code, message, result);
 }
 
 napi_status NodeApiEnvironment::typeOf(
@@ -3670,7 +3663,7 @@ napi_status NodeApiEnvironment::throwError(
       CHECK_STATUS(vm::JSObject::putNamed_RJS(
                        errorObj,
                        &runtime_,
-                       getPredefined(NapiPredefined::CodeSymbol).getSymbol(),
+                       getPredefined(NapiPredefined::code).getSymbol(),
                        codeHandle)
                        .getStatus());
     }
@@ -4670,6 +4663,22 @@ napi_status NodeApiEnvironment::serializePreparedScript(
   return clearLastError();
 }
 
+napi_status NodeApiEnvironment::setErrorCode(
+    vm::Handle<vm::JSError> error,
+    napi_value code,
+    const char *codeCString) noexcept {
+  if (code || codeCString) {
+    if (code) {
+      CHECK_STRING_ARG(code);
+    } else {
+      CHECK_NAPI(stringFromUtf8(codeCString, &code));
+    }
+    return putNamed(
+        error, getPredefined(NapiPredefined::code).getSymbol(), code, nullptr);
+  }
+  return napi_ok;
+}
+
 vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
     void *nativeData,
     ExternalValue **externalValue) noexcept {
@@ -5042,6 +5051,18 @@ vm::Handle<T> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
 }
 
 template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(
+    const vm::PinnedHermesValue *value) noexcept {
+  return vm::Handle<T>::vmcast(value);
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(
+    vm::PseudoHandle<T> &&value) noexcept {
+  return runtime_.makeHandle(std::move(value));
+}
+
+template <class T>
 vm::CallResult<vm::Handle<T>> NodeApiEnvironment::makeHandle(
     vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
   if (callResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
@@ -5230,6 +5251,21 @@ napi_status NodeApiEnvironment::putComputed(
       objHandle,
       &runtime_,
       makeHandle(key),
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), result);
+}
+
+template <class TValue>
+napi_status NodeApiEnvironment::putNamed(
+    vm::Handle<vm::JSObject> objHandle,
+    vm::SymbolID key,
+    TValue value,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
+      objHandle,
+      &runtime_,
+      key,
       makeHandle(value),
       vm::PropOpFlags().plusThrowOnError());
   return setOptionalResult(std::move(res), result);
