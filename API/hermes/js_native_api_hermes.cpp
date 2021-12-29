@@ -2478,7 +2478,7 @@ napi_status NodeApiEnvironment::createRangeError(
 napi_status NodeApiEnvironment::typeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(value);
   CHECK_ARG(result);
 
@@ -3546,7 +3546,7 @@ napi_status NodeApiEnvironment::getReferenceValue(
 
 napi_status NodeApiEnvironment::openHandleScope(
     napi_handle_scope *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(result);
 
   Marker stackMarker = stackValues_.createMarker();
@@ -3557,7 +3557,7 @@ napi_status NodeApiEnvironment::openHandleScope(
 
 napi_status NodeApiEnvironment::closeHandleScope(
     napi_handle_scope scope) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(scope);
   if (stackMarkers_.empty()) {
     return napi_handle_scope_mismatch;
@@ -3615,7 +3615,7 @@ napi_status NodeApiEnvironment::escapeHandle(
     napi_escapable_handle_scope scope,
     napi_value escapee,
     napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(scope);
   CHECK_ARG(escapee);
   CHECK_ARG(result);
@@ -3726,7 +3726,7 @@ napi_status NodeApiEnvironment::isError(
 
 // Methods to support catching exceptions
 napi_status NodeApiEnvironment::isExceptionPending(bool *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(result);
 
   *result = !lastException_.isEmpty();
@@ -3735,7 +3735,7 @@ napi_status NodeApiEnvironment::isExceptionPending(bool *result) noexcept {
 
 napi_status NodeApiEnvironment::getAndClearLastException(
     napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+  
   CHECK_ARG(result);
 
   if (lastException_.isEmpty()) {
