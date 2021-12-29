@@ -190,6 +190,7 @@ const napi_status napi_not_implemented = napi_generic_failure;
 
 namespace {
 
+napi_env napiEnv(NodeApiEnvironment *env) noexcept;
 napi_value napiValue(const vm::PinnedHermesValue *value) noexcept;
 const vm::PinnedHermesValue *phv(napi_value value) noexcept;
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept;
@@ -1837,7 +1838,7 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
 
   CallbackInfo callbackInfo{*hfc, hvArgs};
   auto result = hfc->hostCallback_(
-      reinterpret_cast<napi_env>(&env),
+      napiEnv(&env),
       reinterpret_cast<napi_callback_info>(&callbackInfo));
   return *phv(result);
   // TODO: handle errors
@@ -1992,12 +1993,17 @@ bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept {
   return lowerBound <= value && value <= upperBound;
 }
 
-napi_value napiValue(const vm::PinnedHermesValue *hv) noexcept {
-  return reinterpret_cast<napi_value>(const_cast<vm::PinnedHermesValue *>(hv));
+napi_env napiEnv(NodeApiEnvironment *env) noexcept {
+  return reinterpret_cast<napi_env>(env);
+}
+
+napi_value napiValue(const vm::PinnedHermesValue *value) noexcept {
+  return reinterpret_cast<napi_value>(
+      const_cast<vm::PinnedHermesValue *>(value));
 }
 
 const vm::PinnedHermesValue *phv(napi_value value) noexcept {
-  return reinterpret_cast<vm::PinnedHermesValue *>(value);
+  return reinterpret_cast<const vm::PinnedHermesValue *>(value);
 }
 
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
@@ -4385,7 +4391,7 @@ napi_status NodeApiEnvironment::runScript(
       nullptr));
   return runScriptWithSourceMap(
       makeHermesBuffer(
-          reinterpret_cast<napi_env>(this),
+          napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(buffer.release()),
           [](napi_env /*env*/,
              napi_ext_buffer buffer,
@@ -4415,7 +4421,7 @@ napi_status NodeApiEnvironment::runSerializedScript(
   std::copy(buffer, buffer + bufferLength, bufferCopy->data());
   return runScriptWithSourceMap(
       makeHermesBuffer(
-          reinterpret_cast<napi_env>(this),
+          napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(bufferCopy.release()),
           [](napi_env /*env*/,
              napi_ext_buffer buffer,
@@ -4451,7 +4457,7 @@ napi_status NodeApiEnvironment::serializeScript(
   napi_ext_prepared_script preparedScript{};
   CHECK_NAPI(prepareScriptWithSourceMap(
       makeHermesBuffer(
-          reinterpret_cast<napi_env>(this),
+          napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(buffer.release()),
           [](napi_env /*env*/,
              napi_ext_buffer buffer,
@@ -4606,7 +4612,7 @@ napi_status NodeApiEnvironment::serializePreparedScript(
         hermesPreparedScript->bytecodeProvider());
     auto bufferRef = bytecodeProvider->getRawBuffer();
     bufferCallback(
-        reinterpret_cast<napi_env>(this),
+        napiEnv(this),
         bufferRef.data(),
         bufferRef.size(),
         bufferHint);
@@ -4634,7 +4640,7 @@ napi_status NodeApiEnvironment::serializePreparedScript(
     hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
     BS.serialize(*bcModule, bytecodeProvider->getSourceHash());
     bufferCallback(
-        reinterpret_cast<napi_env>(this),
+        napiEnv(this),
         reinterpret_cast<uint8_t *>(bytecodeVector.data()),
         bytecodeVector.size(),
         bufferHint);
@@ -4971,7 +4977,7 @@ napi_status NodeApiEnvironment::stringFromUtf8(
 
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   stackValues_.emplaceBack(value);
-  return reinterpret_cast<napi_value>(&stackValues_.back());
+  return napiValue(&stackValues_.back());
 }
 
 napi_status NodeApiEnvironment::checkStatus(
@@ -5385,7 +5391,7 @@ napi_status NodeApiEnvironment::callFinalizer(
   return handleExceptions([&] {
     callIntoModule([&](NodeApiEnvironment *env) {
       finalizeCallback(
-          reinterpret_cast<napi_env>(env), nativeData, finalizeHint);
+          napiEnv(env), nativeData, finalizeHint);
     });
     return napi_ok;
   });
@@ -6429,7 +6435,7 @@ napi_status __cdecl napi_create_hermes_env(napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = reinterpret_cast<napi_env>(new hermes::napi::NodeApiEnvironment());
+  *env = hermes::napi::napiEnv(new hermes::napi::NodeApiEnvironment());
   return napi_status::napi_ok;
 }
 
