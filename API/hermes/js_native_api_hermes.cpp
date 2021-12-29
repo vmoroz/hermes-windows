@@ -631,13 +631,13 @@ struct NodeApiEnvironment final {
   instanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
 
   napi_status getCallbackInfo(
-      CallbackInfo *callbackInfo,
+      napi_callback_info callbackInfo,
       size_t *argCount,
       napi_value *args,
       napi_value *thisArg,
       void **data) noexcept;
   napi_status getNewTarget(
-      CallbackInfo *callbackInfo,
+      napi_callback_info callbackInfo,
       napi_value *result) noexcept;
   napi_status defineClass(
       const char *utf8Name,
@@ -3293,42 +3293,41 @@ napi_status NodeApiEnvironment::instanceOf(
 }
 
 napi_status NodeApiEnvironment::getCallbackInfo(
-    CallbackInfo *callbackInfo,
+    napi_callback_info callbackInfo,
     size_t *argCount,
     napi_value *args,
     napi_value *thisArg,
     void **data) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(callbackInfo);
-
+  CallbackInfo *cbInfo = reinterpret_cast<CallbackInfo *>(callbackInfo);
   if (args != nullptr) {
     CHECK_ARG(argCount);
-    callbackInfo->args(args, argCount);
+    cbInfo->args(args, argCount);
   }
 
   if (argCount != nullptr) {
-    *argCount = callbackInfo->argCount();
+    *argCount = cbInfo->argCount();
   }
 
   if (thisArg != nullptr) {
-    *thisArg = callbackInfo->thisArg();
+    *thisArg = cbInfo->thisArg();
   }
 
   if (data != nullptr) {
-    *data = callbackInfo->data();
+    *data = cbInfo->data();
   }
 
   return clearLastError();
 }
 
 napi_status NodeApiEnvironment::getNewTarget(
-    CallbackInfo *callbackInfo,
+    napi_callback_info callbackInfo,
     napi_value *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
   CHECK_ARG(callbackInfo);
   CHECK_ARG(result);
+  CallbackInfo *cbInfo = reinterpret_cast<CallbackInfo *>(callbackInfo);
 
-  *result = callbackInfo->getNewTarget();
+  *result = cbInfo->getNewTarget();
 
   return clearLastError();
 }
@@ -5948,20 +5947,14 @@ napi_status __cdecl napi_get_cb_info(
     napi_value *argv,
     napi_value *this_arg,
     void **data) {
-  return CHECKED_ENV(env)->getCallbackInfo(
-      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo),
-      argc,
-      argv,
-      this_arg,
-      data);
+  return CHECKED_ENV(env)->getCallbackInfo(cbinfo, argc, argv, this_arg, data);
 }
 
 napi_status __cdecl napi_get_new_target(
     napi_env env,
     napi_callback_info cbinfo,
     napi_value *result) {
-  return CHECKED_ENV(env)->getNewTarget(
-      reinterpret_cast<hermes::napi::CallbackInfo *>(cbinfo), result);
+  return CHECKED_ENV(env)->getNewTarget(cbinfo, result);
 }
 
 napi_status __cdecl napi_define_class(
