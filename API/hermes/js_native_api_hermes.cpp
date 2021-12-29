@@ -539,10 +539,8 @@ struct NodeApiEnvironment final {
       napi_value *result) noexcept;
 
   napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
-  napi_status getNumberValue(napi_value value, double *result) noexcept;
-  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
-  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
-  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
+  template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
+  napi_status getNumberValue(napi_value value, T *result) noexcept;
   napi_status getBoolValue(napi_value value, bool *result) noexcept;
   napi_status getValueStringLatin1(
       napi_value value,
@@ -2514,48 +2512,12 @@ napi_status NodeApiEnvironment::typeOf(
   return clearLastError();
 }
 
+template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
 napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
-    double *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
+    T *result) noexcept {
   CHECK_NUMBER_ARG(value);
-  CHECK_ARG(result);
-
-  *result = phv(value)->getNumberAs<double>();
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::getNumberValue(
-    napi_value value,
-    int32_t *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_NUMBER_ARG(value);
-  CHECK_ARG(result);
-
-  *result = phv(value)->getNumberAs<int32_t>();
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::getNumberValue(
-    napi_value value,
-    uint32_t *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_NUMBER_ARG(value);
-  CHECK_ARG(result);
-
-  *result = phv(value)->getNumberAs<uint32_t>();
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::getNumberValue(
-    napi_value value,
-    int64_t *result) noexcept {
-  // No handleExceptions because Hermes calls cannot throw JS exceptions here.
-  CHECK_NUMBER_ARG(value);
-  CHECK_ARG(result);
-
-  *result = phv(value)->getNumberAs<int64_t>();
-  return clearLastError();
+  return setResult(phv(value)->getNumberAs<T>(), result);
 }
 
 napi_status NodeApiEnvironment::getBoolValue(
