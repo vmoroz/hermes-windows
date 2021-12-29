@@ -116,10 +116,10 @@ using ::hermes::hermesLog;
   CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
 
 #define CHECK_HERMES(hermesStatus) \
-  CHECK_NAPI(checkStatus(hermesStatus, napi_generic_failure))
+  CHECK_NAPI(checkHermesStatus(hermesStatus, napi_generic_failure))
 
 #define CHECK_HERMES_STATUS(hermesStatus, status) \
-  CHECK_NAPI(checkStatus(hermesStatus, status))
+  CHECK_NAPI(checkHermesStatus(hermesStatus, status))
 
 #define CONCAT_IMPL(left, right) left##right
 #define CONCAT(left, right) CONCAT_IMPL(left, right)
@@ -935,6 +935,10 @@ struct NodeApiEnvironment final {
   // Error handling helpers
   //---------------------------------------------------------------------------
  public:
+  napi_status checkHermesStatus(
+      vm::ExecutionStatus hermesStatus,
+      napi_status status = napi_generic_failure) noexcept;
+
   napi_status setErrorCode(
       vm::Handle<vm::JSError> error,
       napi_value code,
@@ -1070,9 +1074,6 @@ struct NodeApiEnvironment final {
       std::u16string &out) noexcept;
 
   napi_value addStackValue(vm::HermesValue value) noexcept;
-  napi_status checkStatus(
-      vm::ExecutionStatus hermesStatus,
-      napi_status status) noexcept;
 
   napi_status newFunction(
       vm::SymbolID name,
@@ -4828,6 +4829,18 @@ napi_status NodeApiEnvironment::setResultUnsafe(
 // Error handling helpers
 //---------------------------------------------------------------------------
 
+napi_status NodeApiEnvironment::checkHermesStatus(
+    vm::ExecutionStatus hermesStatus,
+    napi_status status) noexcept {
+  if (LLVM_LIKELY(hermesStatus != vm::ExecutionStatus::EXCEPTION)) {
+    return napi_ok;
+  }
+
+  lastException_ = runtime_.getThrownValue();
+  runtime_.clearThrownValue();
+  return status;
+}
+
 napi_status NodeApiEnvironment::setErrorCode(
     vm::Handle<vm::JSError> error,
     napi_value code,
@@ -5250,18 +5263,6 @@ napi_status NodeApiEnvironment::stringFromUtf8(
 napi_value NodeApiEnvironment::addStackValue(vm::HermesValue value) noexcept {
   stackValues_.emplaceBack(value);
   return napiValue(&stackValues_.back());
-}
-
-napi_status NodeApiEnvironment::checkStatus(
-    vm::ExecutionStatus hermesStatus,
-    napi_status status) noexcept {
-  if (LLVM_LIKELY(hermesStatus != vm::ExecutionStatus::EXCEPTION)) {
-    return napi_ok;
-  }
-
-  lastException_ = runtime_.getThrownValue();
-  runtime_.clearThrownValue();
-  return status;
 }
 
 napi_status NodeApiEnvironment::newFunction(
