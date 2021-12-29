@@ -4095,12 +4095,12 @@ napi_status NodeApiEnvironment::createPromise(
   return newInstance(promiseConstructor, 1, &func, promise);
 }
 
+// TODO: predefine names for Promises
 napi_status NodeApiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(deferred);
-    CHECK_ARG(result);
 
     napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
     CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
@@ -4112,8 +4112,7 @@ napi_status NodeApiEnvironment::createPromise(
         *this,
         phv(jsDeferred),
         reinterpret_cast<StrongReference **>(deferred)));
-    *result = jsPromise;
-    return clearLastError();
+    return setResult(jsPromise, result);
   });
 }
 
@@ -4152,7 +4151,6 @@ napi_status NodeApiEnvironment::isPromise(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
 
   napi_value global;
   napi_value promiseConstructor;
@@ -4180,11 +4178,9 @@ napi_status NodeApiEnvironment::createDate(
     double dateTime,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
-    auto dateHandle = vm::JSDate::create(
+    vm::PseudoHandle<vm::JSDate> dateHandle = vm::JSDate::create(
         &runtime_, dateTime, toObjectHandle(&runtime_.datePrototype));
-    *result = addStackValue(dateHandle.getHermesValue());
-    return clearLastError();
+    return setResult(dateHandle.getHermesValue(), result);
   });
 }
 
@@ -4192,10 +4188,7 @@ napi_status NodeApiEnvironment::isDate(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
-  CHECK_ARG(result);
-  const vm::PinnedHermesValue *hv = phv(value);
-  *result = hv->isObject() && vm::vmisa<vm::JSDate>(*hv);
-  return clearLastError();
+  return setResult(vm::vmisa<vm::JSDate>(*phv(value)), result);
 }
 
 napi_status NodeApiEnvironment::getDateValue(
@@ -4203,11 +4196,9 @@ napi_status NodeApiEnvironment::getDateValue(
     double *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(value);
-    CHECK_ARG(result);
     vm::JSDate *date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
     RETURN_STATUS_IF_FALSE(date, napi_date_expected);
-    *result = date->getPrimitiveValue();
-    return clearLastError();
+    return setResult(date->getPrimitiveValue(), result);
   });
 }
 
@@ -4256,10 +4247,8 @@ napi_status NodeApiEnvironment::setInstanceData(
 }
 
 napi_status NodeApiEnvironment::getInstanceData(void **nativeData) noexcept {
-  CHECK_ARG(nativeData);
-  *nativeData =
-      instanceData_ == nullptr ? nullptr : instanceData_->nativeData();
-  return clearLastError();
+  return setResult(
+      instanceData_ ? instanceData_->nativeData() : nullptr, nativeData);
 }
 
 napi_status NodeApiEnvironment::detachArrayBuffer(
@@ -4275,11 +4264,9 @@ napi_status NodeApiEnvironment::isDetachedArrayBuffer(
     napi_value arrayBuffer,
     bool *result) noexcept {
   CHECK_ARG(arrayBuffer);
-  CHECK_ARG(result);
   auto buffer = vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
-  *result = buffer->attached();
-  return clearLastError();
+  return setResult(buffer->attached(), result);
 }
 
 napi_status NodeApiEnvironment::typeTagObject(
@@ -4417,9 +4404,7 @@ napi_status NodeApiEnvironment::getReferenceValue(
     napi_ext_ref ref,
     napi_value *result) noexcept {
   CHECK_ARG(ref);
-  CHECK_ARG(result);
-  *result = addStackValue(asReference(ref)->value(*this));
-  return clearLastError();
+  return setResult(asReference(ref)->value(*this), result);
 }
 
 napi_status NodeApiEnvironment::runScript(
