@@ -3516,10 +3516,7 @@ napi_status NodeApiEnvironment::incReference(
   CHECK_ARG(ref);
   uint32_t refCount{};
   CHECK_NAPI(asReference(ref)->incRefCount(*this, refCount));
-  if (result != nullptr) {
-    *result = refCount;
-  }
-  return clearLastError();
+  return setOptionalResult(std::move(refCount), result);
 }
 
 napi_status NodeApiEnvironment::decReference(
@@ -3528,10 +3525,7 @@ napi_status NodeApiEnvironment::decReference(
   CHECK_ARG(ref);
   uint32_t refCount{};
   CHECK_NAPI(asReference(ref)->decRefCount(*this, refCount));
-  if (result != nullptr) {
-    *result = refCount;
-  }
-  return clearLastError();
+  return setOptionalResult(std::move(refCount), result);
 }
 
 napi_status NodeApiEnvironment::getReferenceValue(
@@ -3543,12 +3537,10 @@ napi_status NodeApiEnvironment::getReferenceValue(
 
 napi_status NodeApiEnvironment::openHandleScope(
     napi_handle_scope *result) noexcept {
-  CHECK_ARG(result);
-
   Marker stackMarker = stackValues_.createMarker();
   stackMarkers_.emplaceBack(std::move(stackMarker));
-  *result = reinterpret_cast<napi_handle_scope>(&stackMarkers_.back());
-  return clearLastError();
+  return setResult(
+      reinterpret_cast<napi_handle_scope>(&stackMarkers_.back()), result);
 }
 
 napi_status NodeApiEnvironment::closeHandleScope(
@@ -3857,7 +3849,6 @@ napi_status NodeApiEnvironment::createTypedArray(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(arrayBuffer);
-    CHECK_ARG(result);
 
     RETURN_STATUS_IF_FALSE(
         vm::vmisa<vm::JSArrayBuffer>(*phv(arrayBuffer)), napi_invalid_arg);
@@ -3917,8 +3908,7 @@ napi_status NodeApiEnvironment::createTypedArray(
             napi_invalid_arg, "Unsupported TypedArray type ", type);
     }
 
-    *result = addStackValue(vm::HermesValue::encodeObjectValue(typedArray));
-    return clearLastError();
+    return setResult(vm::HermesValue::encodeObjectValue(typedArray), result);
   });
 }
 
@@ -4306,7 +4296,6 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
   return handleExceptions([&] {
     CHECK_ARG(object);
     CHECK_ARG(typeTag);
-    CHECK_ARG(result);
     ASSIGN_ELSE_RETURN_FAILURE(
         auto obj, vm::toObject(&runtime_, makeHandle(object)));
     auto objHandle = runtime_.makeHandle<vm::JSObject>(obj);
@@ -4318,8 +4307,9 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
 
     auto objTagBuffer = tagBuffer->getDataBlock();
     auto source = reinterpret_cast<const uint8_t *>(typeTag);
-    *result = std::equal(source, source + 16, objTagBuffer, objTagBuffer + 16);
-    return clearLastError();
+    return setResult(
+        std::equal(source, source + 16, objTagBuffer, objTagBuffer + 16),
+        result);
   });
 }
 
@@ -4420,7 +4410,7 @@ napi_status NodeApiEnvironment::runScript(
       reinterpret_cast<char *>(buffer->data()),
       sourceSize + 1,
       nullptr));
-  CHECK_NAPI(runScriptWithSourceMap(
+  return runScriptWithSourceMap(
       makeHermesBuffer(
           reinterpret_cast<napi_env>(this),
           reinterpret_cast<napi_ext_buffer>(buffer.release()),
@@ -4438,8 +4428,7 @@ napi_status NodeApiEnvironment::runScript(
           }),
       nullptr,
       sourceURL,
-      result));
-  return clearLastError();
+      result);
 }
 
 napi_status NodeApiEnvironment::runSerializedScript(
@@ -4451,7 +4440,7 @@ napi_status NodeApiEnvironment::runSerializedScript(
   auto bufferCopy = std::make_unique<std::vector<uint8_t>>();
   bufferCopy->assign(bufferLength, '\0');
   std::copy(buffer, buffer + bufferLength, bufferCopy->data());
-  CHECK_NAPI(runScriptWithSourceMap(
+  return runScriptWithSourceMap(
       makeHermesBuffer(
           reinterpret_cast<napi_env>(this),
           reinterpret_cast<napi_ext_buffer>(bufferCopy.release()),
@@ -4469,8 +4458,7 @@ napi_status NodeApiEnvironment::runSerializedScript(
           }),
       nullptr,
       sourceURL,
-      result));
-  return clearLastError();
+      result);
 }
 
 napi_status NodeApiEnvironment::serializeScript(
@@ -4507,9 +4495,7 @@ napi_status NodeApiEnvironment::serializeScript(
       nullptr,
       sourceURL,
       &preparedScript));
-  CHECK_NAPI(
-      serializePreparedScript(preparedScript, bufferCallback, bufferHint));
-  return clearLastError();
+  return serializePreparedScript(preparedScript, bufferCallback, bufferHint);
 }
 
 napi_status NodeApiEnvironment::runScriptWithSourceMap(
@@ -4521,8 +4507,7 @@ napi_status NodeApiEnvironment::runScriptWithSourceMap(
     napi_ext_prepared_script preparedScript{nullptr};
     CHECK_NAPI(prepareScriptWithSourceMap(
         std::move(script), std::move(sourceMap), sourceURL, &preparedScript));
-    CHECK_NAPI(runPreparedScript(preparedScript, result));
-    return clearLastError();
+    return runPreparedScript(preparedScript, result);
   });
 }
 
@@ -4612,20 +4597,17 @@ napi_status NodeApiEnvironment::runPreparedScript(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(preparedScript);
-    CHECK_ARG(result);
     auto &stats = runtime_.getRuntimeStats();
     const vm::instrumentation::RAIITimer timer{
         "Evaluate JS", stats, stats.evaluateJS};
     const auto *hermesPrep =
         reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
-    auto res = runtime_.runBytecode(
+    vm::CallResult<vm::HermesValue> res = runtime_.runBytecode(
         hermesPrep->bytecodeProvider(),
         hermesPrep->runtimeFlags(),
         hermesPrep->sourceURL(),
         vm::Runtime::makeNullHandle<vm::Environment>());
-    CHECK_STATUS(res.getStatus());
-    *result = addStackValue(*res);
-    return clearLastError();
+    return setResult(std::move(res), result);
   });
 }
 
