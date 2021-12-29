@@ -118,16 +118,13 @@ using ::hermes::hermesLog;
 #define CHECK_HERMES(hermesStatus) \
   CHECK_NAPI(checkHermesStatus(hermesStatus, napi_generic_failure))
 
-#define CHECK_HERMES_STATUS(hermesStatus, status) \
-  CHECK_NAPI(checkHermesStatus(hermesStatus, status))
-
 #define CONCAT_IMPL(left, right) left##right
 #define CONCAT(left, right) CONCAT_IMPL(left, right)
 #define TEMP_VARNAME(tempSuffix) CONCAT(temp_, tempSuffix)
 
 #define ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, tempSuffix) \
   auto TEMP_VARNAME(tempSuffix) = (expr);                             \
-  CHECK_HERMES_STATUS(TEMP_VARNAME(tempSuffix).getStatus(), status);  \
+  CHECK_NAPI(checkHermesStatus(TEMP_VARNAME(tempSuffix).getStatus(), status));  \
   var = std::move(*TEMP_VARNAME(tempSuffix));
 
 #define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
@@ -4821,7 +4818,7 @@ napi_status NodeApiEnvironment::setResultUnsafe(
     vm::CallResult<T> &&value,
     napi_status onException,
     TResult *result) noexcept {
-  CHECK_HERMES_STATUS(value.getStatus(), onException);
+  CHECK_NAPI(checkHermesStatus(value.getStatus(), onException));
   return setResultUnsafe(std::move(*value), result);
 }
 
@@ -5293,7 +5290,7 @@ napi_status NodeApiEnvironment::convertKeyStorageToArray(
     napi_value *result) noexcept {
   vm::CallResult<vm::Handle<vm::JSArray>> cr =
       vm::JSArray::create(&runtime_, length, length);
-  CHECK_HERMES_STATUS(cr.getStatus(), napi_generic_failure);
+  CHECK_NAPI(checkHermesStatus(cr.getStatus()));
   vm::Handle<vm::JSArray> array = *cr;
   if (keyConversion == napi_key_numbers_to_strings) {
     vm::GCScopeMarkerRAII marker{&runtime_};
