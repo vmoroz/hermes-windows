@@ -914,9 +914,6 @@ struct NodeApiEnvironment final {
       vm::ComputedPropertyDescriptor &desc,
       bool *result) noexcept;
 
-  template <class T>
-  vm::MutableHandle<T> makeMutableHandle() noexcept;
-
   napi_status convertKeyStorageToArray(
       vm::Handle<vm::BigStorage> keyStorage,
       uint32_t startIndex,
@@ -929,18 +926,15 @@ struct NodeApiEnvironment final {
   vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
   vm::Handle<> makeHandle(vm::Handle<> value) noexcept;
   vm::Handle<> makeHandle(uint32_t value) noexcept;
-
   template <class T>
   vm::Handle<T> makeHandle(napi_value value) noexcept;
   template <class T>
   vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
   template <class T>
   vm::Handle<T> makeHandle(vm::PseudoHandle<T> &&value) noexcept;
-
   template <class T>
   vm::CallResult<vm::Handle<T>> makeHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
-
   template <class T>
   vm::CallResult<vm::MutableHandle<T>> makeMutableHandle(
       vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
@@ -5070,11 +5064,6 @@ vm::CallResult<vm::MutableHandle<T>> NodeApiEnvironment::makeMutableHandle(
   vm::MutableHandle<T> result{&runtime_};
   result = std::move(*callResult);
   return result;
-}
-
-template <class T>
-vm::MutableHandle<T> NodeApiEnvironment::makeMutableHandle() noexcept {
-  return vm::MutableHandle<T>(&runtime_);
 }
 
 napi_status NodeApiEnvironment::convertKeyStorageToArray(
