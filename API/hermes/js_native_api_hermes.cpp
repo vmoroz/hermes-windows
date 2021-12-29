@@ -130,17 +130,6 @@ using ::hermes::hermesLog;
 #define ASSIGN_ELSE_RETURN_STATUS(var, expr, status) \
   ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, __COUNTER__)
 
-#define ASSIGN_ELSE_RETURN_HERMES_EXCEPTION_IMPL(var, expr, tempSuffix) \
-  auto TEMP_VARNAME(tempSuffix) = (expr);                               \
-  if (TEMP_VARNAME(tempSuffix).getStatus() ==                           \
-      vm::ExecutionStatus::EXCEPTION) {                                 \
-    return vm::ExecutionStatus::EXCEPTION;                              \
-  }                                                                     \
-  var = std::move(*TEMP_VARNAME(tempSuffix));
-
-#define ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(var, expr) \
-  ASSIGN_ELSE_RETURN_HERMES_EXCEPTION_IMPL(var, expr, __COUNTER__)
-
 #define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
   do {                                                              \
     if (!(condition)) {                                             \
@@ -5322,9 +5311,13 @@ vm::ExecutionStatus NodeApiEnvironment::convertKeyNumbersToStrings(
   for (size_t i = 0; i < length; ++i) {
     vm::HermesValue key = array->at(&runtime_, i);
     if (LLVM_UNLIKELY(key.isNumber())) {
-      ASSIGN_ELSE_RETURN_HERMES_EXCEPTION(
-          vm::Handle<> strKey /*=*/, convertIndexToString(key.getNumber()));
-      vm::JSArray::setElementAt(array, &runtime_, i, strKey);
+      vm::CallResult<vm::Handle<>> strKeyRes =
+          convertIndexToString(key.getNumber());
+      if (LLVM_UNLIKELY(
+              strKeyRes.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+      vm::JSArray::setElementAt(array, &runtime_, i, *strKeyRes);
     }
   }
   return vm::ExecutionStatus::RETURNED;
