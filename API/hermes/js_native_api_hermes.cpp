@@ -1053,17 +1053,17 @@ struct NodeApiEnvironment final {
   const vm::PinnedHermesValue &getPredefined(
       NapiPredefined predefinedKey) noexcept;
 
-  napi_status hasPrivate(
+  napi_status hasPredefined(
       vm::Handle<vm::JSObject> objHandle,
       NapiPredefined key,
       bool *result) noexcept;
 
-  napi_status getPrivate(
+  napi_status getPredefined(
       vm::Handle<vm::JSObject> objHandle,
       NapiPredefined key,
       napi_value *result) noexcept;
 
-  napi_status setPrivate(
+  napi_status setPredefined(
       vm::Handle<vm::JSObject> objHandle,
       NapiPredefined key,
       vm::Handle<> value,
@@ -4028,7 +4028,7 @@ napi_status NodeApiEnvironment::createPromise(
   napi_value global;
   napi_value promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(getPrivate(
+  CHECK_NAPI(getPredefined(
       makeHandle<vm::JSObject>(global),
       NapiPredefined::Promise,
       &promiseConstructor));
@@ -4075,12 +4075,12 @@ napi_status NodeApiEnvironment::createPromise(
     napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
     CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
     CHECK_NAPI(createObject(&jsDeferred));
-    CHECK_NAPI(setPrivate(
+    CHECK_NAPI(setPredefined(
         makeHandle<vm::JSObject>(jsDeferred),
         NapiPredefined::resolve,
         makeHandle(jsResolve),
         nullptr));
-    CHECK_NAPI(setPrivate(
+    CHECK_NAPI(setPredefined(
         makeHandle<vm::JSObject>(jsDeferred),
         NapiPredefined::reject,
         makeHandle(jsReject),
@@ -4117,7 +4117,7 @@ napi_status NodeApiEnvironment::concludeDeferred(
 
   const auto &jsDeferred = ref->value(*this);
   napi_value resolver, callResult;
-  CHECK_NAPI(getPrivate(
+  CHECK_NAPI(getPredefined(
       makeHandle<vm::JSObject>(&jsDeferred), predefinedProperty, &resolver));
   CHECK_NAPI(callFunction(nullptr, resolver, 1, &result, &callResult));
   Reference::deleteReference(
@@ -4133,7 +4133,7 @@ napi_status NodeApiEnvironment::isPromise(
   napi_value global;
   napi_value promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(getPrivate(
+  CHECK_NAPI(getPredefined(
       makeHandle<vm::JSObject>(global),
       NapiPredefined::Promise,
       &promiseConstructor));
@@ -4260,7 +4260,7 @@ napi_status NodeApiEnvironment::typeTagObject(
 
     // Fail if the tag already exists
     bool hasTag{};
-    CHECK_NAPI(hasPrivate(objHandle, NapiPredefined::napi_typeTag, &hasTag));
+    CHECK_NAPI(hasPredefined(objHandle, NapiPredefined::napi_typeTag, &hasTag));
     RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
 
     napi_value tagBuffer;
@@ -4272,7 +4272,7 @@ napi_status NodeApiEnvironment::typeTagObject(
     uint8_t *dest = reinterpret_cast<uint8_t *>(tagBufferData);
     std::copy(source, source + sizeof(napi_type_tag), dest);
 
-    return setPrivate(
+    return setPredefined(
         objHandle,
         NapiPredefined::napi_typeTag,
         makeHandle(tagBuffer),
@@ -4290,8 +4290,8 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     CHECK_NAPI(convertToObject(object, &objHandle));
 
     napi_value tagBufferValue;
-    CHECK_NAPI(
-        getPrivate(objHandle, NapiPredefined::napi_typeTag, &tagBufferValue));
+    CHECK_NAPI(getPredefined(
+        objHandle, NapiPredefined::napi_typeTag, &tagBufferValue));
     auto tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
     RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
@@ -4710,7 +4710,7 @@ napi_status NodeApiEnvironment::getExternalValue(
   return handleExceptions([&] {
     ExternalValue *externalValue{};
     napi_value externalNapiValue;
-    napi_status status = getPrivate(
+    napi_status status = getPredefined(
         objHandle, NapiPredefined::napi_externalValue, &externalNapiValue);
     if (status == napi_ok) {
       externalValue = getExternalValue(*phv(externalNapiValue));
@@ -4718,7 +4718,7 @@ napi_status NodeApiEnvironment::getExternalValue(
     } else if (ifNotFound == IfNotFound::ThenCreate) {
       vm::Handle<vm::DecoratedObject> decoratedObj =
           makeHandle(createExternal(nullptr, &externalValue));
-      CHECK_NAPI(setPrivate(
+      CHECK_NAPI(setPredefined(
           objHandle,
           NapiPredefined::napi_externalValue,
           decoratedObj,
@@ -4827,7 +4827,7 @@ const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
   return predefinedValues_[static_cast<size_t>(predefinedKey)];
 }
 
-napi_status NodeApiEnvironment::hasPrivate(
+napi_status NodeApiEnvironment::hasPredefined(
     vm::Handle<vm::JSObject> objHandle,
     NapiPredefined key,
     bool *result) noexcept {
@@ -4835,14 +4835,14 @@ napi_status NodeApiEnvironment::hasPrivate(
   return setResult(vm::JSObject::hasNamed(objHandle, &runtime_, name), result);
 }
 
-napi_status NodeApiEnvironment::getPrivate(
+napi_status NodeApiEnvironment::getPredefined(
     vm::Handle<vm::JSObject> objHandle,
     NapiPredefined key,
     napi_value *result) noexcept {
   return getNamed(objHandle, getPredefined(key).getSymbol(), result);
 }
 
-napi_status NodeApiEnvironment::setPrivate(
+napi_status NodeApiEnvironment::setPredefined(
     vm::Handle<vm::JSObject> objHandle,
     NapiPredefined key,
     vm::Handle<> value,
