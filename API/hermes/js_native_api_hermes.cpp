@@ -3644,7 +3644,7 @@ napi_status NodeApiEnvironment::escapeHandle(
 
   vm::PinnedHermesValue *escapedValue = stackValues_.at(escapedValueMarker);
   *escapedValue = *reinterpret_cast<vm::PinnedHermesValue *>(escapee);
-
+  // TODO: set result
   return clearLastError();
 }
 
@@ -3740,13 +3740,11 @@ napi_status NodeApiEnvironment::createArrayBuffer(
     void **data,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
-
     auto buffer = vm::JSArrayBuffer::create(
         &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
     // Add result to the local values before allocating buffer to ensure
     // GC-safety.
-    *result = addStackValue(buffer.getHermesValue());
+    CHECK_NAPI(setResult(buffer.getHermesValue(), result));
     CHECK_STATUS(buffer->createDataBlock(&runtime_, byteLength));
 
     // Optionally return a pointer to the buffer's data, to avoid another call
@@ -3765,13 +3763,11 @@ napi_status NodeApiEnvironment::createExternalArrayBuffer(
     void *finalizeHint,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
-
-    auto buffer = vm::JSArrayBuffer::create(
+    vm::PseudoHandle<vm::JSArrayBuffer> buffer = vm::JSArrayBuffer::create(
         &runtime_, toObjectHandle(&runtime_.arrayBufferPrototype));
     // Add result to the local values before allocating buffer to ensure
     // GC-safety.
-    *result = addStackValue(buffer.getHermesValue());
+    CHECK_NAPI(setResult(buffer.getHermesValue(), result));
 
     auto externalBuffer = std::make_unique<ExternalBuffer>(
         env, externalData, byteLength, finalizeCallback, finalizeHint);
