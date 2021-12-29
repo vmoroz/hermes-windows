@@ -2474,28 +2474,28 @@ napi_status NodeApiEnvironment::typeOf(
   CHECK_ARG(value);
   CHECK_ARG(result);
 
-  const vm::PinnedHermesValue &hv = *phv(value);
+  const vm::HermesValue *hv = phv(value);
 
   // BigInt is not supported by Hermes yet.
-  if (hv.isNumber()) {
+  if (hv->isNumber()) {
     *result = napi_number;
-  } else if (hv.isString()) {
+  } else if (hv->isString()) {
     *result = napi_string;
-  } else if (hv.isObject()) {
-    if (vm::vmisa<vm::Callable>(hv)) {
+  } else if (hv->isObject()) {
+    if (vm::vmisa<vm::Callable>(*hv)) {
       *result = napi_function;
-    } else if (getExternalValue(hv)) {
+    } else if (getExternalValue(*hv)) {
       *result = napi_external;
     } else {
       *result = napi_object;
     }
-  } else if (hv.isBool()) {
+  } else if (hv->isBool()) {
     *result = napi_boolean;
-  } else if (hv.isUndefined() || hv.isEmpty()) {
+  } else if (hv->isUndefined() || hv->isEmpty()) {
     *result = napi_undefined;
-  } else if (hv.isSymbol()) {
+  } else if (hv->isSymbol()) {
     *result = napi_symbol;
-  } else if (hv.isNull()) {
+  } else if (hv->isNull()) {
     *result = napi_null;
   } else {
     // Should not get here unless Hermes has added some new kind of value.
