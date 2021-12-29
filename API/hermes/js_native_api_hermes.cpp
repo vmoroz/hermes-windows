@@ -3490,11 +3490,9 @@ napi_status NodeApiEnvironment::getValueExternal(
     napi_value value,
     void **result) noexcept {
   return handleExceptions([&] {
-    CHECK_ARG(result);
     ExternalValue *externalValue = getExternalValue(*phv(value));
-    RETURN_STATUS_IF_FALSE(externalValue != nullptr, napi_invalid_arg);
-    *result = externalValue->nativeData();
-    return clearLastError();
+    RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
+    return setResult(externalValue->nativeData(), result);
   });
 }
 
