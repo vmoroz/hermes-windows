@@ -864,6 +864,75 @@ struct NodeApiEnvironment final {
       napi_ext_buffer_callback bufferCallback,
       void *bufferHint) noexcept;
 
+  //---------------------------------------------------------------------------
+  // Handle creation helpers
+  //
+  // vm::Handle is a GC root kept on the stack.
+  // The vm::Handle<> is a shortcut for vm::Handle<vm::HermesValue>.
+  //---------------------------------------------------------------------------
+ public:
+  vm::Handle<> makeHandle(napi_value value) noexcept;
+  vm::Handle<> makeHandle(const vm::PinnedHermesValue *value) noexcept;
+  vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
+  vm::Handle<> makeHandle(vm::Handle<> value) noexcept;
+  vm::Handle<> makeHandle(uint32_t value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(napi_value value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(vm::Handle<T> value) noexcept;
+  template <class T>
+  vm::Handle<T> makeHandle(vm::PseudoHandle<T> &&value) noexcept;
+  template <class T>
+  vm::CallResult<vm::Handle<T>> makeHandle(
+      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
+  template <class T>
+  vm::CallResult<vm::MutableHandle<T>> makeMutableHandle(
+      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
+
+  //---------------------------------------------------------------------------
+  // Result setting helpers
+  //---------------------------------------------------------------------------
+ public:
+  template <class T, class TResult>
+  napi_status setResult(T &&value, TResult *result) noexcept;
+  template <class T, class TResult>
+  napi_status setOptionalResult(T &&value, TResult *result) noexcept;
+  template <class T>
+  napi_status setOptionalResult(T &&value, std::nullptr_t) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(T &&value, T *result) noexcept;
+  napi_status setResultUnsafe(
+      vm::HermesValue value,
+      napi_value *result) noexcept;
+  napi_status setResultUnsafe(vm::SymbolID value, napi_value *result) noexcept;
+  napi_status setResultUnsafe(bool value, napi_value *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      vm::Handle<T> &&handle,
+      napi_value *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      vm::PseudoHandle<T> &&handle,
+      napi_value *result) noexcept;
+  template <class T>
+  napi_status setResultUnsafe(
+      vm::Handle<T> &&handle,
+      vm::MutableHandle<T> *result) noexcept;
+  template <class T, class TResult>
+  napi_status setResultUnsafe(
+      vm::CallResult<T> &&value,
+      TResult *result) noexcept;
+  template <class T, class TResult>
+  napi_status setResultUnsafe(
+      vm::CallResult<T> &&,
+      napi_status onException,
+      TResult *result) noexcept;
+
+  //---------------------------------------------------------------------------
+  // Error handling helpers
+  //---------------------------------------------------------------------------
  public:
   napi_status setErrorCode(
       vm::Handle<vm::JSError> error,
@@ -872,6 +941,7 @@ struct NodeApiEnvironment final {
 
   //---------------------------------------------------------------------------
   // Property access helpers
+  //---------------------------------------------------------------------------
  public:
   const vm::PinnedHermesValue &getPredefined(
       NapiPredefined predefinedKey) noexcept;
@@ -933,32 +1003,16 @@ struct NodeApiEnvironment final {
       vm::ComputedPropertyDescriptor &desc,
       bool *result) noexcept;
 
+  //---------------------------------------------------------------------------
+  // Miscellaneous
+  //---------------------------------------------------------------------------
+ public:
   napi_status convertKeyStorageToArray(
       vm::Handle<vm::BigStorage> keyStorage,
       uint32_t startIndex,
       uint32_t length,
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
-
-  vm::Handle<> makeHandle(const vm::PinnedHermesValue *value) noexcept;
-  vm::Handle<> makeHandle(napi_value value) noexcept;
-  vm::Handle<> makeHandle(vm::HermesValue value) noexcept;
-  vm::Handle<> makeHandle(vm::Handle<> value) noexcept;
-  vm::Handle<> makeHandle(uint32_t value) noexcept;
-  template <class T>
-  vm::Handle<T> makeHandle(napi_value value) noexcept;
-  template <class T>
-  vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
-  template <class T>
-  vm::Handle<T> makeHandle(vm::PseudoHandle<T> &&value) noexcept;
-  template <class T>
-  vm::Handle<T> makeHandle(vm::Handle<T> value) noexcept;
-  template <class T>
-  vm::CallResult<vm::Handle<T>> makeHandle(
-      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
-  template <class T>
-  vm::CallResult<vm::MutableHandle<T>> makeMutableHandle(
-      vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept;
 
   template <typename F>
   napi_status handleExceptions(const F &f) noexcept;
@@ -990,41 +1044,6 @@ struct NodeApiEnvironment final {
   vm::CallResult<vm::Handle<>> convertIndexToString(double value) noexcept;
   vm::ExecutionStatus convertKeyNumbersToStrings(
       vm::Handle<vm::JSArray> array) noexcept;
-
-  template <class T, class TResult>
-  napi_status setResult(T &&value, TResult *result) noexcept;
-  template <class T, class TResult>
-  napi_status setOptionalResult(T &&value, TResult *result) noexcept;
-  template <class T>
-  napi_status setOptionalResult(T &&value, std::nullptr_t) noexcept;
-  template <class T>
-  napi_status setResultUnsafe(T &&value, T *result) noexcept;
-  napi_status setResultUnsafe(
-      vm::HermesValue value,
-      napi_value *result) noexcept;
-  napi_status setResultUnsafe(vm::SymbolID value, napi_value *result) noexcept;
-  napi_status setResultUnsafe(bool value, napi_value *result) noexcept;
-  template <class T>
-  napi_status setResultUnsafe(
-      vm::Handle<T> &&handle,
-      napi_value *result) noexcept;
-  template <class T>
-  napi_status setResultUnsafe(
-      vm::PseudoHandle<T> &&handle,
-      napi_value *result) noexcept;
-  template <class T>
-  napi_status setResultUnsafe(
-      vm::Handle<T> &&handle,
-      vm::MutableHandle<T> *result) noexcept;
-  template <class T, class TResult>
-  napi_status setResultUnsafe(
-      vm::CallResult<T> &&value,
-      TResult *result) noexcept;
-  template <class T, class TResult>
-  napi_status setResultUnsafe(
-      vm::CallResult<T> &&,
-      napi_status onException,
-      TResult *result) noexcept;
 
   napi_status createSymbolID(
       const char *str,
@@ -4646,6 +4665,169 @@ napi_status NodeApiEnvironment::serializePreparedScript(
   return clearLastError();
 }
 
+//---------------------------------------------------------------------------
+// Handle creation helpers
+//---------------------------------------------------------------------------
+
+vm::Handle<> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
+  return makeHandle(phv(value));
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(
+    const vm::PinnedHermesValue *value) noexcept {
+  return vm::Handle<>(value);
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(vm::HermesValue value) noexcept {
+  return vm::Handle<>(&runtime_, value);
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(vm::Handle<> value) noexcept {
+  return value;
+}
+
+vm::Handle<> NodeApiEnvironment::makeHandle(uint32_t value) noexcept {
+  return makeHandle(vm::HermesValue::encodeDoubleValue(value));
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
+  return vm::Handle<T>::vmcast(phv(value));
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(
+    const vm::PinnedHermesValue *value) noexcept {
+  return vm::Handle<T>::vmcast(value);
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(vm::Handle<T> value) noexcept {
+  return value;
+}
+
+template <class T>
+vm::Handle<T> NodeApiEnvironment::makeHandle(
+    vm::PseudoHandle<T> &&value) noexcept {
+  return runtime_.makeHandle(std::move(value));
+}
+
+template <class T>
+vm::CallResult<vm::Handle<T>> NodeApiEnvironment::makeHandle(
+    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
+  if (callResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
+  return runtime_.makeHandle(std::move(*callResult));
+}
+
+template <class T>
+vm::CallResult<vm::MutableHandle<T>> NodeApiEnvironment::makeMutableHandle(
+    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
+  vm::CallResult<vm::Handle<T>> handleResult =
+      makeHandle(std::move(callResult));
+  if (handleResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
+  vm::MutableHandle<T> result{&runtime_};
+  result = std::move(*callResult);
+  return result;
+}
+
+//---------------------------------------------------------------------------
+// Result setting helpers
+//---------------------------------------------------------------------------
+
+template <class T, class TResult>
+napi_status NodeApiEnvironment::setResult(T &&value, TResult *result) noexcept {
+  CHECK_ARG(result);
+  return setResultUnsafe(std::forward<T>(value), result);
+}
+
+template <class T, class TResult>
+napi_status NodeApiEnvironment::setOptionalResult(
+    T &&value,
+    TResult *result) noexcept {
+  if (result) {
+    return setResultUnsafe(std::forward<T>(value), result);
+  }
+  return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setOptionalResult(
+    T && /*value*/,
+    std::nullptr_t) noexcept {
+  return clearLastError();
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(T &&value, T *result) noexcept {
+  *result = std::forward<T>(value);
+  return clearLastError();
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::HermesValue value,
+    napi_value *result) noexcept {
+  *result = addStackValue(value);
+  return clearLastError();
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::SymbolID value,
+    napi_value *result) noexcept {
+  return setResultUnsafe(vm::HermesValue::encodeSymbolValue(value), result);
+}
+
+napi_status NodeApiEnvironment::setResultUnsafe(
+    bool value,
+    napi_value *result) noexcept {
+  return setResultUnsafe(vm::HermesValue::encodeBoolValue(value), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::Handle<T> &&handle,
+    napi_value *result) noexcept {
+  return setResultUnsafe(handle.getHermesValue(), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::PseudoHandle<T> &&handle,
+    napi_value *result) noexcept {
+  return setResultUnsafe(handle.getHermesValue(), result);
+}
+
+template <class T>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::Handle<T> &&handle,
+    vm::MutableHandle<T> *result) noexcept {
+  *result = std::move(handle);
+  return clearLastError();
+}
+
+template <class T, class TResult>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::CallResult<T> &&value,
+    TResult *result) noexcept {
+  return setResultUnsafe(std::move(value), napi_generic_failure, result);
+}
+
+template <class T, class TResult>
+napi_status NodeApiEnvironment::setResultUnsafe(
+    vm::CallResult<T> &&value,
+    napi_status onException,
+    TResult *result) noexcept {
+  CHECK_HERMES_STATUS(value.getStatus(), onException);
+  return setResultUnsafe(std::move(*value), result);
+}
+
+//---------------------------------------------------------------------------
+// Error handling helpers
+//---------------------------------------------------------------------------
+
 napi_status NodeApiEnvironment::setErrorCode(
     vm::Handle<vm::JSError> error,
     napi_value code,
@@ -4660,6 +4842,146 @@ napi_status NodeApiEnvironment::setErrorCode(
   }
   return napi_ok;
 }
+
+//-----------------------------------------------------------------------------
+// Property access helpers
+//-----------------------------------------------------------------------------
+
+const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
+    NapiPredefined predefinedKey) noexcept {
+  return predefinedValues_[static_cast<size_t>(predefinedKey)];
+}
+
+template <class TObject, class TValue>
+napi_status NodeApiEnvironment::putPredefined(
+    TObject object,
+    NapiPredefined key,
+    TValue value,
+    bool *optResult) noexcept {
+  return putNamed(object, getPredefined(key).getSymbol(), value, optResult);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::hasPredefined(
+    TObject object,
+    NapiPredefined key,
+    bool *result) noexcept {
+  return hasNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::getPredefined(
+    TObject object,
+    NapiPredefined key,
+    napi_value *result) noexcept {
+  return getNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject, class TValue>
+napi_status NodeApiEnvironment::putNamed(
+    TObject object,
+    vm::SymbolID name,
+    TValue value,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::hasNamed(
+    TObject object,
+    vm::SymbolID name,
+    bool *result) noexcept {
+  vm::CallResult<bool> res =
+      vm::JSObject::hasNamed(makeHandle<vm::JSObject>(object), &runtime_, name);
+  return setResult(std::move(res), result);
+}
+
+template <class TObject>
+napi_status NodeApiEnvironment::getNamed(
+    TObject object,
+    vm::SymbolID name,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getNamed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      vm::PropOpFlags().plusThrowOnError());
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey, class TValue>
+napi_status NodeApiEnvironment::putComputed(
+    TObject object,
+    TKey key,
+    TValue value,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::hasComputed(
+    TObject object,
+    TKey key,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::hasComputed(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::getComputed(
+    TObject object,
+    TKey key,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getComputed_RJS(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::deleteComputed(
+    TObject object,
+    TKey key,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::deleteComputed(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject, class TKey>
+napi_status NodeApiEnvironment::getOwnComputedDescriptor(
+    TObject object,
+    TKey key,
+    vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
+    vm::ComputedPropertyDescriptor &desc,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::getOwnComputedDescriptor(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      tmpSymbolStorage,
+      desc);
+  return setResult(std::move(res), result);
+}
+
+//---------------------------------------------------------------------------
+// Miscellaneous
+//---------------------------------------------------------------------------
 
 vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
     void *nativeData,
@@ -4962,71 +5284,6 @@ napi_status NodeApiEnvironment::newFunction(
   return clearLastError();
 }
 
-vm::Handle<> NodeApiEnvironment::makeHandle(
-    const vm::PinnedHermesValue *value) noexcept {
-  return vm::Handle<>(value);
-}
-
-vm::Handle<> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
-  return makeHandle(phv(value));
-}
-
-vm::Handle<> NodeApiEnvironment::makeHandle(vm::HermesValue value) noexcept {
-  return vm::Handle<>(&runtime_, value);
-}
-
-vm::Handle<> NodeApiEnvironment::makeHandle(vm::Handle<> value) noexcept {
-  return value;
-}
-
-vm::Handle<> NodeApiEnvironment::makeHandle(uint32_t value) noexcept {
-  return makeHandle(vm::HermesValue::encodeDoubleValue(value));
-}
-
-template <class T>
-vm::Handle<T> NodeApiEnvironment::makeHandle(napi_value value) noexcept {
-  return vm::Handle<T>::vmcast(phv(value));
-}
-
-template <class T>
-vm::Handle<T> NodeApiEnvironment::makeHandle(
-    const vm::PinnedHermesValue *value) noexcept {
-  return vm::Handle<T>::vmcast(value);
-}
-
-template <class T>
-vm::Handle<T> NodeApiEnvironment::makeHandle(
-    vm::PseudoHandle<T> &&value) noexcept {
-  return runtime_.makeHandle(std::move(value));
-}
-
-template <class T>
-vm::Handle<T> NodeApiEnvironment::makeHandle(vm::Handle<T> value) noexcept {
-  return value;
-}
-
-template <class T>
-vm::CallResult<vm::Handle<T>> NodeApiEnvironment::makeHandle(
-    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
-  if (callResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
-    return vm::ExecutionStatus::EXCEPTION;
-  }
-  return runtime_.makeHandle(std::move(*callResult));
-}
-
-template <class T>
-vm::CallResult<vm::MutableHandle<T>> NodeApiEnvironment::makeMutableHandle(
-    vm::CallResult<vm::PseudoHandle<T>> &&callResult) noexcept {
-  vm::CallResult<vm::Handle<T>> handleResult =
-      makeHandle(std::move(callResult));
-  if (handleResult.getStatus() == vm::ExecutionStatus::EXCEPTION) {
-    return vm::ExecutionStatus::EXCEPTION;
-  }
-  vm::MutableHandle<T> result{&runtime_};
-  result = std::move(*callResult);
-  return result;
-}
-
 napi_status NodeApiEnvironment::convertKeyStorageToArray(
     vm::Handle<vm::BigStorage> keyStorage,
     uint32_t startIndex,
@@ -5081,228 +5338,6 @@ vm::CallResult<vm::Handle<>> NodeApiEnvironment::convertIndexToString(
     return runtime_.raiseRangeError("Index property is out of range");
   }
   return StringBuilder(*index).makeStringHV(runtime_);
-}
-
-template <class T, class TResult>
-napi_status NodeApiEnvironment::setResult(T &&value, TResult *result) noexcept {
-  CHECK_ARG(result);
-  return setResultUnsafe(std::forward<T>(value), result);
-}
-
-template <class T, class TResult>
-napi_status NodeApiEnvironment::setOptionalResult(
-    T &&value,
-    TResult *result) noexcept {
-  if (result) {
-    return setResultUnsafe(std::forward<T>(value), result);
-  }
-  return clearLastError();
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setOptionalResult(
-    T && /*value*/,
-    std::nullptr_t) noexcept {
-  return clearLastError();
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResultUnsafe(T &&value, T *result) noexcept {
-  *result = std::forward<T>(value);
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::HermesValue value,
-    napi_value *result) noexcept {
-  *result = addStackValue(value);
-  return clearLastError();
-}
-
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::SymbolID value,
-    napi_value *result) noexcept {
-  return setResultUnsafe(vm::HermesValue::encodeSymbolValue(value), result);
-}
-
-napi_status NodeApiEnvironment::setResultUnsafe(
-    bool value,
-    napi_value *result) noexcept {
-  return setResultUnsafe(vm::HermesValue::encodeBoolValue(value), result);
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::Handle<T> &&handle,
-    napi_value *result) noexcept {
-  return setResultUnsafe(handle.getHermesValue(), result);
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::PseudoHandle<T> &&handle,
-    napi_value *result) noexcept {
-  return setResultUnsafe(handle.getHermesValue(), result);
-}
-
-template <class T>
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::Handle<T> &&handle,
-    vm::MutableHandle<T> *result) noexcept {
-  *result = std::move(handle);
-  return clearLastError();
-}
-
-template <class T, class TResult>
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::CallResult<T> &&value,
-    TResult *result) noexcept {
-  return setResultUnsafe(std::move(value), napi_generic_failure, result);
-}
-
-template <class T, class TResult>
-napi_status NodeApiEnvironment::setResultUnsafe(
-    vm::CallResult<T> &&value,
-    napi_status onException,
-    TResult *result) noexcept {
-  CHECK_HERMES_STATUS(value.getStatus(), onException);
-  return setResultUnsafe(std::move(*value), result);
-}
-
-//-----------------------------------------------------------------------------
-// Property access helpers
-//-----------------------------------------------------------------------------
-
-const vm::PinnedHermesValue &NodeApiEnvironment::getPredefined(
-    NapiPredefined predefinedKey) noexcept {
-  return predefinedValues_[static_cast<size_t>(predefinedKey)];
-}
-
-template <class TObject, class TValue>
-napi_status NodeApiEnvironment::putPredefined(
-    TObject object,
-    NapiPredefined key,
-    TValue value,
-    bool *optResult) noexcept {
-  return putNamed(object, getPredefined(key).getSymbol(), value, optResult);
-}
-
-template <class TObject>
-napi_status NodeApiEnvironment::hasPredefined(
-    TObject object,
-    NapiPredefined key,
-    bool *result) noexcept {
-  return hasNamed(object, getPredefined(key).getSymbol(), result);
-}
-
-template <class TObject>
-napi_status NodeApiEnvironment::getPredefined(
-    TObject object,
-    NapiPredefined key,
-    napi_value *result) noexcept {
-  return getNamed(object, getPredefined(key).getSymbol(), result);
-}
-
-template <class TObject, class TValue>
-napi_status NodeApiEnvironment::putNamed(
-    TObject object,
-    vm::SymbolID name,
-    TValue value,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      name,
-      makeHandle(value),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject>
-napi_status NodeApiEnvironment::hasNamed(
-    TObject object,
-    vm::SymbolID name,
-    bool *result) noexcept {
-  vm::CallResult<bool> res =
-      vm::JSObject::hasNamed(makeHandle<vm::JSObject>(object), &runtime_, name);
-  return setResult(std::move(res), result);
-}
-
-template <class TObject>
-napi_status NodeApiEnvironment::getNamed(
-    TObject object,
-    vm::SymbolID name,
-    napi_value *result) noexcept {
-  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getNamed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      name,
-      vm::PropOpFlags().plusThrowOnError());
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey, class TValue>
-napi_status NodeApiEnvironment::putComputed(
-    TObject object,
-    TKey key,
-    TValue value,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      makeHandle(value),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject, class TKey>
-napi_status NodeApiEnvironment::hasComputed(
-    TObject object,
-    TKey key,
-    bool *result) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::hasComputed(
-      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey>
-napi_status NodeApiEnvironment::getComputed(
-    TObject object,
-    TKey key,
-    napi_value *result) noexcept {
-  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getComputed_RJS(
-      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey>
-napi_status NodeApiEnvironment::deleteComputed(
-    TObject object,
-    TKey key,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::deleteComputed(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject, class TKey>
-napi_status NodeApiEnvironment::getOwnComputedDescriptor(
-    TObject object,
-    TKey key,
-    vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
-    vm::ComputedPropertyDescriptor &desc,
-    bool *result) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::getOwnComputedDescriptor(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      tmpSymbolStorage,
-      desc);
-  return setResult(std::move(res), result);
 }
 
 napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
