@@ -4049,9 +4049,7 @@ napi_status NodeApiEnvironment::getDataViewInfo(
 }
 
 napi_status NodeApiEnvironment::getVersion(uint32_t *result) noexcept {
-  CHECK_ARG(result);
-  *result = NAPI_VERSION;
-  return clearLastError();
+  return setResult(static_cast<uint32_t>(NAPI_VERSION), result);
 }
 
 napi_status NodeApiEnvironment::createPromise(
