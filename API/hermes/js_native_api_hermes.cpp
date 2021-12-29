@@ -127,9 +127,6 @@ using ::hermes::hermesLog;
 #define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
   ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
 
-#define ASSIGN_ELSE_RETURN_STATUS(var, expr, status) \
-  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, __COUNTER__)
-
 #define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
   do {                                                              \
     if (!(condition)) {                                             \
