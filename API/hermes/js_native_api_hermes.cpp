@@ -136,7 +136,7 @@ struct Marker {
     std::numeric_limits<size_t>::max(),
     0};
 
-template <typename T>
+template <class T>
 struct NonMovableObjStack {
   NonMovableObjStack() {
     // There is always at least one chunk in the storage
@@ -149,7 +149,7 @@ struct NonMovableObjStack {
     return storage_[0].empty();
   }
 
-  template <typename... TArgs>
+  template <class... TArgs>
   void emplaceBack(TArgs &&...args) {
     auto &storageChunk = storage_.back();
     if (storageChunk.size() == storageChunk.capacity()) {
@@ -244,7 +244,7 @@ struct NonMovableObjStack {
     return &chunk[marker.itemIndex];
   }
 
-  template <typename F>
+  template <class F>
   void forEach(const F &f) noexcept {
     for (const auto &storageChunk : storage_) {
       for (const auto &item : storageChunk) {
@@ -260,7 +260,7 @@ struct NonMovableObjStack {
       storage_; // There is always at least one chunk in the storage
 };
 
-template <typename T>
+template <class T>
 struct LinkedList {
   LinkedList() noexcept {
     // The list is circular:
@@ -320,7 +320,7 @@ struct LinkedList {
     return head_.next_ == head_.prev_;
   }
 
-  template <typename TLambda>
+  template <class TLambda>
   void forEach(TLambda lambda) noexcept {
     for (auto item = begin(); item != end();) {
       // lambda can delete the item - get the next one before calling it.
@@ -421,7 +421,7 @@ struct NodeApiEnvironment final {
   ~NodeApiEnvironment();
 
  public: // Function accessed from the C-base NAPI
-  template <typename... TArgs>
+  template <class... TArgs>
   napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
   napi_status clearLastError() noexcept;
   napi_status getLastErrorInfo(
@@ -643,7 +643,7 @@ struct NodeApiEnvironment final {
       void **data,
       size_t *byteLength) noexcept;
   napi_status isTypedArray(napi_value value, bool *result) noexcept;
-  template <typename TItem, vm::CellKind CellKind>
+  template <class TItem, vm::CellKind CellKind>
   napi_status createTypedArray(
       size_t length,
       vm::JSArrayBuffer *buffer,
@@ -947,7 +947,7 @@ struct NodeApiEnvironment final {
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
 
-  template <typename F>
+  template <class F>
   napi_status handleExceptions(const F &f) noexcept;
 
   napi_status genericFailure(const char *message) noexcept;
@@ -957,7 +957,7 @@ struct NodeApiEnvironment final {
   const vm::PinnedHermesValue &lockWeakObject(
       vm::WeakRoot<vm::JSObject> &weakRoot) noexcept;
 
-  template <typename TLambda>
+  template <class TLambda>
   void callIntoModule(TLambda &&call) noexcept;
 
   napi_status callFinalizer(
@@ -1256,7 +1256,7 @@ struct Reference : LinkedList<Reference>::Item {
 
   virtual void finalize(NodeApiEnvironment &env) noexcept {}
 
-  template <typename TItem>
+  template <class TItem>
   static void finalizeAll(
       NodeApiEnvironment &env,
       LinkedList<TItem> &list) noexcept {
@@ -1495,9 +1495,9 @@ struct ComplexReference : Reference {
 // ref to manually deleted one if the ref count is incremented
 
 // Store finalizeHint if it is not null.
-template <typename TBaseReference>
+template <class TBaseReference>
 struct FinalizeHintHolder : TBaseReference {
-  template <typename... TArgs>
+  template <class... TArgs>
   FinalizeHintHolder(void *finalizeHint, TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...),
         finalizeHint_(finalizeHint) {}
@@ -1511,9 +1511,9 @@ struct FinalizeHintHolder : TBaseReference {
 };
 
 // Store and call finalizeCallback if it is not null.
-template <typename TBaseReference>
+template <class TBaseReference>
 struct FinalizeCallbackHolder : TBaseReference {
-  template <typename... TArgs>
+  template <class... TArgs>
   FinalizeCallbackHolder(
       napi_finalize finalizeCallback,
       TArgs &&...args) noexcept
@@ -1533,9 +1533,9 @@ struct FinalizeCallbackHolder : TBaseReference {
 };
 
 // Store nativeData if it is not null.
-template <typename TBaseReference>
+template <class TBaseReference>
 struct NativeDataHolder : TBaseReference {
-  template <typename... TArgs>
+  template <class... TArgs>
   NativeDataHolder(void *nativeData, TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...), nativeData_(nativeData) {}
 
@@ -1548,9 +1548,9 @@ struct NativeDataHolder : TBaseReference {
 };
 
 // Common code for references inherited from Finalizer.
-template <typename TBaseReference>
+template <class TBaseReference>
 struct FinalizingReference final : TBaseReference {
-  template <typename... TArgs>
+  template <class... TArgs>
   FinalizingReference(TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...) {}
 
@@ -1562,9 +1562,9 @@ struct FinalizingReference final : TBaseReference {
 };
 
 // Create FinalizingReference with the optimized storage.
-template <typename TReference>
+template <class TReference>
 struct FinalizingReferenceFactory {
-  template <typename... TArgs>
+  template <class... TArgs>
   static TReference *create(
       void *nativeData,
       napi_finalize finalizeCallback,
@@ -1853,7 +1853,7 @@ struct StringBuilder {
   StringBuilder(AdoptStringTag, std::string &&str) noexcept
       : str_(std::move(str)), stream_(str_) {}
 
-  template <typename... TArgs>
+  template <class... TArgs>
   StringBuilder(TArgs &&...args) noexcept : stream_(str_) {
     append(std::forward<TArgs>(args)...);
   }
@@ -1862,7 +1862,7 @@ struct StringBuilder {
     return *this;
   }
 
-  template <typename TArg0, typename... TArgs>
+  template <class TArg0, class... TArgs>
   StringBuilder &append(TArg0 &&arg0, TArgs &&...args) noexcept {
     stream_ << arg0;
     return append(std::forward<TArgs>(args)...);
@@ -3741,7 +3741,7 @@ constexpr const char *getTypedArrayName() noexcept {
        static_cast<int>(vm::CellKind::TypedArrayBaseKind_first)];
 }
 
-template <typename TElement, vm::CellKind CellKind>
+template <class TElement, vm::CellKind CellKind>
 napi_status NodeApiEnvironment::createTypedArray(
     size_t length,
     vm::JSArrayBuffer *buffer,
@@ -4996,7 +4996,7 @@ napi_status NodeApiEnvironment::getExternalValue(
   });
 }
 
-template <typename F>
+template <class F>
 napi_status NodeApiEnvironment::handleExceptions(const F &f) noexcept {
   napi_status status{};
   RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
@@ -5023,7 +5023,7 @@ vm::Runtime &NodeApiEnvironment::runtime() noexcept {
   return runtime_;
 }
 
-template <typename... TArgs>
+template <class... TArgs>
 napi_status NodeApiEnvironment::setLastError(
     napi_status errorCode,
     TArgs &&...args) noexcept {
@@ -5364,7 +5364,7 @@ void NodeApiEnvironment::popOrderedSet() noexcept {
   orderedSets_.pop_back();
 }
 
-template <typename TLambda>
+template <class TLambda>
 void NodeApiEnvironment::callIntoModule(TLambda &&call) noexcept {
   int openHandleScopesBefore = openHandleScopes_;
   int openCallbackScopesBefore = openCallbackScopes_;
