@@ -65,8 +65,7 @@
       ? napi_invalid_arg \
       : reinterpret_cast<hermes::napi::NodeApiEnvironment *>(env)
 
-#define CHECK_ARG(arg) \
-  RETURN_STATUS_IF_FALSE(((arg) != nullptr), napi_invalid_arg)
+#define CHECK_ARG(arg) RETURN_STATUS_IF_FALSE((arg), napi_invalid_arg)
 
 #define CHECK_TYPED_ARG(arg, isCheck, status)            \
   do {                                                   \
@@ -77,30 +76,8 @@
 #define CHECK_OBJECT_ARG(arg) \
   CHECK_TYPED_ARG((arg), isObject, napi_object_expected)
 
-#define CHECK_FUNCTION_ARG(arg)                                      \
-  do {                                                               \
-    CHECK_ARG(arg);                                                  \
-    RETURN_STATUS_IF_FALSE(                                          \
-        vm::vmisa<vm::Callable>(*phv(arg)), napi_function_expected); \
-  } while (false)
-
 #define CHECK_STRING_ARG(arg) \
   CHECK_TYPED_ARG((arg), isString, napi_string_expected)
-
-#define CHECK_NUMBER_ARG(arg) \
-  CHECK_TYPED_ARG((arg), isNumber, napi_number_expected)
-
-#define CHECK_BOOL_ARG(arg) \
-  CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
-
-#define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
-  do {                                                              \
-    if (!(condition)) {                                             \
-      StringBuilder message(__VA_ARGS__);                           \
-      env.throwRangeError((error), message.c_str());                \
-      return setLastError(napi_pending_exception, message.c_str()); \
-    }                                                               \
-  } while (0)
 
 namespace hermes {
 namespace napi {
@@ -2486,14 +2463,16 @@ template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
 napi_status NodeApiEnvironment::getNumberValue(
     napi_value value,
     T *result) noexcept {
-  CHECK_NUMBER_ARG(value);
+  CHECK_ARG(value);
+  RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
   return setResult(phv(value)->getNumberAs<T>(), result);
 }
 
 napi_status NodeApiEnvironment::getBoolValue(
     napi_value value,
     bool *result) noexcept {
-  CHECK_BOOL_ARG(value);
+  CHECK_ARG(value);
+  RETURN_STATUS_IF_FALSE(phv(value)->isBool(), napi_boolean_expected);
   return setResult(phv(value)->getBool(), result);
 }
 
@@ -3252,7 +3231,9 @@ napi_status NodeApiEnvironment::instanceOf(
     bool *result) noexcept {
   return handleExceptions([&] {
     CHECK_OBJECT_ARG(object);
-    CHECK_FUNCTION_ARG(constructor);
+    CHECK_ARG(constructor);
+    RETURN_STATUS_IF_FALSE(
+        vm::vmisa<vm::Callable>(*phv(constructor)), napi_function_expected);
     return setResult(
         vm::instanceOfOperator_RJS(
             &runtime_, makeHandle(object), makeHandle(constructor)),
@@ -3768,18 +3749,20 @@ napi_status NodeApiEnvironment::createTypedArray(
     vm::JSTypedArrayBase **result) noexcept {
   constexpr size_t elementSize = sizeof(TElement);
   if (elementSize > 1) {
-    THROW_RANGE_ERROR_IF_FALSE(
-        byteOffset % elementSize == 0,
-        "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT",
-        "start offset of ",
-        getTypedArrayName<CellKind>(),
-        " should be a multiple of ",
-        elementSize);
+    if (byteOffset % elementSize != 0) {
+      StringBuilder sb(
+          "start offset of ",
+          getTypedArrayName<CellKind>(),
+          " should be a multiple of ",
+          elementSize);
+      return env.throwRangeError(
+          "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", sb.c_str());
+    }
   }
-  THROW_RANGE_ERROR_IF_FALSE(
-      length * elementSize + byteOffset <= buffer->size(),
-      "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH",
-      "Invalid typed array length");
+  if (length * elementSize + byteOffset > buffer->size()) {
+    return env.throwRangeError(
+        "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", "Invalid typed array length");
+  }
   using TypedArray = vm::JSTypedArray<TElement, CellKind>;
   auto arrayHandle =
       TypedArray::create(&runtime_, TypedArray::getPrototype(&runtime_));
@@ -3938,11 +3921,12 @@ napi_status NodeApiEnvironment::createDataView(
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
     RETURN_STATUS_IF_FALSE(buffer, napi_invalid_arg);
 
-    THROW_RANGE_ERROR_IF_FALSE(
-        byteLength + byteOffset <= buffer->size(),
-        "ERR_NAPI_INVALID_DATAVIEW_ARGS",
-        "byte_offset + byte_length should be less than or "
-        "equal to the size in bytes of the array passed in");
+    if (byteLength + byteOffset > buffer->size()) {
+      return env.throwRangeError(
+          "ERR_NAPI_INVALID_DATAVIEW_ARGS",
+          "byte_offset + byte_length should be less than or "
+          "equal to the size in bytes of the array passed in");
+    }
     auto viewHandle = vm::JSDataView::create(
         &runtime_, makeHandle<vm::JSObject>(&runtime_.dataViewPrototype));
     viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
