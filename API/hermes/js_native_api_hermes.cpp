@@ -3139,7 +3139,7 @@ napi_status NodeApiEnvironment::callFunction(
     const napi_value *args,
     napi_value *result) noexcept {
   return handleExceptions([&] {
-    //TODO: review arg checks
+    // TODO: review arg checks
     CHECK_ARG(object);
     if (argCount > 0) {
       CHECK_ARG(args);
@@ -3169,7 +3169,8 @@ napi_status NodeApiEnvironment::callFunction(
     for (uint32_t i = 0; i < argCount; ++i) {
       newFrame->getArgRef(i) = *phv(args[i]);
     }
-    vm::CallResult<vm::PseudoHandle<>> callRes = vm::Callable::call(handle, &runtime_);
+    vm::CallResult<vm::PseudoHandle<>> callRes =
+        vm::Callable::call(handle, &runtime_);
     CHECK_NAPI(checkHermesStatus(callRes));
 
     if (result) {
@@ -3192,10 +3193,9 @@ napi_status NodeApiEnvironment::newInstance(
       CHECK_ARG(argv);
     }
 
-    vm::Callable *callable =
-        vm::vmcast_or_null<vm::Callable>(*phv(constructor));
-    RETURN_STATUS_IF_FALSE(callable, napi_function_expected);
-    auto funcHandle = runtime_.makeHandle<vm::Callable>(callable);
+    RETURN_STATUS_IF_FALSE(
+        vm::vmisa<vm::Callable>(*phv(constructor)), napi_function_expected);
+    vm::Handle<vm::Callable> funcHandle = makeHandle<vm::Callable>(constructor);
 
     if (argc > std::numeric_limits<uint32_t>::max() ||
         !runtime_.checkAvailableStack((uint32_t)argc)) {
@@ -3223,10 +3223,12 @@ napi_status NodeApiEnvironment::newInstance(
     //    in 15.2.4
     //
     // Note that 13.2.2.1-4 are also handled by the call to newObject.
-    auto thisRes = vm::Callable::createThisForConstruct(funcHandle, &runtime_);
+    vm::CallResult<vm::PseudoHandle<vm::JSObject>> thisRes =
+        vm::Callable::createThisForConstruct(funcHandle, &runtime_);
+    CHECK_NAPI(checkHermesStatus(thisRes));
     // We need to capture this in case the ctor doesn't return an object,
     // we need to return this object.
-    auto objHandle = runtime_.makeHandle<vm::JSObject>(std::move(*thisRes));
+    vm::Handle<vm::JSObject> objHandle = makeHandle(std::move(*thisRes));
 
     // 13.2.2.8:
     //    Let result be the result of calling the [[Call]] internal property of
@@ -3249,8 +3251,9 @@ napi_status NodeApiEnvironment::newInstance(
       newFrame->getArgRef(i) = *phv(argv[i]);
     }
     // The last parameter indicates that this call should construct an object.
-    auto callRes = vm::Callable::call(funcHandle, &runtime_);
-    CHECK_NAPI(checkHermesStatus(callRes.getStatus()));
+    vm::CallResult<vm::PseudoHandle<>> callRes =
+        vm::Callable::call(funcHandle, &runtime_);
+    CHECK_NAPI(checkHermesStatus(callRes));
 
     // 13.2.2.9:
     //    If Type(result) is Object then return result
@@ -3334,8 +3337,9 @@ napi_status NodeApiEnvironment::defineClass(
     CHECK_NAPI(createSymbolID(utf8Name, length, &name));
     CHECK_NAPI(newFunction(name.get(), constructor, callbackData, result));
 
-    auto classHandle = runtime_.makeHandle<vm::JSObject>(*phv(*result));
-    auto prototypeHandle = runtime_.makeHandle(vm::JSObject::create(&runtime_));
+    vm::Handle<vm::JSObject> classHandle = makeHandle<vm::JSObject>(*result);
+    vm::Handle<vm::JSObject> prototypeHandle =
+        makeHandle(vm::JSObject::create(&runtime_));
     napi_value prototype = addStackValue(prototypeHandle.getHermesValue());
     vm::PropertyFlags pf;
     pf.clear();
@@ -3429,14 +3433,14 @@ napi_status NodeApiEnvironment::unwrapObject(
       CHECK_ARG(result);
     }
 
-    auto externalValue = getExternalValue(*phv(object));
+    ExternalValue *externalValue = getExternalValue(*phv(object));
     if (!externalValue) {
       CHECK_NAPI(
           getExternalValue(object, IfNotFound::ThenReturnNull, &externalValue));
       RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
     }
 
-    auto reference = asReference(externalValue->nativeData());
+    Reference *reference = asReference(externalValue->nativeData());
     if (result) {
       *result = reference->nativeData();
     }
@@ -3458,7 +3462,8 @@ napi_status NodeApiEnvironment::createExternal(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(result);
-    auto decoratedObj = createExternal(nativeData, nullptr);
+    vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
+        createExternal(nativeData, nullptr);
     *result = addStackValue(decoratedObj.getHermesValue());
     if (finalizeCallback) {
       CHECK_NAPI(FinalizingAnonymousReference::create(
@@ -3570,12 +3575,13 @@ napi_status NodeApiEnvironment::openEscapableHandleScope(
 
 napi_status NodeApiEnvironment::closeEscapableHandleScope(
     napi_escapable_handle_scope scope) noexcept {
-  auto status = closeHandleScope(reinterpret_cast<napi_handle_scope>(scope));
+  napi_status status =
+      closeHandleScope(reinterpret_cast<napi_handle_scope>(scope));
 
   if (status == napi_status::napi_ok) {
-    auto &sentinelValue = stackValues_.back();
+    vm::PinnedHermesValue &sentinelValue = stackValues_.back();
     if (sentinelValue.isNativeValue()) {
-      auto nativeValue = sentinelValue.getNativeUInt32();
+      uint32_t nativeValue = sentinelValue.getNativeUInt32();
       if (nativeValue == kEscapeableSentinelNativeValue ||
           nativeValue == kUsedEscapeableSentinelNativeValue) {
         stackValues_.popBack();
@@ -3802,7 +3808,7 @@ napi_status NodeApiEnvironment::createTypedArray(
         "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", "Invalid typed array length");
   }
   using TypedArray = vm::JSTypedArray<TElement, CellKind>;
-  auto arrayHandle =
+  vm::PseudoHandle<TypedArray> arrayHandle =
       TypedArray::create(&runtime_, TypedArray::getPrototype(&runtime_));
   vm::JSTypedArrayBase::setBuffer(
       &runtime_,
@@ -3965,7 +3971,7 @@ napi_status NodeApiEnvironment::createDataView(
           "byte_offset + byte_length should be less than or "
           "equal to the size in bytes of the array passed in");
     }
-    auto viewHandle = vm::JSDataView::create(
+    vm::PseudoHandle<vm::JSDataView> viewHandle = vm::JSDataView::create(
         &runtime_, makeHandle<vm::JSObject>(&runtime_.dataViewPrototype));
     viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
     return setResult(std::move(viewHandle), result);
