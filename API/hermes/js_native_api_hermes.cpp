@@ -18,9 +18,6 @@
 
 #include "hermes_napi.h"
 
-#include "hermes.h"
-#include "hermes/BCGen/HBC/BytecodeDataProvider.h"
-#include "hermes/BCGen/HBC/BytecodeFileFormat.h"
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/SourceMap/SourceMapParser.h"
 #include "hermes/Support/SimpleDiagHandler.h"
@@ -33,18 +30,12 @@
 #include "hermes/VM/JSError.h"
 #include "hermes/VM/JSProxy.h"
 #include "hermes/VM/JSTypedArray.h"
-#include "hermes/VM/PrimitiveBox.h"
 #include "hermes/VM/PropertyAccessor.h"
 #include "hermes/VM/Runtime.h"
-#include "hermes/VM/StringPrimitive.h"
-
-#include "llvh/ADT/SmallSet.h"
-#include "llvh/Support/Compiler.h"
 #include "llvh/Support/ConvertUTF.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cmath>
 #include <vector>
 
 #define CHECK_NAPI(...)                       \
@@ -4523,9 +4514,9 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       sourceMap = SourceMapParser::parse(mbref, sm);
       if (!sourceMap) {
         auto errorStr = diag.getErrorString();
-        //TODO: Implement
-        // LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
-        // errorStr.c_str());
+        // TODO: Implement
+        //  LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
+        //  errorStr.c_str());
         return setLastError(napi_generic_failure);
         // TODO: throw std::runtime_error("Error parsing source map:" +
         // errorStr);
@@ -4544,7 +4535,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
     os << " Buffer size " << bufSize << " starts with: ";
     for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
       os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
-      // TODO: Implement
+    // TODO: Implement
     // LOG_EXCEPTION_CAUSE(
     //     "Compiling JS failed: %s, %s", bcErr.second.c_str(),
     //     os.str().c_str());
