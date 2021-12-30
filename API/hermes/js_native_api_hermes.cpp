@@ -354,9 +354,9 @@ struct LinkedList {
 
   template <class TLambda>
   void forEach(TLambda lambda) noexcept {
-    for (auto item = begin(); item != end();) {
+    for (T *item = begin(); item != end();) {
       // lambda can delete the item - get the next one before calling it.
-      auto nextItem = static_cast<T *>(item->next_);
+      T *nextItem = static_cast<T *>(item->next_);
       lambda(item);
       item = nextItem;
     }
@@ -1292,7 +1292,7 @@ struct Reference : LinkedList<Reference>::Item {
   static void finalizeAll(
       NodeApiEnvironment &env,
       LinkedList<TItem> &list) noexcept {
-    for (auto item = list.begin(); item != list.end(); item = list.begin()) {
+    for (TItem *item = list.begin(); item != list.end(); item = list.begin()) {
       item->finalize(env);
     }
   }
@@ -1301,7 +1301,7 @@ struct Reference : LinkedList<Reference>::Item {
       NodeApiEnvironment &env,
       LinkedList<Reference> &list,
       ReasonToDelete reason) noexcept {
-    for (auto ref = list.begin(); ref != list.end(); ref = list.begin()) {
+    for (Reference *ref = list.begin(); ref != list.end(); ref = list.begin()) {
       deleteReference(env, ref, reason);
     }
   }
@@ -1554,7 +1554,8 @@ struct FinalizeCallbackHolder : TBaseReference {
 
   napi_status callFinalizeCallback(NodeApiEnvironment &env) noexcept override {
     if (finalizeCallback_) {
-      auto finalizeCallback = std::exchange(finalizeCallback_, nullptr);
+      napi_finalize finalizeCallback =
+          std::exchange(finalizeCallback_, nullptr);
       return env.callFinalizer(finalizeCallback, nativeData(), finalizeHint());
     }
     return napi_ok;
@@ -1649,8 +1650,9 @@ struct FinalizingAnonymousReference : Reference, Finalizer {
       void *finalizeHint,
       /*optional*/ FinalizingAnonymousReference **result) noexcept {
     CHECK_OBJECT_ARG(value);
-    auto ref = FinalizingReferenceFactory<FinalizingAnonymousReference>::create(
-        nativeData, finalizeCallback, finalizeHint);
+    FinalizingAnonymousReference *ref =
+        FinalizingReferenceFactory<FinalizingAnonymousReference>::create(
+            nativeData, finalizeCallback, finalizeHint);
     env.addObjectFinalizer(value, ref);
     env.addFinalizingGCRoot(ref);
     if (result) {
@@ -1784,7 +1786,7 @@ struct InstanceData : Reference {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       /*optional*/ InstanceData **result) noexcept {
-    auto ref = FinalizingReferenceFactory<InstanceData>::create(
+    InstanceData *ref = FinalizingReferenceFactory<InstanceData>::create(
         nativeData, finalizeCallback, finalizeHint);
     if (result) {
       *result = ref;
@@ -1814,7 +1816,7 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
       "Host Function", stats, stats.hostFunction};
 
   CallbackInfo callbackInfo{*hfc, hvArgs};
-  auto result = hfc->hostCallback_(
+  napi_value result = hfc->hostCallback_(
       napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
   return *phv(result);
   // TODO: handle errors
@@ -1855,7 +1857,7 @@ struct OrderedSet<vm::HermesValue> {
   static void getGCRoots(
       llvh::iterator_range<OrderedSet **> range,
       vm::RootAcceptor &acceptor) noexcept {
-    for (auto set : range) {
+    for (OrderedSet *set : range) {
       for (vm::PinnedHermesValue &value : set->items_) {
         acceptor.accept(value);
       }
@@ -1916,7 +1918,7 @@ struct StringBuilder {
 
   vm::CallResult<vm::Handle<>> makeStringHV(vm::Runtime &runtime) noexcept {
     stream_.flush();
-    auto res = vm::StringPrimitive::createEfficient(
+    vm::CallResult<vm::HermesValue> res = vm::StringPrimitive::createEfficient(
         &runtime, llvh::makeArrayRef(str_.data(), str_.size()));
     if (LLVM_UNLIKELY(res.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
       return vm::ExecutionStatus::EXCEPTION;
