@@ -112,11 +112,15 @@ struct NativeDataHolder;
 struct NodeApiEnvironment;
 template <class T>
 struct NonMovableObjStack;
+template <class T>
 struct OrderedSet;
+template <>
+struct OrderedSet<vm::HermesValue>;
+template <>
+struct OrderedSet<uint32_t>;
 struct Reference;
 struct StringBuilder;
 struct StrongReference;
-struct UInt32OrderedSet;
 struct WeakReference;
 
 enum class UnwrapAction { KeepWrap, RemoveWrap };
@@ -999,7 +1003,7 @@ struct NodeApiEnvironment final {
   void addGCRoot(Reference *reference) noexcept;
   void addFinalizingGCRoot(Reference *reference) noexcept;
 
-  void pushOrderedSet(OrderedSet &set) noexcept;
+  void pushOrderedSet(OrderedSet<vm::HermesValue> &set) noexcept;
   void popOrderedSet() noexcept;
 
   vm::CallResult<vm::Handle<>> convertIndexToString(double value) noexcept;
@@ -1116,7 +1120,7 @@ struct NodeApiEnvironment final {
   int openCallbackScopeCount_{};
   InstanceData *instanceData_{};
 
-  llvh::SmallVector<OrderedSet *, 16> orderedSets_;
+  llvh::SmallVector<OrderedSet<vm::HermesValue> *, 16> orderedSets_;
 
   NodeApiEnvironment &env{*this};
 };
@@ -1817,7 +1821,11 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
   // TODO: Add call in module
 }
 
-struct OrderedSet {
+template <class T>
+struct OrderedSet;
+
+template <>
+struct OrderedSet<vm::HermesValue> {
   using Compare =
       int32_t(const vm::HermesValue &item1, const vm::HermesValue &item2);
 
@@ -1860,7 +1868,8 @@ struct OrderedSet {
   Compare *compare_{};
 };
 
-struct UInt32OrderedSet {
+template <>
+struct OrderedSet<uint32_t> {
   bool insert(uint32_t value) noexcept {
     auto it = llvh::lower_bound(items_, value);
     if (it == items_.end() || *it == value) {
@@ -2176,7 +2185,7 @@ NodeApiEnvironment::NodeApiEnvironment(
     for (auto &value : predefinedValues_) {
       acceptor.accept(value);
     }
-    OrderedSet::getGCRoots(orderedSets_, acceptor);
+    OrderedSet<vm::HermesValue>::getGCRoots(orderedSets_, acceptor);
   });
   runtime_.addCustomWeakRootsFunction(
       [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
@@ -2722,12 +2731,12 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     bool useShadowTracking =
         keyMode == napi_key_include_prototypes && hasParent;
     // TODO: make the OrderedSet be a template
-    UInt32OrderedSet shadowIndexes;
-    OrderedSet shadowStrings(
+    OrderedSet<uint32_t> shadowIndexes;
+    OrderedSet<vm::HermesValue> shadowStrings(
         *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
           return item1.getString()->compare(item2.getString());
         });
-    OrderedSet shadowSymbols(
+    OrderedSet<vm::HermesValue> shadowSymbols(
         *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
           vm::SymbolID::RawType rawItem1 = item1.getSymbol().unsafeGetRaw();
           vm::SymbolID::RawType rawItem2 = item2.getSymbol().unsafeGetRaw();
@@ -5384,7 +5393,8 @@ void NodeApiEnvironment::addFinalizingGCRoot(Reference *reference) noexcept {
   finalizingGCRoots_.pushBack(reference);
 }
 
-void NodeApiEnvironment::pushOrderedSet(OrderedSet &set) noexcept {
+void NodeApiEnvironment::pushOrderedSet(
+    OrderedSet<vm::HermesValue> &set) noexcept {
   orderedSets_.push_back(&set);
 }
 
