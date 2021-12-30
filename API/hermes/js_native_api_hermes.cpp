@@ -83,13 +83,41 @@ namespace hermes {
 namespace napi {
 
 // Forward declarations
+struct AtomicRefCountReference;
+struct CallbackInfo;
+struct ComplexReference;
+struct ExternalBuffer;
+struct ExternalValue;
+template <class TBaseReference>
+struct FinalizeCallbackHolder;
+template <class TBaseReference>
+struct FinalizeHintHolder;
 struct Finalizer;
+struct FinalizingAnonymousReference;
+struct FinalizingComplexReference;
+template <class TBaseReference>
+struct FinalizingReference;
+template <class TReference>
+struct FinalizingReferenceFactory;
+struct FinalizingStrongReference;
 struct FunctionContext;
 struct HermesBuffer;
+struct HermesPreparedJavaScript;
 struct InstanceData;
+template <class T>
+struct LinkedList;
+struct Marker;
+template <class TBaseReference>
+struct NativeDataHolder;
 struct NodeApiEnvironment;
-struct Reference;
+template <class T>
+struct NonMovableObjStack;
 struct OrderedSet;
+struct Reference;
+struct StringBuilder;
+struct StrongReference;
+struct UInt32OrderedSet;
+struct WeakReference;
 
 enum class UnwrapAction { KeepWrap, RemoveWrap };
 
