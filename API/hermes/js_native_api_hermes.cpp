@@ -115,18 +115,6 @@ using ::hermes::hermesLog;
 #define CHECK_BOOL_ARG(arg) \
   CHECK_TYPED_ARG((arg), isBool, napi_boolean_expected)
 
-#define CONCAT_IMPL(left, right) left##right
-#define CONCAT(left, right) CONCAT_IMPL(left, right)
-#define TEMP_VARNAME(tempSuffix) CONCAT(temp_, tempSuffix)
-
-#define ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, status, tempSuffix)          \
-  auto TEMP_VARNAME(tempSuffix) = (expr);                                      \
-  CHECK_NAPI(checkHermesStatus(TEMP_VARNAME(tempSuffix).getStatus(), status)); \
-  var = std::move(*TEMP_VARNAME(tempSuffix));
-
-#define ASSIGN_ELSE_RETURN_FAILURE(var, expr) \
-  ASSIGN_ELSE_RETURN_STATUS_IMPL(var, expr, napi_generic_failure, __COUNTER__)
-
 #define THROW_RANGE_ERROR_IF_FALSE(condition, error, ...)           \
   do {                                                              \
     if (!(condition)) {                                             \
@@ -917,6 +905,11 @@ struct NodeApiEnvironment final {
  public:
   napi_status checkHermesStatus(
       vm::ExecutionStatus hermesStatus,
+      napi_status status = napi_generic_failure) noexcept;
+
+  template <class T>
+  napi_status checkHermesStatus(
+      const vm::CallResult<T> &callResult,
       napi_status status = napi_generic_failure) noexcept;
 
   napi_status setErrorCode(
@@ -2723,20 +2716,20 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         (keyFilter & (napi_key_writable | napi_key_configurable)) == 0) {
       ownKeyFlags.setIncludeNonEnumerable(
           (keyFilter & napi_key_enumerable) == 0);
-      ASSIGN_ELSE_RETURN_FAILURE(
-          vm::Handle<vm::JSArray> ownKeys /*=*/,
+      vm::CallResult<vm::Handle<vm::JSArray>> ownKeysRes =
           vm::JSObject::getOwnPropertyKeys(
-              makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags));
+              makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags);
+      CHECK_NAPI(checkHermesStatus(ownKeysRes));
       if (keyConversion == napi_key_numbers_to_strings) {
-        CHECK_NAPI(checkHermesStatus(convertKeyNumbersToStrings(ownKeys)));
+        CHECK_NAPI(checkHermesStatus(convertKeyNumbersToStrings(*ownKeysRes)));
       }
-      return setResult(ownKeys.getHermesValue(), result);
+      return setResult(std::move(*ownKeysRes), result);
     }
 
     // Collect all properties into the keyStorage.
-    ASSIGN_ELSE_RETURN_FAILURE(
-        vm::MutableHandle<vm::BigStorage> keyStorage /*=*/,
-        makeMutableHandle(vm::BigStorage::create(&runtime_, 16)));
+    vm::CallResult<vm::MutableHandle<vm::BigStorage>> keyStorageRes =
+        makeMutableHandle(vm::BigStorage::create(&runtime_, 16));
+    CHECK_NAPI(checkHermesStatus(keyStorageRes));
     uint32_t size{0};
 
     // Make sure that we do not include into the result properties that were
@@ -2766,14 +2759,15 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     while (currentObj.get()) {
       vm::GCScope gcScope(&runtime_);
 
-      ASSIGN_ELSE_RETURN_FAILURE(
-          vm::Handle<vm::JSArray> props /*=*/,
-          vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags));
+      vm::CallResult<vm::Handle<vm::JSArray>> props =
+          vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags);
+      CHECK_NAPI(checkHermesStatus(props));
 
       auto marker = gcScope.createMarker();
-      for (uint32_t i = 0, end = props->getEndIndex(); i < end; ++i) {
+      for (uint32_t i = 0, end = props.getValue()->getEndIndex(); i < end;
+           ++i) {
         gcScope.flushToMarker(marker);
-        prop = props->at(&runtime_, i);
+        prop = props.getValue()->at(&runtime_, i);
 
         // Do not add a property if it is overriden in the derived object.
         if (useShadowTracking) {
@@ -2808,16 +2802,16 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
               napi_key_configurable)) != 0) {
           vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
           vm::ComputedPropertyDescriptor desc;
-          ASSIGN_ELSE_RETURN_FAILURE(
-              bool hasDescriptor /*=*/,
+          vm::CallResult<bool> hasDescriptorRes =
               vm::JSObject::getOwnComputedPrimitiveDescriptor(
                   currentObj,
                   &runtime_,
                   prop,
                   vm::JSObject::IgnoreProxy::No,
                   tmpSymbolStorage,
-                  desc));
-          if (hasDescriptor) {
+                  desc);
+          CHECK_NAPI(checkHermesStatus(hasDescriptorRes));
+          if (*hasDescriptorRes) {
             if ((keyFilter & napi_key_writable) != 0 && !desc.flags.writable) {
               continue;
             }
@@ -2833,7 +2827,7 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
         }
 
         CHECK_NAPI(checkHermesStatus(
-            vm::BigStorage::push_back(keyStorage, &runtime_, prop)));
+            vm::BigStorage::push_back(*keyStorageRes, &runtime_, prop)));
         ++size;
       }
 
@@ -2843,7 +2837,8 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
       currentObj = makeHandle<vm::JSObject>(parent);
     }
 
-    return convertKeyStorageToArray(keyStorage, 0, size, keyConversion, result);
+    return convertKeyStorageToArray(
+        *keyStorageRes, 0, size, keyConversion, result);
   });
 }
 
@@ -2855,12 +2850,12 @@ napi_status NodeApiEnvironment::getForInPropertyNames(
   // by caching its results. This function takes the advantage from using it.
   uint32_t beginIndex;
   uint32_t endIndex;
-  ASSIGN_ELSE_RETURN_FAILURE(
-      vm::Handle<vm::BigStorage> keyStorage,
+  vm::CallResult<vm::Handle<vm::BigStorage>> keyStorage =
       vm::getForInPropertyNames(
-          &runtime_, makeHandle<vm::JSObject>(object), beginIndex, endIndex));
+          &runtime_, makeHandle<vm::JSObject>(object), beginIndex, endIndex);
+  CHECK_NAPI(checkHermesStatus(keyStorage));
   return convertKeyStorageToArray(
-      keyStorage, 0, endIndex - beginIndex, keyConversion, result);
+      *keyStorage, 0, endIndex - beginIndex, keyConversion, result);
 }
 
 napi_status NodeApiEnvironment::setProperty(
@@ -4825,6 +4820,13 @@ napi_status NodeApiEnvironment::checkHermesStatus(
   return status;
 }
 
+template <class T>
+napi_status NodeApiEnvironment::checkHermesStatus(
+    const vm::CallResult<T> &callResult,
+    napi_status status) noexcept {
+  return checkHermesStatus(callResult.getStatus());
+}
+
 napi_status NodeApiEnvironment::setErrorCode(
     vm::Handle<vm::JSError> error,
     napi_value code,
@@ -5282,10 +5284,13 @@ napi_status NodeApiEnvironment::convertKeyStorageToArray(
   if (keyConversion == napi_key_numbers_to_strings) {
     vm::GCScopeMarkerRAII marker{&runtime_};
     for (size_t i = 0; i < length; ++i) {
+      // TODO: should we use MutableHandle here?
       vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
       if (key->isNumber()) {
-        ASSIGN_ELSE_RETURN_FAILURE(
-            key /*=*/, convertIndexToString(key->getNumber()));
+        vm::CallResult<vm::Handle<>> keyRes =
+            convertIndexToString(key->getNumber());
+        CHECK_NAPI(checkHermesStatus(keyRes));
+        key = *keyRes;
       }
       vm::JSArray::setElementAt(array, &runtime_, i, key);
       marker.flush();
@@ -5363,11 +5368,9 @@ napi_status NodeApiEnvironment::createSymbolID(
     napi_value str,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   CHECK_STRING_ARG(str);
-  ASSIGN_ELSE_RETURN_FAILURE(
-      *result,
-      vm::stringToSymbolID(
-          &runtime_, vm::createPseudoHandle(phv(str)->getString())));
-  return napi_ok;
+  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
+      &runtime_, vm::createPseudoHandle(phv(str)->getString()));
+  return setResult(std::move(res), result);
 }
 
 vm::JSObject *NodeApiEnvironment::getObject(
