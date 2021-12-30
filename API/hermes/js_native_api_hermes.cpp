@@ -47,19 +47,6 @@
 #include <cmath>
 #include <vector>
 
-using ::hermes::hermesLog;
-
-// Android OSS has a bug where exception data can get mangled when going via
-// fbjni. This macro can be used to expose the root cause in adb log. It serves
-// no purpose other than as a backup.
-#ifdef __ANDROID__
-#define LOG_EXCEPTION_CAUSE(...) hermesLog("HermesVM", __VA_ARGS__)
-#else
-#define LOG_EXCEPTION_CAUSE(...) \
-  do {                           \
-  } while (0)
-#endif
-
 #define CHECK_NAPI(...)                       \
   do {                                        \
     if (napi_status status = (__VA_ARGS__)) { \
@@ -4536,7 +4523,9 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       sourceMap = SourceMapParser::parse(mbref, sm);
       if (!sourceMap) {
         auto errorStr = diag.getErrorString();
-        LOG_EXCEPTION_CAUSE("Error parsing source map: %s", errorStr.c_str());
+        //TODO: Implement
+        // LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
+        // errorStr.c_str());
         return setLastError(napi_generic_failure);
         // TODO: throw std::runtime_error("Error parsing source map:" +
         // errorStr);
@@ -4555,10 +4544,12 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
     os << " Buffer size " << bufSize << " starts with: ";
     for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
       os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
-    LOG_EXCEPTION_CAUSE(
-        "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
-    // throw jsi::JSINativeException(
-    //    "Compiling JS failed: " + std::move(bcErr.second) + os.str());
+      // TODO: Implement
+    // LOG_EXCEPTION_CAUSE(
+    //     "Compiling JS failed: %s, %s", bcErr.second.c_str(),
+    //     os.str().c_str());
+    //  throw jsi::JSINativeException(
+    //     "Compiling JS failed: " + std::move(bcErr.second) + os.str());
     return setLastError(napi_generic_failure);
   }
   *preparedScript =
