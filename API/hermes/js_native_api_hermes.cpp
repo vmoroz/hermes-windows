@@ -1811,7 +1811,7 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
   FunctionContext *hfc = reinterpret_cast<FunctionContext *>(context);
   NodeApiEnvironment &env = hfc->env_;
   assert(runtime == &env.runtime());
-  auto &stats = env.runtime().getRuntimeStats();
+  vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
   const vm::instrumentation::RAIITimer timer{
       "Host Function", stats, stats.hostFunction};
 
@@ -2115,7 +2115,7 @@ char *convertUTF16ToUTF8WithReplacements(
     encodeUTF8(ptr, c32);
     ptrdiff_t u8length = ptr - buff;
     if (curBuf + u8length <= endBuf) {
-      for (auto u8ptr = buff; u8ptr < ptr; ++u8ptr) {
+      for (char *u8ptr = buff; u8ptr < ptr; ++u8ptr) {
         *curBuf++ = *u8ptr;
       }
     } else {
@@ -3152,7 +3152,7 @@ napi_status NodeApiEnvironment::callFunction(
           "NodeApiEnvironment::callFunction: Unable to call function: stack overflow");
     }
 
-    auto &stats = runtime_.getRuntimeStats();
+    vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
     const vm::instrumentation::RAIITimer timer{
         "Incoming Function", stats, stats.incomingFunction};
     vm::ScopedNativeCallFrame newFrame{
@@ -3204,7 +3204,7 @@ napi_status NodeApiEnvironment::newInstance(
           "NodeApiEnvironment::newInstance: Unable to call function: stack overflow");
     }
 
-    auto &stats = runtime_.getRuntimeStats();
+    vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
     const vm::instrumentation::RAIITimer timer{
         "Incoming Function: Call As Constructor",
         stats,
@@ -4057,12 +4057,13 @@ napi_status NodeApiEnvironment::createPromise(
     napi_value *reject{};
   } executorData{this, resolveFunction, rejectFunction};
 
-  auto executorFunction = vm::NativeFunction::createWithoutPrototype(
-      &runtime_,
-      &executorData,
-      &ExecutorData::callback,
-      getPredefined(NapiPredefined::Promise).getSymbol(),
-      2);
+  vm::Handle<vm::NativeFunction> executorFunction =
+      vm::NativeFunction::createWithoutPrototype(
+          &runtime_,
+          &executorData,
+          &ExecutorData::callback,
+          getPredefined(NapiPredefined::Promise).getSymbol(),
+          2);
   napi_value func = addStackValue(executorFunction.getHermesValue());
   return newInstance(promiseConstructor, 1, &func, promise);
 }
@@ -4108,7 +4109,7 @@ napi_status NodeApiEnvironment::concludeDeferred(
 
   Reference *ref = asReference(deferred);
 
-  const auto &jsDeferred = ref->value(*this);
+  const vm::PinnedHermesValue &jsDeferred = ref->value(*this);
   napi_value resolver, callResult;
   CHECK_NAPI(getPredefined(
       makeHandle<vm::JSObject>(&jsDeferred), predefinedProperty, &resolver));
@@ -4228,7 +4229,8 @@ napi_status NodeApiEnvironment::getInstanceData(void **nativeData) noexcept {
 napi_status NodeApiEnvironment::detachArrayBuffer(
     napi_value arrayBuffer) noexcept {
   CHECK_ARG(arrayBuffer);
-  auto buffer = vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  vm::JSArrayBuffer *buffer =
+      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
   buffer->detach(&runtime_.getHeap());
   return clearLastError();
@@ -4238,7 +4240,8 @@ napi_status NodeApiEnvironment::isDetachedArrayBuffer(
     napi_value arrayBuffer,
     bool *result) noexcept {
   CHECK_ARG(arrayBuffer);
-  auto buffer = vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  vm::JSArrayBuffer *buffer =
+      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
   return setResult(buffer->attached(), result);
 }
@@ -4281,12 +4284,12 @@ napi_status NodeApiEnvironment::checkObjectTypeTag(
     napi_value tagBufferValue;
     CHECK_NAPI(
         getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
-    auto tagBuffer =
+    vm::JSArrayBuffer *tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
     RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
 
-    auto source = reinterpret_cast<const uint8_t *>(typeTag);
-    auto tagBufferData = tagBuffer->getDataBlock();
+    const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
+    const uint8_t *tagBufferData = tagBuffer->getDataBlock();
     return setResult(
         std::equal(
             source,
@@ -4387,7 +4390,8 @@ napi_status NodeApiEnvironment::runScript(
     napi_value *result) noexcept {
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUtf8(source, nullptr, 0, &sourceSize));
-  auto buffer = std::make_unique<std::vector<uint8_t>>();
+  std::unique_ptr<std::vector<uint8_t>> buffer =
+      std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
   CHECK_NAPI(getValueStringUtf8(
       source,
@@ -4402,7 +4406,8 @@ napi_status NodeApiEnvironment::runScript(
              napi_ext_buffer buffer,
              const uint8_t **buffer_start,
              size_t *buffer_length) {
-            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            std::vector<uint8_t> *buf =
+                reinterpret_cast<std::vector<uint8_t> *>(buffer);
             *buffer_start = buf->data();
             *buffer_length = buf->size() - 1;
           },
@@ -4421,7 +4426,8 @@ napi_status NodeApiEnvironment::runSerializedScript(
     napi_value /*source*/,
     const char *sourceURL,
     napi_value *result) noexcept {
-  auto bufferCopy = std::make_unique<std::vector<uint8_t>>();
+  std::unique_ptr<std::vector<uint8_t>> bufferCopy =
+      std::make_unique<std::vector<uint8_t>>();
   bufferCopy->assign(bufferLength, '\0');
   std::copy(buffer, buffer + bufferLength, bufferCopy->data());
   return runScriptWithSourceMap(
@@ -4432,7 +4438,8 @@ napi_status NodeApiEnvironment::runSerializedScript(
              napi_ext_buffer buffer,
              const uint8_t **buffer_start,
              size_t *buffer_length) {
-            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            std::vector<uint8_t> *buf =
+                reinterpret_cast<std::vector<uint8_t> *>(buffer);
             *buffer_start = buf->data();
             *buffer_length = buf->size();
           },
@@ -4452,7 +4459,8 @@ napi_status NodeApiEnvironment::serializeScript(
     void *bufferHint) noexcept {
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUtf8(source, nullptr, 0, &sourceSize));
-  auto buffer = std::make_unique<std::vector<uint8_t>>();
+  std::unique_ptr<std::vector<uint8_t>> buffer =
+      std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
   CHECK_NAPI(getValueStringUtf8(
       source,
@@ -4468,7 +4476,8 @@ napi_status NodeApiEnvironment::serializeScript(
              napi_ext_buffer buffer,
              const uint8_t **buffer_start,
              size_t *buffer_length) {
-            auto buf = reinterpret_cast<std::vector<uint8_t> *>(buffer);
+            std::vector<uint8_t> *buf =
+                reinterpret_cast<std::vector<uint8_t> *>(buffer);
             *buffer_start = buf->data();
             *buffer_length = buf->size() - 1;
           },
@@ -4541,7 +4550,7 @@ napi_status NodeApiEnvironment::prepareScriptWithSourceMap(
       diag.installInto(sm);
       sourceMap = SourceMapParser::parse(mbref, sm);
       if (!sourceMap) {
-        auto errorStr = diag.getErrorString();
+        std::string errorStr = diag.getErrorString();
         // TODO: Implement
         //  LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
         //  errorStr.c_str());
@@ -4585,10 +4594,10 @@ napi_status NodeApiEnvironment::runPreparedScript(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(preparedScript);
-    auto &stats = runtime_.getRuntimeStats();
+    vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
     const vm::instrumentation::RAIITimer timer{
         "Evaluate JS", stats, stats.evaluateJS};
-    const auto *hermesPrep =
+    const HermesPreparedJavaScript *hermesPrep =
         reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
     vm::CallResult<vm::HermesValue> res = runtime_.runBytecode(
         hermesPrep->bytecodeProvider(),
@@ -4613,19 +4622,21 @@ napi_status NodeApiEnvironment::serializePreparedScript(
   CHECK_ARG(preparedScript);
   CHECK_ARG(bufferCallback);
 
-  auto *hermesPreparedScript =
+  HermesPreparedJavaScript *hermesPreparedScript =
       reinterpret_cast<HermesPreparedJavaScript *>(preparedScript);
 
   if (hermesPreparedScript->isBytecode()) {
-    auto bytecodeProvider = std::static_pointer_cast<hbc::BCProviderFromBuffer>(
-        hermesPreparedScript->bytecodeProvider());
-    auto bufferRef = bytecodeProvider->getRawBuffer();
+    std::shared_ptr<hbc::BCProviderFromBuffer> bytecodeProvider =
+        std::static_pointer_cast<hbc::BCProviderFromBuffer>(
+            hermesPreparedScript->bytecodeProvider());
+    llvh::ArrayRef<uint8_t> bufferRef = bytecodeProvider->getRawBuffer();
     bufferCallback(
         napiEnv(this), bufferRef.data(), bufferRef.size(), bufferHint);
   } else {
-    auto bytecodeProvider = std::static_pointer_cast<hbc::BCProviderFromSrc>(
-        hermesPreparedScript->bytecodeProvider());
-    auto *bcModule = bytecodeProvider->getBytecodeModule();
+    std::shared_ptr<hbc::BCProviderFromSrc> bytecodeProvider =
+        std::static_pointer_cast<hbc::BCProviderFromSrc>(
+            hermesPreparedScript->bytecodeProvider());
+    hbc::BytecodeModule *bcModule = bytecodeProvider->getBytecodeModule();
 
     // Serialize/deserialize can't handle lazy compilation as of now. Do a
     // check to make sure there is no lazy BytecodeFunction in module_.
@@ -4640,7 +4651,8 @@ napi_status NodeApiEnvironment::serializePreparedScript(
     // and write it first and make life easier for Deserializer. This is going
     // to be slower than writing to Serializer directly but it's OK to slow
     // down serialization if it speeds up Deserializer.
-    auto bytecodeGenOpts = BytecodeGenerationOptions::defaults();
+    BytecodeGenerationOptions bytecodeGenOpts =
+        BytecodeGenerationOptions::defaults();
     llvh::SmallVector<char, 0> bytecodeVector;
     llvh::raw_svector_ostream OS(bytecodeVector);
     hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
@@ -4995,11 +5007,12 @@ napi_status NodeApiEnvironment::getOwnComputedDescriptor(
 vm::PseudoHandle<vm::DecoratedObject> NodeApiEnvironment::createExternal(
     void *nativeData,
     ExternalValue **externalValue) noexcept {
-  auto decoratedObj = vm::DecoratedObject::create(
-      &runtime_,
-      vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
-      std::make_unique<ExternalValue>(*this, nativeData),
-      /*additionalSlotCount:*/ 1);
+  vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
+      vm::DecoratedObject::create(
+          &runtime_,
+          vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
+          std::make_unique<ExternalValue>(*this, nativeData),
+          /*additionalSlotCount:*/ 1);
 
   // Add a special tag to differentiate from other decorated objects.
   vm::DecoratedObject::setAdditionalSlotValue(
@@ -5147,7 +5160,7 @@ vm::WeakRoot<vm::JSObject> NodeApiEnvironment::createWeakRoot(
 
 const vm::PinnedHermesValue &NodeApiEnvironment::lockWeakObject(
     vm::WeakRoot<vm::JSObject> &weakRoot) noexcept {
-  if (const auto ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
+  if (vm::JSObject *ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
     return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
   }
   return getPredefined(NapiPredefined::undefined);
@@ -5157,7 +5170,7 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
     const vm::PinnedHermesValue *value,
     Finalizer *finalizer) noexcept {
   return handleExceptions([&] {
-    auto externalValue = getExternalValue(*value);
+    ExternalValue *externalValue = getExternalValue(*value);
     if (!externalValue) {
       CHECK_NAPI(
           getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
@@ -5171,8 +5184,9 @@ napi_status NodeApiEnvironment::addObjectFinalizer(
 
 ExternalValue *NodeApiEnvironment::getExternalValue(
     const vm::HermesValue &value) noexcept {
-  if (auto decoratedObj = vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
-    auto tag = vm::DecoratedObject::getAdditionalSlotValue(
+  if (vm::DecoratedObject *decoratedObj =
+          vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
+    vm::SmallHermesValue tag = vm::DecoratedObject::getAdditionalSlotValue(
         decoratedObj, &runtime_, kExternalTagSlot);
     if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
       return static_cast<ExternalValue *>(decoratedObj->getDecoration());
@@ -5203,7 +5217,7 @@ napi_status NodeApiEnvironment::stringFromLatin1(
   // Latin1 has the same codes as Unicode. We just need to expand char to
   // char16_t.
   std::u16string u16str(length, u' ');
-  for (auto i = 0; i < length; ++i) {
+  for (size_t i = 0; i < length; ++i) {
     u16str[i] = str[i];
   }
   return setResult(
@@ -5266,15 +5280,16 @@ napi_status NodeApiEnvironment::newFunction(
     napi_callback callback,
     void *callbackData,
     napi_value *result) noexcept {
-  auto context =
+  std::unique_ptr<FunctionContext> context =
       std::make_unique<FunctionContext>(*this, callback, callbackData);
-  auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
-      &runtime_,
-      context.get(),
-      &FunctionContext::func,
-      &FunctionContext::finalize,
-      name,
-      /*paramCount:*/ 0);
+  vm::CallResult<vm::HermesValue> funcRes =
+      vm::FinalizableNativeFunction::createWithoutPrototype(
+          &runtime_,
+          context.get(),
+          &FunctionContext::func,
+          &FunctionContext::finalize,
+          name,
+          /*paramCount:*/ 0);
   CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
   context.release();
   *result = addStackValue(*funcRes);
@@ -5351,7 +5366,7 @@ napi_status NodeApiEnvironment::symbolIDFromPropertyDescriptor(
     CHECK_NAPI(createSymbolID(p->utf8name, NAPI_AUTO_LENGTH, result));
   } else {
     RETURN_STATUS_IF_FALSE(p->name, napi_name_expected);
-    auto namePHV = *phv(p->name);
+    const vm::PinnedHermesValue &namePHV = *phv(p->name);
     if (namePHV.isString()) {
       CHECK_NAPI(createSymbolID(p->name, result));
     } else if (namePHV.isSymbol()) {
