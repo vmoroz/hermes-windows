@@ -2015,6 +2015,7 @@ std::unique_ptr<HermesBuffer> makeHermesBuffer(
                 : nullptr;
 }
 
+// TODO: move to UTF8.h
 size_t utf8Length(llvh::ArrayRef<char16_t> input) {
   size_t length{0};
   for (auto cur = input.begin(), end = input.end(); cur < end; ++cur) {
@@ -2060,6 +2061,7 @@ size_t utf8Length(llvh::ArrayRef<char16_t> input) {
   return length;
 }
 
+// TODO: remove
 char *convertASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
@@ -2075,6 +2077,7 @@ char *convertASCIIToUTF8(
   return curBuf;
 }
 
+// TODO: move to UTF8.h
 char *convertUTF16ToUTF8WithReplacements(
     llvh::ArrayRef<char16_t> input,
     char *buf,
@@ -2113,11 +2116,10 @@ char *convertUTF16ToUTF8WithReplacements(
     char buff[UTF8CodepointMaxBytes];
     char *ptr = buff;
     encodeUTF8(ptr, c32);
-    ptrdiff_t u8length = ptr - buff;
+    size_t u8length = static_cast<size_t>(ptr - buff);
     if (curBuf + u8length <= endBuf) {
-      for (char *u8ptr = buff; u8ptr < ptr; ++u8ptr) {
-        *curBuf++ = *u8ptr;
-      }
+      std::char_traits<char>::copy(curBuf, buff, u8length);
+      curBuf += u8length;
     } else {
       break;
     }
