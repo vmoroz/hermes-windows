@@ -2015,37 +2015,41 @@ std::unique_ptr<HermesBuffer> makeHermesBuffer(
                 : nullptr;
 }
 
-// TODO: move to UTF8.h
-size_t utf8Length(llvh::ArrayRef<char16_t> input) {
-  size_t length{0};
-  for (auto cur = input.begin(), end = input.end(); cur < end; ++cur) {
-    char16_t c = cur[0];
-    // ASCII fast-path.
-    if (LLVM_LIKELY(c <= 0x7F)) {
-      ++length;
-      continue;
-    }
+char32_t readUTF16WithReplacements(
+    const char16_t *&cur,
+    const char16_t *end) noexcept {
+  char16_t c = *++cur;
+  // ASCII fast-path.
+  if (LLVM_LIKELY(c <= 0x7F)) {
+    return c;
+  }
 
-    char32_t c32;
-    if (isLowSurrogate(c)) {
-      // Unpaired low surrogate.
-      c32 = UNICODE_REPLACEMENT_CHARACTER;
-    } else if (isHighSurrogate(c)) {
-      // Leading high surrogate. See if the next character is a low surrogate.
-      if (cur + 1 == end || !isLowSurrogate(cur[1])) {
-        // Trailing or unpaired high surrogate.
-        c32 = UNICODE_REPLACEMENT_CHARACTER;
-      } else {
-        // Decode surrogate pair and increment, because we consumed two chars.
-        c32 = decodeSurrogatePair(c, cur[1]);
-        ++cur;
-      }
+  if (isLowSurrogate(c)) {
+    // Unpaired low surrogate.
+    return UNICODE_REPLACEMENT_CHARACTER;
+  } else if (isHighSurrogate(c)) {
+    // Leading high surrogate. See if the next character is a low surrogate.
+    if (cur + 1 == end || !isLowSurrogate(cur[1])) {
+      // Trailing or unpaired high surrogate.
+      return UNICODE_REPLACEMENT_CHARACTER;
     } else {
-      // Not a surrogate.
-      c32 = c;
+      // Decode surrogate pair and increment, because we consumed two chars.
+      return decodeSurrogatePair(c, *++cur);
     }
+  } else {
+    // Not a surrogate.
+    return c;
+  }
+}
 
-    if (c32 <= 0x7FF) {
+// TODO: move to UTF8.h
+size_t utf8LengthWithReplacements(llvh::ArrayRef<char16_t> input) {
+  size_t length{0};
+  for (const char16_t *cur = input.begin(), *end = input.end(); cur < end;) {
+    char32_t c32 = readUTF16WithReplacements(cur, end);
+    if (LLVM_LIKELY(c32 <= 0x7F)) {
+      ++length;
+    } else if (c32 <= 0x7FF) {
       length += 2;
     } else if (c32 <= 0xFFFF) {
       length += 3;
@@ -2061,57 +2065,25 @@ size_t utf8Length(llvh::ArrayRef<char16_t> input) {
   return length;
 }
 
-// TODO: remove
-char *convertASCIIToUTF8(
+size_t copyASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
     size_t maxCharacters) {
-  char *curBuf = buf;
-  char *endBuf = buf + maxCharacters;
-  for (auto cur = input.begin(), end = input.end();
-       cur < end && curBuf < endBuf;
-       ++cur, ++curBuf) {
-    *curBuf = *cur;
-  }
-
-  return curBuf;
+  size_t size = std::min(input.size(), maxCharacters);
+  std::char_traits<char>::copy(buf, input.data(), size);
+  return size;
 }
 
 // TODO: move to UTF8.h
-char *convertUTF16ToUTF8WithReplacements(
+size_t convertUTF16ToUTF8WithReplacements(
     llvh::ArrayRef<char16_t> input,
     char *buf,
     size_t maxCharacters) {
   char *curBuf = buf;
   char *endBuf = buf + maxCharacters;
-  for (auto cur = input.begin(), end = input.end();
-       cur < end && curBuf < endBuf;
-       ++cur) {
-    char16_t c = cur[0];
-    // ASCII fast-path.
-    if (LLVM_LIKELY(c <= 0x7F)) {
-      *curBuf++ = static_cast<char>(c);
-      continue;
-    }
-
-    char32_t c32;
-    if (isLowSurrogate(c)) {
-      // Unpaired low surrogate.
-      c32 = UNICODE_REPLACEMENT_CHARACTER;
-    } else if (isHighSurrogate(c)) {
-      // Leading high surrogate. See if the next character is a low surrogate.
-      if (cur + 1 == end || !isLowSurrogate(cur[1])) {
-        // Trailing or unpaired high surrogate.
-        c32 = UNICODE_REPLACEMENT_CHARACTER;
-      } else {
-        // Decode surrogate pair and increment, because we consumed two chars.
-        c32 = decodeSurrogatePair(c, cur[1]);
-        ++cur;
-      }
-    } else {
-      // Not a surrogate.
-      c32 = c;
-    }
+  for (const char16_t *cur = input.begin(), *end = input.end();
+       cur < end && curBuf < endBuf;) {
+    char32_t c32 = readUTF16WithReplacements(cur, end);
 
     char buff[UTF8CodepointMaxBytes];
     char *ptr = buff;
@@ -2125,7 +2097,7 @@ char *convertUTF16ToUTF8WithReplacements(
     }
   }
 
-  return curBuf;
+  return static_cast<size_t>(curBuf - buf);
 }
 } // namespace
 
@@ -2551,7 +2523,7 @@ napi_status NodeApiEnvironment::getValueStringLatin1(
 napi_status NodeApiEnvironment::getValueStringUtf8(
     napi_value value,
     char *buf,
-    size_t bufsize,
+    size_t bufSize,
     size_t *result) noexcept {
   return handleExceptions([&] {
     CHECK_STRING_ARG(value);
@@ -2562,21 +2534,21 @@ napi_status NodeApiEnvironment::getValueStringUtf8(
       CHECK_ARG(result);
       *result = view.isASCII() || view.length() == 0
           ? view.length()
-          : utf8Length(vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
-    } else if (bufsize != 0) {
-      char *end = view.length() > 0 ? view.isASCII()
-              ? convertASCIIToUTF8(
-                    vm::ASCIIRef(view.castToCharPtr(), view.length()),
-                    buf,
-                    bufsize - 1)
-              : convertUTF16ToUTF8WithReplacements(
-                    vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
-                    buf,
-                    bufsize - 1)
-                                    : buf;
-      *end = '\0';
+          : utf8LengthWithReplacements(
+                vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
+    } else if (bufSize != 0) {
+      size_t copied = view.length() > 0 ? view.isASCII()
+          ? copyASCIIToUTF8(
+                vm::ASCIIRef(view.castToCharPtr(), view.length()),
+                buf,
+                bufSize - 1)
+          : convertUTF16ToUTF8WithReplacements(
+                vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
+                buf,
+                bufSize - 1) : 0;
+      buf[copied] = '\0';
       if (result != nullptr) {
-        *result = static_cast<size_t>(end - buf);
+        *result = copied;
       }
     } else if (result != nullptr) {
       *result = 0;
