@@ -1125,7 +1125,17 @@ struct NodeApiEnvironment final {
   NodeApiEnvironment &env{*this};
 };
 
-struct HermesBuffer : Buffer {
+struct HermesBuffer : hermes::Buffer {
+  static std::unique_ptr<HermesBuffer> make(
+      napi_env env,
+      napi_ext_buffer buffer,
+      napi_ext_get_buffer_range getBufferRange,
+      napi_ext_delete_buffer deleteBuffer) noexcept {
+    return buffer ? std::make_unique<HermesBuffer>(
+                        env, buffer, getBufferRange, deleteBuffer)
+                  : nullptr;
+  }
+
   HermesBuffer(
       napi_env env,
       napi_ext_buffer buffer,
@@ -1962,7 +1972,7 @@ namespace {
 // native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
 // Calculated by: (thread stack size - size of runtime -
 // 8 memory pages for other stuff in the thread)
-static constexpr unsigned kMaxNumRegisters =
+constexpr unsigned kMaxNumRegisters =
     (512 * 1024 - sizeof(vm::Runtime) - 4096 * 8) /
     sizeof(vm::PinnedHermesValue);
 
@@ -2003,16 +2013,6 @@ Reference *asReference(napi_ref ref) noexcept {
 
 Reference *asReference(void *ref) noexcept {
   return reinterpret_cast<Reference *>(ref);
-}
-
-std::unique_ptr<HermesBuffer> makeHermesBuffer(
-    napi_env env,
-    napi_ext_buffer buffer,
-    napi_ext_get_buffer_range getBufferRange,
-    napi_ext_delete_buffer deleteBuffer) noexcept {
-  return buffer ? std::make_unique<HermesBuffer>(
-                      env, buffer, getBufferRange, deleteBuffer)
-                : nullptr;
 }
 
 size_t
@@ -4297,7 +4297,7 @@ napi_status NodeApiEnvironment::runScript(
       sourceSize + 1,
       nullptr));
   return runScriptWithSourceMap(
-      makeHermesBuffer(
+      HermesBuffer::make(
           napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(buffer.release()),
           [](napi_env /*env*/,
@@ -4329,7 +4329,7 @@ napi_status NodeApiEnvironment::runSerializedScript(
   bufferCopy->assign(bufferLength, '\0');
   std::copy(buffer, buffer + bufferLength, bufferCopy->data());
   return runScriptWithSourceMap(
-      makeHermesBuffer(
+      HermesBuffer::make(
           napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(bufferCopy.release()),
           [](napi_env /*env*/,
@@ -4367,7 +4367,7 @@ napi_status NodeApiEnvironment::serializeScript(
       nullptr));
   napi_ext_prepared_script preparedScript{};
   CHECK_NAPI(prepareScriptWithSourceMap(
-      makeHermesBuffer(
+      HermesBuffer::make(
           napiEnv(this),
           reinterpret_cast<napi_ext_buffer>(buffer.release()),
           [](napi_env /*env*/,
@@ -6552,9 +6552,9 @@ napi_status __cdecl napi_ext_run_script_with_source_map(
     const char *source_url,
     napi_value *result) {
   return CHECKED_ENV(env)->runScriptWithSourceMap(
-      hermes::napi::makeHermesBuffer(
+      hermes::napi::HermesBuffer::make(
           env, script, get_script_range, delete_script),
-      hermes::napi::makeHermesBuffer(
+      hermes::napi::HermesBuffer::make(
           env, source_map, get_source_map_range, delete_source_map),
       source_url,
       result);
@@ -6571,9 +6571,9 @@ napi_status __cdecl napi_ext_prepare_script_with_source_map(
     const char *source_url,
     napi_ext_prepared_script *prepared_script) {
   return CHECKED_ENV(env)->prepareScriptWithSourceMap(
-      hermes::napi::makeHermesBuffer(
+      hermes::napi::HermesBuffer::make(
           env, script, get_script_range, delete_script),
-      hermes::napi::makeHermesBuffer(
+      hermes::napi::HermesBuffer::make(
           env, source_map, get_source_map_range, delete_source_map),
       source_url,
       prepared_script);
