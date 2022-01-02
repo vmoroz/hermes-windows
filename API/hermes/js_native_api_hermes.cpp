@@ -1,17 +1,14 @@
 // TODO: change the stack references to use collection with chunks of equal 2^n
 // size.
 // TODO: Implement unit tests
-// TODO: Sync with latest code
 // TODO: Reorder the code
 // TODO: Better native error handling
-// TODO: review all object functions
 
 // TODO: adjustExternalMemory
 // TODO: Unique strings
 // TODO: Fix references for Unwrap
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
-// TODO: review and rename macros
 // TODO: rename NodeApiEnvironment
 
 #define NAPI_EXPERIMENTAL
@@ -19,6 +16,7 @@
 #include "hermes_napi.h"
 
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
+#include "hermes/DebuggerAPI.h"
 #include "hermes/SourceMap/SourceMapParser.h"
 #include "hermes/Support/SimpleDiagHandler.h"
 #include "hermes/VM/Callable.h"
@@ -1083,19 +1081,10 @@ struct NodeApiEnvironment final {
   vm::Runtime &runtime() noexcept;
 
  private:
-#ifdef HERMESJSI_ON_STACK
-  StackRuntime stackRuntime_;
-#else
   std::shared_ptr<vm::Runtime> rt_;
-#endif
   vm::Runtime &runtime_;
-// TODO: fix #ifdef HERMES_ENABLE_DEBUGGER
-#if 0
-  friend class debugger::Debugger;
-  std::unique_ptr<debugger::Debugger> debugger_;
-#endif
+
   vm::experiments::VMExperimentFlags vmExperimentFlags_{0};
-  std::shared_ptr<vm::CrashManager> crashMgr_;
 
   /// Compilation flags used by prepareJavaScript().
   hbc::CompileFlags compileFlags_{};
@@ -2047,27 +2036,16 @@ size_t copyASCIIToUTF8(
 // NodeApiEnvironment implementation
 //=============================================================================
 
+// TODO: pass parameters
 NodeApiEnvironment::NodeApiEnvironment(
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    :
-// TODO: pass parameters
-#ifdef HERMESJSI_ON_STACK
-      stackRuntime_(runtimeConfig),
-      runtime_(stackRuntime_.getRuntime()),
-#else
-      rt_(vm::Runtime::create(runtimeConfig.rebuild()
+    : rt_(vm::Runtime::create(runtimeConfig.rebuild()
                                   .withRegisterStack(nullptr)
                                   .withMaxNumRegisters(kMaxNumRegisters)
                                   .build())),
       runtime_(*rt_),
-#endif
-      vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()),
-      crashMgr_(runtimeConfig.getCrashMgr()) {
+      vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()) {
   compileFlags_.optimize = false;
-#ifdef HERMES_ENABLE_DEBUGGER
-  compileFlags_.debug = true;
-#endif
-
   switch (runtimeConfig.getCompilationMode()) {
     case vm::SmartCompilation:
       compileFlags_.lazy = true;
@@ -2087,10 +2065,6 @@ NodeApiEnvironment::NodeApiEnvironment(
   compileFlags_.emitAsyncBreakCheck = defaultEmitAsyncBreakCheck_ =
       runtimeConfig.getAsyncBreakCheckInEval();
 
-#ifndef HERMESJSI_ON_STACK
-  // Register the memory for the runtime if it isn't stored on the stack.
-  crashMgr_->registerMemory(&runtime_, sizeof(vm::Runtime));
-#endif
   runtime_.addCustomRootsFunction([this](vm::GC *, vm::RootAcceptor &acceptor) {
     stackValues_.forEach([&](const vm::PinnedHermesValue &value) {
       acceptor.accept(const_cast<vm::PinnedHermesValue &>(value));
