@@ -2084,42 +2084,6 @@ NodeApiEnvironment::NodeApiEnvironment(
         Reference::getGCWeakRoots(*this, gcRoots_, acceptor);
         Reference::getGCWeakRoots(*this, finalizingGCRoots_, acceptor);
       });
-  // TODO: implement
-  // runtime_.addCustomSnapshotFunction(
-  //     [this](vm::HeapSnapshot &snap) {
-  //       snap.beginNode();
-  //       snap.endNode(
-  //           vm::HeapSnapshot::NodeType::Native,
-  //           "ManagedValues",
-  //           vm::GCBase::IDTracker::reserved(
-  //               vm::GCBase::IDTracker::ReservedObjectID::
-  //                   JSIHermesValueList),
-  //           hermesValues_->size() * sizeof(HermesPointerValue),
-  //           0);
-  //       snap.beginNode();
-  //       snap.endNode(
-  //           vm::HeapSnapshot::NodeType::Native,
-  //           "ManagedValues",
-  //           vm::GCBase::IDTracker::reserved(
-  //               vm::GCBase::IDTracker::ReservedObjectID::
-  //                   JSIWeakHermesValueList),
-  //           weakHermesValues_->size() * sizeof(WeakRefPointerValue),
-  //           0);
-  //     },
-  //     [](vm::HeapSnapshot &snap) {
-  //       snap.addNamedEdge(
-  //           vm::HeapSnapshot::EdgeType::Internal,
-  //           "hermesValues",
-  //           vm::GCBase::IDTracker::reserved(
-  //               vm::GCBase::IDTracker::ReservedObjectID::
-  //                   JSIHermesValueList));
-  //       snap.addNamedEdge(
-  //           vm::HeapSnapshot::EdgeType::Internal,
-  //           "weakHermesValues",
-  //           vm::GCBase::IDTracker::reserved(
-  //               vm::GCBase::IDTracker::ReservedObjectID::
-  //                   JSIWeakHermesValueList));
-  //     });
 
   vm::GCScope gcScope(&runtime_);
   auto setPredefined = [this](
@@ -2623,7 +2587,6 @@ napi_status NodeApiEnvironment::getAllPropertyNames(
     // shadowed by the derived objects.
     bool useShadowTracking =
         keyMode == napi_key_include_prototypes && hasParent;
-    // TODO: make the OrderedSet be a template
     OrderedSet<uint32_t> shadowIndexes;
     OrderedSet<vm::HermesValue> shadowStrings(
         *this, [](const vm::HermesValue &item1, const vm::HermesValue &item2) {
