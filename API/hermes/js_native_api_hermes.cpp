@@ -146,10 +146,27 @@ const napi_status napi_not_implemented = napi_generic_failure;
 
 namespace {
 
+template <class T, std::size_t N>
+constexpr std::size_t size(const T (&array)[N]) noexcept;
+
+template <class TEnum>
+bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept;
+
 napi_env napiEnv(NodeApiEnvironment *env) noexcept;
+
 napi_value napiValue(const vm::PinnedHermesValue *value) noexcept;
+
 const vm::PinnedHermesValue *phv(napi_value value) noexcept;
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept;
+
+Reference *asReference(napi_ext_ref ref) noexcept;
+Reference *asReference(napi_ref ref) noexcept;
+Reference *asReference(void *ref) noexcept;
+
+size_t copyASCIIToUTF8(
+    llvh::ArrayRef<char> input,
+    char *buf,
+    size_t maxCharacters) noexcept;
 
 } // namespace
 
@@ -2015,8 +2032,10 @@ Reference *asReference(void *ref) noexcept {
   return reinterpret_cast<Reference *>(ref);
 }
 
-size_t
-copyASCIIToUTF8(llvh::ArrayRef<char> input, char *buf, size_t maxCharacters) {
+size_t copyASCIIToUTF8(
+    llvh::ArrayRef<char> input,
+    char *buf,
+    size_t maxCharacters) noexcept {
   size_t size = std::min(input.size(), maxCharacters);
   std::char_traits<char>::copy(buf, input.data(), size);
   return size;
