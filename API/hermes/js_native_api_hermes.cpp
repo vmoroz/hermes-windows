@@ -2015,90 +2015,13 @@ std::unique_ptr<HermesBuffer> makeHermesBuffer(
                 : nullptr;
 }
 
-char32_t readUTF16WithReplacements(
-    const char16_t *&cur,
-    const char16_t *end) noexcept {
-  char16_t c = *++cur;
-  // ASCII fast-path.
-  if (LLVM_LIKELY(c <= 0x7F)) {
-    return c;
-  }
-
-  if (isLowSurrogate(c)) {
-    // Unpaired low surrogate.
-    return UNICODE_REPLACEMENT_CHARACTER;
-  } else if (isHighSurrogate(c)) {
-    // Leading high surrogate. See if the next character is a low surrogate.
-    if (cur + 1 == end || !isLowSurrogate(cur[1])) {
-      // Trailing or unpaired high surrogate.
-      return UNICODE_REPLACEMENT_CHARACTER;
-    } else {
-      // Decode surrogate pair and increment, because we consumed two chars.
-      return decodeSurrogatePair(c, *++cur);
-    }
-  } else {
-    // Not a surrogate.
-    return c;
-  }
-}
-
-// TODO: move to UTF8.h
-size_t utf8LengthWithReplacements(llvh::ArrayRef<char16_t> input) {
-  size_t length{0};
-  for (const char16_t *cur = input.begin(), *end = input.end(); cur < end;) {
-    char32_t c32 = readUTF16WithReplacements(cur, end);
-    if (LLVM_LIKELY(c32 <= 0x7F)) {
-      ++length;
-    } else if (c32 <= 0x7FF) {
-      length += 2;
-    } else if (c32 <= 0xFFFF) {
-      length += 3;
-    } else if (c32 <= 0x1FFFFF) {
-      length += 4;
-    } else if (c32 <= 0x3FFFFFF) {
-      length += 5;
-    } else {
-      length += 6;
-    }
-  }
-
-  return length;
-}
-
-size_t copyASCIIToUTF8(
-    llvh::ArrayRef<char> input,
-    char *buf,
-    size_t maxCharacters) {
+size_t
+copyASCIIToUTF8(llvh::ArrayRef<char> input, char *buf, size_t maxCharacters) {
   size_t size = std::min(input.size(), maxCharacters);
   std::char_traits<char>::copy(buf, input.data(), size);
   return size;
 }
 
-// TODO: move to UTF8.h
-size_t convertUTF16ToUTF8WithReplacements(
-    llvh::ArrayRef<char16_t> input,
-    char *buf,
-    size_t maxCharacters) {
-  char *curBuf = buf;
-  char *endBuf = buf + maxCharacters;
-  for (const char16_t *cur = input.begin(), *end = input.end();
-       cur < end && curBuf < endBuf;) {
-    char32_t c32 = readUTF16WithReplacements(cur, end);
-
-    char buff[UTF8CodepointMaxBytes];
-    char *ptr = buff;
-    encodeUTF8(ptr, c32);
-    size_t u8length = static_cast<size_t>(ptr - buff);
-    if (curBuf + u8length <= endBuf) {
-      std::char_traits<char>::copy(curBuf, buff, u8length);
-      curBuf += u8length;
-    } else {
-      break;
-    }
-  }
-
-  return static_cast<size_t>(curBuf - buf);
-}
 } // namespace
 
 //=============================================================================
@@ -2538,14 +2461,15 @@ napi_status NodeApiEnvironment::getValueStringUtf8(
                 vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
     } else if (bufSize != 0) {
       size_t copied = view.length() > 0 ? view.isASCII()
-          ? copyASCIIToUTF8(
-                vm::ASCIIRef(view.castToCharPtr(), view.length()),
-                buf,
-                bufSize - 1)
-          : convertUTF16ToUTF8WithReplacements(
-                vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
-                buf,
-                bufSize - 1) : 0;
+              ? copyASCIIToUTF8(
+                    vm::ASCIIRef(view.castToCharPtr(), view.length()),
+                    buf,
+                    bufSize - 1)
+              : convertUTF16ToUTF8WithReplacements(
+                    vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
+                    buf,
+                    bufSize - 1)
+                                        : 0;
       buf[copied] = '\0';
       if (result != nullptr) {
         *result = copied;
