@@ -784,6 +784,13 @@ struct NodeApiEnvironment final {
   napi_status decRefCount() noexcept;
   napi_status collectGarbage() noexcept;
 
+  napi_status getUniqueStringUtf8Ref(
+      const char *utf8,
+      size_t length,
+      napi_ext_ref *result) noexcept;
+  napi_status getUniqueStringRef(
+      napi_value strValue,
+      napi_ext_ref *result) noexcept;
   napi_status createStrongReference(
       napi_value value,
       napi_ext_ref *result) noexcept;
@@ -1383,11 +1390,10 @@ struct AtomicRefCountReference : Reference {
 struct StrongReference : AtomicRefCountReference {
   static napi_status create(
       NodeApiEnvironment &env,
-      const vm::PinnedHermesValue *value,
+      vm::PinnedHermesValue value,
       StrongReference **result) noexcept {
-    CHECK_ARG(value);
     CHECK_ARG(result);
-    *result = new StrongReference(*value);
+    *result = new StrongReference(value);
     env.addGCRoot(*result);
     return env.clearLastError();
   }
@@ -1407,8 +1413,7 @@ struct StrongReference : AtomicRefCountReference {
   }
 
  protected:
-  StrongReference(const vm::PinnedHermesValue &value) noexcept
-      : value_(value) {}
+  StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
 
  private:
   vm::PinnedHermesValue value_;
@@ -3936,7 +3941,7 @@ napi_status NodeApiEnvironment::createPromise(
 
     CHECK_NAPI(StrongReference::create(
         *this,
-        phv(jsDeferred),
+        *phv(jsDeferred),
         reinterpret_cast<StrongReference **>(deferred)));
     return setResult(jsPromise, result);
   });
@@ -4190,11 +4195,39 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
   return clearLastError();
 }
 
+napi_status NodeApiEnvironment::getUniqueStringUtf8Ref(
+    const char *utf8,
+    size_t length,
+    napi_ext_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(utf8);
+    napi_value strValue;
+    CHECK_NAPI(stringFromUtf8(utf8, length, &strValue));
+    return getUniqueStringRef(strValue, result);
+  });
+}
+
+napi_status NodeApiEnvironment::getUniqueStringRef(
+    napi_value strValue,
+    napi_ext_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(strValue);
+    vm::CallResult<vm::Handle<vm::SymbolID>> cr = vm::stringToSymbolID(
+        &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
+    CHECK_NAPI(checkHermesStatus(cr));
+    return StrongReference::create(
+        *this,
+        cr->getHermesValue(),
+        reinterpret_cast<StrongReference **>(result));
+  });
+}
+
 napi_status NodeApiEnvironment::createStrongReference(
     napi_value value,
     napi_ext_ref *result) noexcept {
+  CHECK_ARG(value);
   return StrongReference::create(
-      *this, phv(value), reinterpret_cast<StrongReference **>(result));
+      *this, *phv(value), reinterpret_cast<StrongReference **>(result));
 }
 
 napi_status NodeApiEnvironment::createStrongReferenceWithData(
@@ -6401,16 +6434,14 @@ napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
     const char *str,
     size_t length,
     napi_ext_ref *result) {
-  // TODO: implement
-  return napi_generic_failure;
+  return CHECKED_ENV(env)->getUniqueStringUtf8Ref(str, length, result);
 }
 
 napi_status __cdecl napi_ext_get_unique_string_ref(
     napi_env env,
     napi_value str_value,
     napi_ext_ref *result) {
-  // TODO: implement
-  return napi_generic_failure;
+  return CHECKED_ENV(env)->getUniqueStringRef(str_value, result);
 }
 
 //-----------------------------------------------------------------------------
