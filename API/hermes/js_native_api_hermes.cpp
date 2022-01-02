@@ -5196,7 +5196,6 @@ napi_status NodeApiEnvironment::convertKeyStorageToArray(
   if (keyConversion == napi_key_numbers_to_strings) {
     vm::GCScopeMarkerRAII marker{&runtime_};
     for (size_t i = 0; i < length; ++i) {
-      // TODO: should we use MutableHandle here?
       vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
       if (key->isNumber()) {
         vm::CallResult<vm::Handle<>> keyRes =
