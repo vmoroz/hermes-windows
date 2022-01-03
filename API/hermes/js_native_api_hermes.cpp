@@ -54,10 +54,9 @@
     }                              \
   } while (false)
 
-#define CHECKED_ENV(env) \
-  ((env) == nullptr)     \
-      ? napi_invalid_arg \
-      : reinterpret_cast<hermes::napi::NapiEnvironment *>(env)
+#define CHECKED_ENV(env)                \
+  ((env) == nullptr) ? napi_invalid_arg \
+                     : reinterpret_cast<hermes::napi::NapiEnvironment *>(env)
 
 #define CHECK_ARG(arg) RETURN_STATUS_IF_FALSE((arg), napi_invalid_arg)
 
@@ -75,6 +74,7 @@
 
 namespace hermes {
 namespace napi {
+namespace {
 
 // Forward declarations
 class AtomicRefCountReference;
@@ -137,8 +137,6 @@ enum class IfNotFound {
 // It should be added to the napi_status enum
 const napi_status napi_not_implemented = napi_generic_failure;
 
-namespace {
-
 template <class T, std::size_t N>
 constexpr std::size_t size(const T (&array)[N]) noexcept;
 
@@ -160,8 +158,6 @@ size_t copyASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
     size_t maxCharacters) noexcept;
-
-} // namespace
 
 // Stack of T elements where the address of T is not changed as we add new
 // values. It is achieved by keeping a list of the ChunkSize chunks.
@@ -1226,8 +1222,7 @@ class Reference : public LinkedList<Reference>::Item {
     return nullptr;
   }
 
-  virtual vm::PinnedHermesValue *getGCRoot(
-      NapiEnvironment & /*env*/) noexcept {
+  virtual vm::PinnedHermesValue *getGCRoot(NapiEnvironment & /*env*/) noexcept {
     return nullptr;
   }
 
@@ -1353,8 +1348,7 @@ class StrongReference : public AtomicRefCountReference {
     return env.clearLastError();
   }
 
-  const vm::PinnedHermesValue &value(
-      NapiEnvironment &env) noexcept override {
+  const vm::PinnedHermesValue &value(NapiEnvironment &env) noexcept override {
     return value_;
   }
 
@@ -1389,8 +1383,7 @@ class WeakReference final : public AtomicRefCountReference {
     return env.clearLastError();
   }
 
-  const vm::PinnedHermesValue &value(
-      NapiEnvironment &env) noexcept override {
+  const vm::PinnedHermesValue &value(NapiEnvironment &env) noexcept override {
     return env.lockWeakObject(weakRoot_);
   }
 
@@ -1462,8 +1455,7 @@ class ComplexReference : public Reference {
     return env.clearLastError();
   }
 
-  const vm::PinnedHermesValue &value(
-      NapiEnvironment &env) noexcept override {
+  const vm::PinnedHermesValue &value(NapiEnvironment &env) noexcept override {
     if (refCount_ > 0) {
       return value_;
     } else {
@@ -1943,8 +1935,6 @@ class ExternalBuffer final : public Buffer {
   FinalizingAnonymousReference *finalizer_;
 };
 
-namespace {
-
 // Max size of the runtime's register stack.
 // The runtime register stack needs to be small enough to be allocated on the
 // native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
@@ -2001,8 +1991,6 @@ size_t copyASCIIToUTF8(
   std::char_traits<char>::copy(buf, input.data(), size);
   return size;
 }
-
-} // namespace
 
 //=============================================================================
 // NapiEnvironment implementation
@@ -2916,9 +2904,7 @@ napi_status NapiEnvironment::defineProperties(
   });
 }
 
-napi_status NapiEnvironment::isArray(
-    napi_value value,
-    bool *result) noexcept {
+napi_status NapiEnvironment::isArray(napi_value value, bool *result) noexcept {
   CHECK_ARG(value);
   return setResult(vm::vmisa<vm::JSArray>(*phv(value)), result);
 }
@@ -3480,9 +3466,7 @@ napi_status NapiEnvironment::throwRangeError(
   return throwError(runtime_.RangeErrorPrototype, code, message);
 }
 
-napi_status NapiEnvironment::isError(
-    napi_value value,
-    bool *result) noexcept {
+napi_status NapiEnvironment::isError(napi_value value, bool *result) noexcept {
   CHECK_ARG(value);
   return setResult(vm::vmisa<vm::JSError>(*phv(value)), result);
 }
@@ -3950,9 +3934,7 @@ napi_status NapiEnvironment::createDate(
   });
 }
 
-napi_status NapiEnvironment::isDate(
-    napi_value value,
-    bool *result) noexcept {
+napi_status NapiEnvironment::isDate(napi_value value, bool *result) noexcept {
   CHECK_ARG(value);
   return setResult(vm::vmisa<vm::JSDate>(*phv(value)), result);
 }
@@ -4771,10 +4753,8 @@ napi_status NapiEnvironment::putComputed(
 }
 
 template <class TObject, class TKey>
-napi_status NapiEnvironment::hasComputed(
-    TObject object,
-    TKey key,
-    bool *result) noexcept {
+napi_status
+NapiEnvironment::hasComputed(TObject object, TKey key, bool *result) noexcept {
   vm::CallResult<bool> res = vm::JSObject::hasComputed(
       makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
   return setResult(std::move(res), result);
@@ -4966,8 +4946,7 @@ napi_status NapiEnvironment::getLastErrorInfo(
   return napi_ok;
 }
 
-napi_status NapiEnvironment::genericFailure(
-    const char * /*message*/) noexcept {
+napi_status NapiEnvironment::genericFailure(const char * /*message*/) noexcept {
   // TODO: set result message
   return napi_generic_failure;
 }
@@ -5282,6 +5261,7 @@ napi_status NapiEnvironment::runReferenceFinalizers() noexcept {
   return napi_ok;
 }
 
+} // namespace
 } // namespace napi
 } // namespace hermes
 
