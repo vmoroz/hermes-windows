@@ -32,9 +32,9 @@
 #include <atomic>
 #include <vector>
 
-//-----------------------------------------------------------------------------
+//=============================================================================
 // Macros
-//-----------------------------------------------------------------------------
+//=============================================================================
 
 // Check the NAPI status and return it if it is not napi_ok.
 #define CHECK_NAPI(...)                       \
@@ -101,9 +101,9 @@ namespace hermes {
 namespace napi {
 namespace {
 
-//-----------------------------------------------------------------------------
+//=============================================================================
 // Forward declarations of classes and structs
-//-----------------------------------------------------------------------------
+//=============================================================================
 
 class CallbackInfo;
 class ExternalBuffer;
@@ -146,8 +146,14 @@ class Reference;
 class StrongReference;
 class WeakReference;
 
+//=============================================================================
+// Enums
+//=============================================================================
+
+// Controls behavior of NapiEnvironment::unwrapObject.
 enum class UnwrapAction { KeepWrap, RemoveWrap };
 
+// Predefined values used by NapiEnvironment.
 enum class NapiPredefined {
   Promise,
   code,
@@ -159,40 +165,66 @@ enum class NapiPredefined {
   PredefinedCount // a special value that must be last in the enum
 };
 
+// The action to take when an external value is not found.
 enum class IfNotFound {
   ThenCreate,
   ThenReturnNull,
 };
 
-// It should be added to the napi_status enum
+// napi_status to return when a feature is not implemented.
+// It should be added to the napi_status enum.
 const napi_status napi_not_implemented = napi_generic_failure;
 
+//=============================================================================
+// Forward declaration of standalone functions.
+//=============================================================================
+
+// Size of an array - it must be replaced by std::size after switching to C++17
 template <class T, std::size_t N>
 constexpr std::size_t size(const T (&array)[N]) noexcept;
 
+// Check if the enum value is in the provided range.
 template <class TEnum>
-bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept;
+bool isInEnumRange(
+    TEnum value,
+    TEnum lowerBoundInclusive,
+    TEnum upperBoundInclusive) noexcept;
 
+// Reinterpret cast NapiEnvironment to napi_env
 napi_env napiEnv(NapiEnvironment *env) noexcept;
 
+// Reinterpret cast vm::PinnedHermesValue pointer to napi_value
 napi_value napiValue(const vm::PinnedHermesValue *value) noexcept;
 
+// Reinterpret cast napi_value to vm::PinnedHermesValue pointer
 const vm::PinnedHermesValue *phv(napi_value value) noexcept;
+// Useful in templates and macros
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept;
 
+// Reinterpret cast napi_ext_ref to Reference pointer
 Reference *asReference(napi_ext_ref ref) noexcept;
+// Reinterpret cast napi_ref to Reference pointer
 Reference *asReference(napi_ref ref) noexcept;
+// Reinterpret cast void* to Reference pointer
 Reference *asReference(void *ref) noexcept;
 
+// Copy ASCII input to UTF8 buffer. It is a convenience function to match the
+// convertUTF16ToUTF8WithReplacements signature when using std::copy.
 size_t copyASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
     size_t maxCharacters) noexcept;
 
-// Stack of T elements where the address of T is not changed as we add new
-// values. It is achieved by keeping a list of the ChunkSize chunks.
-// We use it to keep addresses of gcRoot stack and the related handle scopes.
-// Considering our use case, we do not call the destructors for T.
+//=============================================================================
+// Definitions of classes and structs.
+//=============================================================================
+
+// Stack of elements where the address of items is not changed as we add new
+// values. It is achieved by keeping a SmallVector of the ChunkSize arrays
+// called chunks. We use it to keep addresses of GC roots associated with the
+// call stack and the related handle scopes. The GC roots are the
+// vm::PinnedHermesValue instances. Considering our use case, we do not call the
+// destructors for items and require that T has a trivial destructor.
 template <class T>
 class StableAddressStack final {
   static_assert(
@@ -280,6 +312,12 @@ class StableAddressStack final {
   size_t size_{0};
 };
 
+// An intrusive double linked list of items.
+// Items in the list must inherit from LinkedList<T>::Item.
+// We use it instead of std::list to allow item to delete itself in its
+// destructor and conveniently move items from list to another. The LinkedList
+// is used for References - the GC roots that are allocated in heap. The GC
+// roots are the vm::PinnedHermesValue instances.
 template <class T>
 class LinkedList final {
  public:
@@ -354,89 +392,6 @@ class LinkedList final {
 
  private:
   Item head_;
-};
-
-class CallbackInfo final {
- public:
-  CallbackInfo(FunctionContext &context, vm::NativeArgs &hvArgs) noexcept
-      : context_(context), hvArgs_(hvArgs) {}
-
-  void args(napi_value *args, size_t *argCount) noexcept {
-    *args = napiValue(&*hvArgs_.begin());
-    *argCount = hvArgs_.getArgCount();
-  }
-
-  size_t argCount() noexcept {
-    return hvArgs_.getArgCount();
-  }
-
-  napi_value thisArg() noexcept {
-    return napiValue(&hvArgs_.getThisArg());
-  }
-
-  void *nativeData() noexcept;
-
-  napi_value getNewTarget() noexcept {
-    return napiValue(&hvArgs_.getNewTarget());
-  }
-
- private:
-  FunctionContext &context_;
-  vm::NativeArgs &hvArgs_;
-};
-
-struct FunctionContext final {
-  FunctionContext(
-      NapiEnvironment &env,
-      napi_callback hostCallback,
-      void *nativeData) noexcept
-      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
-
-  static vm::CallResult<vm::HermesValue>
-  func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
-
-  static void finalize(void *context) {
-    delete reinterpret_cast<FunctionContext *>(context);
-  }
-
-  NapiEnvironment &env_;
-  napi_callback hostCallback_;
-  void *nativeData_;
-};
-
-void *CallbackInfo::nativeData() noexcept {
-  return context_.nativeData_;
-}
-
-class ExternalValue final : public vm::DecoratedObject::Decoration {
- public:
-  ExternalValue(NapiEnvironment &env) noexcept : env_(env) {}
-  ExternalValue(NapiEnvironment &env, void *nativeData) noexcept
-      : env_(env), nativeData_(nativeData) {}
-
-  ExternalValue(const ExternalValue &other) = delete;
-  ExternalValue &operator=(const ExternalValue &other) = delete;
-
-  ~ExternalValue() override;
-
-  size_t getMallocSize() const override {
-    return sizeof(*this);
-  }
-
-  void addFinalizer(Finalizer *finalizer) noexcept;
-
-  void *nativeData() noexcept {
-    return nativeData_;
-  }
-
-  void setNativeData(void *value) noexcept {
-    nativeData_ = value;
-  }
-
- private:
-  NapiEnvironment &env_;
-  void *nativeData_{};
-  LinkedList<Finalizer> finalizers_;
 };
 
 class NapiEnvironment final {
@@ -1113,6 +1068,37 @@ class NapiEnvironment final {
   NapiEnvironment &env{*this};
 };
 
+class ExternalValue final : public vm::DecoratedObject::Decoration {
+ public:
+  ExternalValue(NapiEnvironment &env) noexcept : env_(env) {}
+  ExternalValue(NapiEnvironment &env, void *nativeData) noexcept
+      : env_(env), nativeData_(nativeData) {}
+
+  ExternalValue(const ExternalValue &other) = delete;
+  ExternalValue &operator=(const ExternalValue &other) = delete;
+
+  ~ExternalValue() override;
+
+  size_t getMallocSize() const override {
+    return sizeof(*this);
+  }
+
+  void addFinalizer(Finalizer *finalizer) noexcept;
+
+  void *nativeData() noexcept {
+    return nativeData_;
+  }
+
+  void setNativeData(void *value) noexcept {
+    nativeData_ = value;
+  }
+
+ private:
+  NapiEnvironment &env_;
+  void *nativeData_{};
+  LinkedList<Finalizer> finalizers_;
+};
+
 class HermesBuffer final : public hermes::Buffer {
  public:
   static std::unique_ptr<HermesBuffer> make(
@@ -1181,6 +1167,75 @@ class HermesPreparedJavaScript final {
   std::string sourceURL_;
   bool isBytecode_{false};
 };
+
+class CallbackInfo final {
+ public:
+  CallbackInfo(FunctionContext &context, vm::NativeArgs &nativeArgs) noexcept
+      : context_(context), nativeArgs_(nativeArgs) {}
+
+  void args(napi_value *args, size_t *argCount) noexcept {
+    *args = napiValue(&*nativeArgs_.begin());
+    *argCount = nativeArgs_.getArgCount();
+  }
+
+  size_t argCount() noexcept {
+    return nativeArgs_.getArgCount();
+  }
+
+  napi_value thisArg() noexcept {
+    return napiValue(&nativeArgs_.getThisArg());
+  }
+
+  void *nativeData() noexcept;
+
+  napi_value getNewTarget() noexcept {
+    return napiValue(&nativeArgs_.getNewTarget());
+  }
+
+ private:
+  FunctionContext &context_;
+  vm::NativeArgs &nativeArgs_;
+};
+
+struct FunctionContext final {
+  FunctionContext(
+      NapiEnvironment &env,
+      napi_callback hostCallback,
+      void *nativeData) noexcept
+      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
+
+  // static vm::CallResult<vm::HermesValue>
+  // func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
+
+  static vm::CallResult<vm::HermesValue>
+  func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
+    FunctionContext *hfc = reinterpret_cast<FunctionContext *>(context);
+    NapiEnvironment &env = hfc->env_;
+    assert(runtime == &env.runtime());
+    vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
+    const vm::instrumentation::RAIITimer timer{
+        "Host Function", stats, stats.hostFunction};
+
+    CallbackInfo callbackInfo{*hfc, hvArgs};
+    napi_value result = hfc->hostCallback_(
+        napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
+    return *phv(result);
+    // TODO: handle errors
+    // TODO: Add call in module
+  }
+
+  static void finalize(void *context) {
+    delete reinterpret_cast<FunctionContext *>(context);
+  }
+
+  NapiEnvironment &env_;
+  napi_callback hostCallback_;
+  void *nativeData_;
+};
+
+void *CallbackInfo::nativeData() noexcept {
+  return context_.nativeData_;
+}
 
 // Different types of references:
 // 1. Strong reference - it can wrap up object of any type
@@ -1810,25 +1865,6 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
   finalizers_.pushBack(finalizer);
 }
 
-/*static*/ vm::CallResult<vm::HermesValue> FunctionContext::func(
-    void *context,
-    vm::Runtime *runtime,
-    vm::NativeArgs hvArgs) {
-  FunctionContext *hfc = reinterpret_cast<FunctionContext *>(context);
-  NapiEnvironment &env = hfc->env_;
-  assert(runtime == &env.runtime());
-  vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Host Function", stats, stats.hostFunction};
-
-  CallbackInfo callbackInfo{*hfc, hvArgs};
-  napi_value result = hfc->hostCallback_(
-      napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
-  return *phv(result);
-  // TODO: handle errors
-  // TODO: Add call in module
-}
-
 template <class T>
 class OrderedSet;
 
@@ -1980,8 +2016,11 @@ constexpr std::size_t size(const T (&array)[N]) noexcept {
 }
 
 template <class TEnum>
-bool isInEnumRange(TEnum value, TEnum lowerBound, TEnum upperBound) noexcept {
-  return lowerBound <= value && value <= upperBound;
+bool isInEnumRange(
+    TEnum value,
+    TEnum lowerBoundInclusive,
+    TEnum upperBoundInclusive) noexcept {
+  return lowerBoundInclusive <= value && value <= upperBoundInclusive;
 }
 
 napi_env napiEnv(NapiEnvironment *env) noexcept {
