@@ -1066,9 +1066,6 @@ struct NodeApiEnvironment final {
   static constexpr vm::HermesValue EmptyHermesValue{
       vm::HermesValue::encodeEmptyValue()};
 
-  // TODO: increment/decrement it in the code
-  int openCallbackScopes_{};
-
   // We store references in two different lists, depending on whether they
   // have `napi_finalizer` callbacks, because we must first finalize the
   // ones that have such a callback. See `~NodeApiEnvironment()` above for
@@ -1080,7 +1077,6 @@ struct NodeApiEnvironment final {
 
   std::string lastErrorMessage_;
   napi_extended_error_info lastError_{"", 0, 0, napi_ok};
-  int openCallbackScopeCount_{};
   InstanceData *instanceData_{};
 
   llvh::SmallVector<OrderedSet<vm::HermesValue> *, 16> orderedSets_;
@@ -5240,12 +5236,10 @@ void NodeApiEnvironment::popOrderedSet() noexcept {
 
 template <class TLambda>
 void NodeApiEnvironment::callIntoModule(TLambda &&call) noexcept {
-  int openHandleScopesBefore = gcRootStackScopes_.size();
-  int openCallbackScopesBefore = openCallbackScopes_;
+  size_t openHandleScopesBefore = gcRootStackScopes_.size();
   clearLastError();
   call(this);
   CRASH_IF_FALSE(openHandleScopesBefore == gcRootStackScopes_.size());
-  CRASH_IF_FALSE(openCallbackScopesBefore == openCallbackScopes_);
   if (!lastException_.isEmpty()) {
     runtime_.setThrownValue(lastException_);
     lastException_ = EmptyHermesValue;
