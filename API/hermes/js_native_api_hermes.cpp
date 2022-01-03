@@ -32,6 +32,11 @@
 #include <atomic>
 #include <vector>
 
+//-----------------------------------------------------------------------------
+// Macros
+//-----------------------------------------------------------------------------
+
+// Check the NAPI status and return if it is not napi_ok.
 #define CHECK_NAPI(...)                       \
   do {                                        \
     if (napi_status status = (__VA_ARGS__)) { \
@@ -39,13 +44,7 @@
     }                                         \
   } while (false)
 
-#define RETURN_STATUS_IF_FALSE(condition, status) \
-  do {                                            \
-    if (!(condition)) {                           \
-      return env.setLastError((status));          \
-    }                                             \
-  } while (false)
-
+// Crash if the condition is false.
 #define CRASH_IF_FALSE(condition)  \
   do {                             \
     if (!(condition)) {            \
@@ -54,34 +53,65 @@
     }                              \
   } while (false)
 
+// Check conditions and return error status if it is false
+#define RETURN_STATUS_IF_FALSE(condition, status) \
+  do {                                            \
+    if (!(condition)) {                           \
+      return env.setLastError((status));          \
+    }                                             \
+  } while (false)
+
+// Check that the argument is not nullptr.
+#define CHECK_ARG(arg) \
+  RETURN_STATUS_IF_FALSE((arg) != nullptr, napi_invalid_arg)
+
+// Check that the argument is of Object or Function type.
+#define CHECK_OBJECT_ARG(arg)                                           \
+  do {                                                                  \
+    CHECK_ARG(arg);                                                     \
+    RETURN_STATUS_IF_FALSE(phv(arg)->isObject(), napi_object_expected); \
+  } while (false)
+
+// Check that the argument is of String type.
+#define CHECK_STRING_ARG(arg)                                           \
+  do {                                                                  \
+    CHECK_ARG(arg);                                                     \
+    RETURN_STATUS_IF_FALSE(phv(arg)->isString(), napi_string_expected); \
+  } while (false)
+
+// Cast env to NapiEnvironment if it is not null.
 #define CHECKED_ENV(env)                \
   ((env) == nullptr) ? napi_invalid_arg \
                      : reinterpret_cast<hermes::napi::NapiEnvironment *>(env)
-
-#define CHECK_ARG(arg) RETURN_STATUS_IF_FALSE((arg), napi_invalid_arg)
-
-#define CHECK_TYPED_ARG(arg, isCheck, status)            \
-  do {                                                   \
-    CHECK_ARG(arg);                                      \
-    RETURN_STATUS_IF_FALSE(phv(arg)->isCheck(), status); \
-  } while (false)
-
-#define CHECK_OBJECT_ARG(arg) \
-  CHECK_TYPED_ARG((arg), isObject, napi_object_expected)
-
-#define CHECK_STRING_ARG(arg) \
-  CHECK_TYPED_ARG((arg), isString, napi_string_expected)
 
 namespace hermes {
 namespace napi {
 namespace {
 
-// Forward declarations
-class AtomicRefCountReference;
+//-----------------------------------------------------------------------------
+// Forward declarations of classes and structs
+//-----------------------------------------------------------------------------
+
 class CallbackInfo;
-class ComplexReference;
 class ExternalBuffer;
 class ExternalValue;
+struct FunctionContext;
+class HermesBuffer;
+class HermesPreparedJavaScript;
+class NapiEnvironment;
+template <class T>
+class OrderedSet;
+template <>
+class OrderedSet<vm::HermesValue>;
+template <>
+class OrderedSet<uint32_t>;
+template <class T>
+class StableAddressStack;
+class StringBuilder;
+
+// Forward declarations for Reference-related classes
+class AtomicRefCountReference;
+class ComplexReference;
 template <class TBaseReference>
 class FinalizeCallbackHolder;
 template <class TBaseReference>
@@ -94,25 +124,12 @@ class FinalizingReference;
 template <class TReference>
 class FinalizingReferenceFactory;
 class FinalizingStrongReference;
-struct FunctionContext;
-class HermesBuffer;
-class HermesPreparedJavaScript;
 class InstanceData;
 template <class T>
 class LinkedList;
-class NapiEnvironment;
 template <class TBaseReference>
 class NativeDataHolder;
-template <class T>
-class OrderedSet;
-template <>
-class OrderedSet<vm::HermesValue>;
-template <>
-class OrderedSet<uint32_t>;
 class Reference;
-template <class T>
-class StableAddressStack;
-class StringBuilder;
 class StrongReference;
 class WeakReference;
 
