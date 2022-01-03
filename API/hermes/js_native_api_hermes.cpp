@@ -36,7 +36,7 @@
 // Macros
 //-----------------------------------------------------------------------------
 
-// Check the NAPI status and return if it is not napi_ok.
+// Check the NAPI status and return it if it is not napi_ok.
 #define CHECK_NAPI(...)                       \
   do {                                        \
     if (napi_status status = (__VA_ARGS__)) { \
@@ -49,34 +49,47 @@
   do {                             \
     if (!(condition)) {            \
       assert(false && #condition); \
+      *((int *)nullptr) = 1;       \
       std::terminate();            \
     }                              \
   } while (false)
 
-// Check conditions and return error status if it is false
-#define RETURN_STATUS_IF_FALSE(condition, status) \
-  do {                                            \
-    if (!(condition)) {                           \
-      return env.setLastError((status));          \
-    }                                             \
+// Check conditions and return error status with message if it is false.
+#define RETURN_STATUS_IF_FALSE_WITH_MESSAGE(condition, status, message) \
+  do {                                                                  \
+    if (!(condition)) {                                                 \
+      return env.setLastError((status), (message));                     \
+    }                                                                   \
   } while (false)
 
+// Check conditions and return error status if it is false.
+#define RETURN_STATUS_IF_FALSE(condition, status) \
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE(            \
+      condition, status, "Condition is false: " #condition)
+
 // Check that the argument is not nullptr.
-#define CHECK_ARG(arg) \
-  RETURN_STATUS_IF_FALSE((arg) != nullptr, napi_invalid_arg)
+#define CHECK_ARG(arg)                 \
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE( \
+      (arg) != nullptr, napi_invalid_arg, "Argument is null: " #arg)
 
 // Check that the argument is of Object or Function type.
-#define CHECK_OBJECT_ARG(arg)                                           \
-  do {                                                                  \
-    CHECK_ARG(arg);                                                     \
-    RETURN_STATUS_IF_FALSE(phv(arg)->isObject(), napi_object_expected); \
+#define CHECK_OBJECT_ARG(arg)                \
+  do {                                       \
+    CHECK_ARG(arg);                          \
+    RETURN_STATUS_IF_FALSE_WITH_MESSAGE(     \
+        phv(arg)->isObject(),                \
+        napi_object_expected,                \
+        "Argument is not an Object: " #arg); \
   } while (false)
 
 // Check that the argument is of String type.
-#define CHECK_STRING_ARG(arg)                                           \
-  do {                                                                  \
-    CHECK_ARG(arg);                                                     \
-    RETURN_STATUS_IF_FALSE(phv(arg)->isString(), napi_string_expected); \
+#define CHECK_STRING_ARG(arg)               \
+  do {                                      \
+    CHECK_ARG(arg);                         \
+    RETURN_STATUS_IF_FALSE_WITH_MESSAGE(    \
+        phv(arg)->isString(),               \
+        napi_string_expected,               \
+        "Argument is not a String: " #arg); \
   } while (false)
 
 // Cast env to NapiEnvironment if it is not null.
