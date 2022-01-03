@@ -3,7 +3,6 @@
 // TODO: Better native error handling
 
 // TODO: adjustExternalMemory
-// TODO: Fix references for Unwrap
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
 // TODO: rename NodeApiEnvironment
@@ -1502,9 +1501,6 @@ class ComplexReference : public Reference {
   static constexpr uint32_t MaxRefCount =
       std::numeric_limits<uint32_t>::max() / 2;
 };
-
-// TODO: make sure that in the unwrap we can convert the self deleting complex
-// ref to manually deleted one if the ref count is incremented
 
 // Store finalizeHint if it is not null.
 template <class TBaseReference>
@@ -3228,29 +3224,16 @@ napi_status NodeApiEnvironment::wrapObject(
     RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
     Reference *reference{};
-    if (result != nullptr) {
-      CHECK_NAPI(FinalizingComplexReference::create(
-          *this,
-          0,
-          phv(object),
-          nativeData,
-          finalizeCallback,
-          finalizeHint,
-          reinterpret_cast<FinalizingComplexReference **>(reference)));
-      *result = reinterpret_cast<napi_ref>(reference);
-    } else {
-      // TODO: do not use the anonymous ref here
-      CHECK_NAPI(FinalizingAnonymousReference::create(
-          *this,
-          phv(object),
-          nativeData,
-          finalizeCallback,
-          finalizeHint,
-          reinterpret_cast<FinalizingAnonymousReference **>(reference)));
-    }
-
+    CHECK_NAPI(FinalizingComplexReference::create(
+        *this,
+        0,
+        phv(object),
+        nativeData,
+        finalizeCallback,
+        finalizeHint,
+        reinterpret_cast<FinalizingComplexReference **>(reference)));
     externalValue->setNativeData(reference);
-    return clearLastError();
+    return setOptionalResult(reinterpret_cast<napi_ref>(reference), result);
   });
 }
 
