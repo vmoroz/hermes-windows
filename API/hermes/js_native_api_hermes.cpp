@@ -114,10 +114,6 @@ class HermesPreparedJavaScript;
 class NapiEnvironment;
 template <class T>
 class OrderedSet;
-template <>
-class OrderedSet<vm::HermesValue>;
-template <>
-class OrderedSet<uint32_t>;
 template <class T>
 class StableAddressStack;
 class StringBuilder;
@@ -1139,13 +1135,18 @@ class ExternalValue final : public vm::DecoratedObject::Decoration {
   ExternalValue(const ExternalValue &other) = delete;
   ExternalValue &operator=(const ExternalValue &other) = delete;
 
-  ~ExternalValue() override;
+  ~ExternalValue() override {
+    finalizers_.forEach(
+        [&](Finalizer *finalizer) { env_.addToFinalizerQueue(finalizer); });
+  }
 
   size_t getMallocSize() const override {
     return sizeof(*this);
   }
 
-  void addFinalizer(Finalizer *finalizer) noexcept;
+  void addFinalizer(Finalizer *finalizer) noexcept {
+    finalizers_.pushBack(finalizer);
+  }
 
   void *nativeData() noexcept {
     return nativeData_;
@@ -1912,18 +1913,6 @@ class InstanceData : public Reference {
     return env.clearLastError();
   }
 };
-
-ExternalValue::~ExternalValue() {
-  finalizers_.forEach(
-      [&](Finalizer *finalizer) { env_.addToFinalizerQueue(finalizer); });
-}
-
-void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
-  finalizers_.pushBack(finalizer);
-}
-
-template <class T>
-class OrderedSet;
 
 template <>
 class OrderedSet<vm::HermesValue> final {
