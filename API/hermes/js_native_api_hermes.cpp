@@ -108,9 +108,9 @@ namespace {
 class CallbackInfo;
 class ExternalBuffer;
 class ExternalValue;
-struct FunctionContext;
 class HermesBuffer;
 class HermesPreparedJavaScript;
+class HostFunctionContext;
 class NapiEnvironment;
 template <class T>
 class OrderedSet;
@@ -203,6 +203,9 @@ Reference *asReference(napi_ext_ref ref) noexcept;
 Reference *asReference(napi_ref ref) noexcept;
 // Reinterpret cast void* to Reference pointer
 Reference *asReference(void *ref) noexcept;
+
+// Reinterpret cast to HostFunctionContext::CallbackInfo
+CallbackInfo *asCallbackInfo(napi_callback_info callbackInfo) noexcept;
 
 // Get object from HermesValue and cast it to JSObject
 vm::JSObject *getObjectUnsafe(const vm::HermesValue &value) noexcept;
@@ -1126,6 +1129,7 @@ class NapiEnvironment final {
       vm::HermesValue::encodeEmptyValue()};
 };
 
+// Ths class hosts external data
 class ExternalValue final : public vm::DecoratedObject::Decoration {
  public:
   ExternalValue(NapiEnvironment &env) noexcept : env_(env) {}
@@ -1162,6 +1166,7 @@ class ExternalValue final : public vm::DecoratedObject::Decoration {
   LinkedList<Finalizer> finalizers_;
 };
 
+// hermes::Buffer implementation that wraps napi_ext_buffer.
 class HermesBuffer final : public hermes::Buffer {
  public:
   static std::unique_ptr<HermesBuffer> make(
@@ -1195,7 +1200,7 @@ class HermesBuffer final : public hermes::Buffer {
   napi_ext_delete_buffer deleteBuffer_;
 };
 
-/// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
+// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
 class HermesPreparedJavaScript final {
  public:
   explicit HermesPreparedJavaScript(
@@ -1231,9 +1236,36 @@ class HermesPreparedJavaScript final {
   bool isBytecode_{false};
 };
 
+class HostFunctionContext final {
+ public:
+  HostFunctionContext(
+      NapiEnvironment &env,
+      napi_callback hostCallback,
+      void *nativeData) noexcept
+      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
+
+  static vm::CallResult<vm::HermesValue>
+  func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
+
+  static void finalize(void *context) {
+    delete reinterpret_cast<class HostFunctionContext *>(context);
+  }
+
+  void *nativeData() noexcept {
+    return nativeData_;
+  }
+
+ private:
+  NapiEnvironment &env_;
+  napi_callback hostCallback_;
+  void *nativeData_;
+};
+
 class CallbackInfo final {
  public:
-  CallbackInfo(FunctionContext &context, vm::NativeArgs &nativeArgs) noexcept
+  CallbackInfo(
+      HostFunctionContext &context,
+      vm::NativeArgs &nativeArgs) noexcept
       : context_(context), nativeArgs_(nativeArgs) {}
 
   void args(napi_value *args, size_t *argCount) noexcept {
@@ -1249,55 +1281,36 @@ class CallbackInfo final {
     return napiValue(&nativeArgs_.getThisArg());
   }
 
-  void *nativeData() noexcept;
+  void *nativeData() noexcept {
+    return context_.nativeData();
+  }
 
   napi_value getNewTarget() noexcept {
     return napiValue(&nativeArgs_.getNewTarget());
   }
 
  private:
-  FunctionContext &context_;
+  HostFunctionContext &context_;
   vm::NativeArgs &nativeArgs_;
 };
 
-struct FunctionContext final {
-  FunctionContext(
-      NapiEnvironment &env,
-      napi_callback hostCallback,
-      void *nativeData) noexcept
-      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
+/*static*/ vm::CallResult<vm::HermesValue> HostFunctionContext::func(
+    void *context,
+    vm::Runtime *runtime,
+    vm::NativeArgs hvArgs) {
+  HostFunctionContext *hfc = reinterpret_cast<HostFunctionContext *>(context);
+  NapiEnvironment &env = hfc->env_;
+  assert(runtime == &env.runtime());
+  vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
+  const vm::instrumentation::RAIITimer timer{
+      "Host Function", stats, stats.hostFunction};
 
-  // static vm::CallResult<vm::HermesValue>
-  // func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
-
-  static vm::CallResult<vm::HermesValue>
-  func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs) {
-    FunctionContext *hfc = reinterpret_cast<FunctionContext *>(context);
-    NapiEnvironment &env = hfc->env_;
-    assert(runtime == &env.runtime());
-    vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
-    const vm::instrumentation::RAIITimer timer{
-        "Host Function", stats, stats.hostFunction};
-
-    CallbackInfo callbackInfo{*hfc, hvArgs};
-    napi_value result = hfc->hostCallback_(
-        napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
-    return *phv(result);
-    // TODO: handle errors
-    // TODO: Add call in module
-  }
-
-  static void finalize(void *context) {
-    delete reinterpret_cast<FunctionContext *>(context);
-  }
-
-  NapiEnvironment &env_;
-  napi_callback hostCallback_;
-  void *nativeData_;
-};
-
-void *CallbackInfo::nativeData() noexcept {
-  return context_.nativeData_;
+  CallbackInfo callbackInfo{*hfc, hvArgs};
+  napi_value result = hfc->hostCallback_(
+      napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
+  return *phv(result);
+  // TODO: handle errors
+  // TODO: Add call in module
 }
 
 // Different types of references:
@@ -2096,6 +2109,10 @@ Reference *asReference(napi_ref ref) noexcept {
 
 Reference *asReference(void *ref) noexcept {
   return reinterpret_cast<Reference *>(ref);
+}
+
+CallbackInfo *asCallbackInfo(napi_callback_info callbackInfo) noexcept {
+  return reinterpret_cast<CallbackInfo *>(callbackInfo);
 }
 
 vm::JSObject *getObjectUnsafe(const vm::HermesValue &value) noexcept {
@@ -3220,7 +3237,7 @@ napi_status NapiEnvironment::getCallbackInfo(
     napi_value *thisArg,
     void **data) noexcept {
   CHECK_ARG(callbackInfo);
-  CallbackInfo *cbInfo = reinterpret_cast<CallbackInfo *>(callbackInfo);
+  CallbackInfo *cbInfo = asCallbackInfo(callbackInfo);
   if (args != nullptr) {
     CHECK_ARG(argCount);
     cbInfo->args(args, argCount);
@@ -5197,14 +5214,14 @@ napi_status NapiEnvironment::newFunction(
     napi_callback callback,
     void *callbackData,
     napi_value *result) noexcept {
-  std::unique_ptr<FunctionContext> context =
-      std::make_unique<FunctionContext>(*this, callback, callbackData);
+  std::unique_ptr<HostFunctionContext> context =
+      std::make_unique<HostFunctionContext>(*this, callback, callbackData);
   vm::CallResult<vm::HermesValue> funcRes =
       vm::FinalizableNativeFunction::createWithoutPrototype(
           &runtime_,
           context.get(),
-          &FunctionContext::func,
-          &FunctionContext::finalize,
+          &HostFunctionContext::func,
+          &HostFunctionContext::finalize,
           name,
           /*paramCount:*/ 0);
   CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
