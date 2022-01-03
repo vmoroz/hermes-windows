@@ -100,9 +100,9 @@ class HermesPreparedJavaScript;
 class InstanceData;
 template <class T>
 class LinkedList;
+class NapiEnvironment;
 template <class TBaseReference>
 class NativeDataHolder;
-class NapiEnvironment;
 template <class T>
 class OrderedSet;
 template <>
