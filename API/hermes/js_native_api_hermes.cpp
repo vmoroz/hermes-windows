@@ -7,7 +7,6 @@
 // TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
 // TODO: rename NodeApiEnvironment
-// TODO: Rename struct to class
 
 #define NAPI_EXPERIMENTAL
 
@@ -80,44 +79,44 @@ namespace hermes {
 namespace napi {
 
 // Forward declarations
-struct AtomicRefCountReference;
-struct CallbackInfo;
-struct ComplexReference;
-struct ExternalBuffer;
-struct ExternalValue;
+class AtomicRefCountReference;
+class CallbackInfo;
+class ComplexReference;
+class ExternalBuffer;
+class ExternalValue;
 template <class TBaseReference>
-struct FinalizeCallbackHolder;
+class FinalizeCallbackHolder;
 template <class TBaseReference>
-struct FinalizeHintHolder;
-struct Finalizer;
-struct FinalizingAnonymousReference;
-struct FinalizingComplexReference;
+class FinalizeHintHolder;
+class Finalizer;
+class FinalizingAnonymousReference;
+class FinalizingComplexReference;
 template <class TBaseReference>
-struct FinalizingReference;
+class FinalizingReference;
 template <class TReference>
-struct FinalizingReferenceFactory;
-struct FinalizingStrongReference;
+class FinalizingReferenceFactory;
+class FinalizingStrongReference;
 struct FunctionContext;
-struct HermesBuffer;
-struct HermesPreparedJavaScript;
-struct InstanceData;
+class HermesBuffer;
+class HermesPreparedJavaScript;
+class InstanceData;
 template <class T>
-struct LinkedList;
+class LinkedList;
 template <class TBaseReference>
-struct NativeDataHolder;
-struct NodeApiEnvironment;
+class NativeDataHolder;
+class NodeApiEnvironment;
 template <class T>
-struct OrderedSet;
+class OrderedSet;
 template <>
-struct OrderedSet<vm::HermesValue>;
+class OrderedSet<vm::HermesValue>;
 template <>
-struct OrderedSet<uint32_t>;
-struct Reference;
+class OrderedSet<uint32_t>;
+class Reference;
 template <class T>
-struct StableAddressStack;
-struct StringBuilder;
-struct StrongReference;
-struct WeakReference;
+class StableAddressStack;
+class StringBuilder;
+class StrongReference;
+class WeakReference;
 
 enum class UnwrapAction { KeepWrap, RemoveWrap };
 
@@ -171,11 +170,12 @@ size_t copyASCIIToUTF8(
 // We use it to keep addresses of gcRoot stack and the related handle scopes.
 // Considering our use case, we do not call the destructors for T.
 template <class T>
-struct StableAddressStack {
+class StableAddressStack final {
   static_assert(
       std::is_trivially_destructible_v<T>,
       "T must be trivially destructible.");
 
+ public:
   StableAddressStack() noexcept {
     // There is always at least one chunk in the storage
     storage_.emplace_back(new T[ChunkSize]);
@@ -257,7 +257,8 @@ struct StableAddressStack {
 };
 
 template <class T>
-struct LinkedList {
+class LinkedList final {
+ public:
   LinkedList() noexcept {
     // The list is circular:
     // head.next_ points to the first item
@@ -266,7 +267,8 @@ struct LinkedList {
     head_.prev_ = &head_;
   }
 
-  struct Item {
+  class Item {
+   public:
     void linkNext(T *item) noexcept {
       if (item->isLinked()) {
         item->unlink();
@@ -330,7 +332,8 @@ struct LinkedList {
   Item head_;
 };
 
-struct CallbackInfo final {
+class CallbackInfo final {
+ public:
   CallbackInfo(FunctionContext &context, vm::NativeArgs &hvArgs) noexcept
       : context_(context), hvArgs_(hvArgs) {}
 
@@ -347,7 +350,7 @@ struct CallbackInfo final {
     return napiValue(&hvArgs_.getThisArg());
   }
 
-  void *data() noexcept;
+  void *nativeData() noexcept;
 
   napi_value getNewTarget() noexcept {
     return napiValue(&hvArgs_.getNewTarget());
@@ -362,8 +365,8 @@ struct FunctionContext final {
   FunctionContext(
       NodeApiEnvironment &env,
       napi_callback hostCallback,
-      void *data) noexcept
-      : env_(env), hostCallback_(hostCallback), data_(data) {}
+      void *nativeData) noexcept
+      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
 
   static vm::CallResult<vm::HermesValue>
   func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
@@ -374,14 +377,15 @@ struct FunctionContext final {
 
   NodeApiEnvironment &env_;
   napi_callback hostCallback_;
-  void *data_;
+  void *nativeData_;
 };
 
-void *CallbackInfo::data() noexcept {
-  return context_.data_;
+void *CallbackInfo::nativeData() noexcept {
+  return context_.nativeData_;
 }
 
-struct ExternalValue : vm::DecoratedObject::Decoration {
+class ExternalValue final : public vm::DecoratedObject::Decoration {
+ public:
   ExternalValue(NodeApiEnvironment &env) noexcept : env_(env) {}
   ExternalValue(NodeApiEnvironment &env, void *nativeData) noexcept
       : env_(env), nativeData_(nativeData) {}
@@ -411,7 +415,8 @@ struct ExternalValue : vm::DecoratedObject::Decoration {
   LinkedList<Finalizer> finalizers_;
 };
 
-struct NodeApiEnvironment final {
+class NodeApiEnvironment final {
+ public:
   explicit NodeApiEnvironment(
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
   ~NodeApiEnvironment();
@@ -1084,7 +1089,8 @@ struct NodeApiEnvironment final {
   NodeApiEnvironment &env{*this};
 };
 
-struct HermesBuffer : hermes::Buffer {
+class HermesBuffer final : public hermes::Buffer {
+ public:
   static std::unique_ptr<HermesBuffer> make(
       napi_env env,
       napi_ext_buffer buffer,
@@ -1117,7 +1123,8 @@ struct HermesBuffer : hermes::Buffer {
 };
 
 /// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
-struct HermesPreparedJavaScript {
+class HermesPreparedJavaScript final {
+ public:
   explicit HermesPreparedJavaScript(
       std::unique_ptr<hbc::BCProvider> bcProvider,
       vm::RuntimeModuleFlags runtimeFlags,
@@ -1165,7 +1172,8 @@ struct HermesPreparedJavaScript {
 // TODO: can we apply shared_ptr-like concept with two ref counts?
 
 // A base class for References that wrap native data and must be finalized.
-struct Finalizer : LinkedList<Finalizer>::Item {
+class Finalizer : public LinkedList<Finalizer>::Item {
+ public:
   virtual void finalize(NodeApiEnvironment &env) noexcept = 0;
 
  protected:
@@ -1177,7 +1185,8 @@ struct Finalizer : LinkedList<Finalizer>::Item {
 };
 
 // A base class for all references.
-struct Reference : LinkedList<Reference>::Item {
+class Reference : public LinkedList<Reference>::Item {
+ public:
   enum class ReasonToDelete {
     ZeroRefCount,
     FinalizerCall,
@@ -1292,7 +1301,8 @@ struct Reference : LinkedList<Reference>::Item {
 // A reference with a ref count that can be changed from any thread.
 // The reference deletion is done as a part of GC root detection to avoid
 // deletion in a random thread.
-struct AtomicRefCountReference : Reference {
+class AtomicRefCountReference : public Reference {
+ public:
   napi_status incRefCount(NodeApiEnvironment &env, uint32_t &result) noexcept
       override {
     result = refCount_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1333,7 +1343,8 @@ struct AtomicRefCountReference : Reference {
 };
 
 // Atomic ref counting for vm::PinnedHermesValue.
-struct StrongReference : AtomicRefCountReference {
+class StrongReference : public AtomicRefCountReference {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       vm::PinnedHermesValue value,
@@ -1366,7 +1377,8 @@ struct StrongReference : AtomicRefCountReference {
 };
 
 // Atomic ref counting for a vm::WeakRef<vm::HermesValue>.
-struct WeakReference final : AtomicRefCountReference {
+class WeakReference final : public AtomicRefCountReference {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1405,7 +1417,8 @@ struct WeakReference final : AtomicRefCountReference {
 // Keep vm::PinnedHermesValue when ref count > 0 or vm::WeakRoot<vm::JSObject>
 // when ref count == 0. The ref count is not atomic and must be changed only
 // from the JS thread.
-struct ComplexReference : Reference {
+class ComplexReference : public Reference {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1495,7 +1508,8 @@ struct ComplexReference : Reference {
 
 // Store finalizeHint if it is not null.
 template <class TBaseReference>
-struct FinalizeHintHolder : TBaseReference {
+class FinalizeHintHolder : public TBaseReference {
+ public:
   template <class... TArgs>
   FinalizeHintHolder(void *finalizeHint, TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...),
@@ -1511,7 +1525,8 @@ struct FinalizeHintHolder : TBaseReference {
 
 // Store and call finalizeCallback if it is not null.
 template <class TBaseReference>
-struct FinalizeCallbackHolder : TBaseReference {
+class FinalizeCallbackHolder : public TBaseReference {
+ public:
   template <class... TArgs>
   FinalizeCallbackHolder(
       napi_finalize finalizeCallback,
@@ -1534,7 +1549,8 @@ struct FinalizeCallbackHolder : TBaseReference {
 
 // Store nativeData if it is not null.
 template <class TBaseReference>
-struct NativeDataHolder : TBaseReference {
+class NativeDataHolder : public TBaseReference {
+ public:
   template <class... TArgs>
   NativeDataHolder(void *nativeData, TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...), nativeData_(nativeData) {}
@@ -1549,7 +1565,8 @@ struct NativeDataHolder : TBaseReference {
 
 // Common code for references inherited from Finalizer.
 template <class TBaseReference>
-struct FinalizingReference final : TBaseReference {
+class FinalizingReference final : public TBaseReference {
+ public:
   template <class... TArgs>
   FinalizingReference(TArgs &&...args) noexcept
       : TBaseReference(std::forward<TArgs>(args)...) {}
@@ -1563,7 +1580,8 @@ struct FinalizingReference final : TBaseReference {
 
 // Create FinalizingReference with the optimized storage.
 template <class TReference>
-struct FinalizingReferenceFactory {
+class FinalizingReferenceFactory final {
+ public:
   template <class... TArgs>
   static TReference *create(
       void *nativeData,
@@ -1608,7 +1626,8 @@ struct FinalizingReferenceFactory {
 // the native data and its finalizer callback.
 // It is either deleted from the finalizer queue, on environment shutdown, or
 // directly when deleting the object wrap.
-struct FinalizingAnonymousReference : Reference, Finalizer {
+class FinalizingAnonymousReference : public Reference, public Finalizer {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1630,7 +1649,8 @@ struct FinalizingAnonymousReference : Reference, Finalizer {
 };
 
 // Associates data with StrongReference.
-struct FinalizingStrongReference : StrongReference, Finalizer {
+class FinalizingStrongReference : public StrongReference, public Finalizer {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       const vm::PinnedHermesValue *value,
@@ -1671,7 +1691,8 @@ struct FinalizingStrongReference : StrongReference, Finalizer {
 
 // A reference that can be either strong or weak and that holds a finalizer
 // callback.
-struct FinalizingComplexReference : ComplexReference, Finalizer {
+class FinalizingComplexReference : public ComplexReference, public Finalizer {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       uint32_t initialRefCount,
@@ -1746,7 +1767,8 @@ struct FinalizingComplexReference : ComplexReference, Finalizer {
   bool deleteSelf_{false};
 };
 
-struct InstanceData : Reference {
+class InstanceData : public Reference {
+ public:
   static napi_status create(
       NodeApiEnvironment &env,
       void *nativeData,
@@ -1791,10 +1813,11 @@ void ExternalValue::addFinalizer(Finalizer *finalizer) noexcept {
 }
 
 template <class T>
-struct OrderedSet;
+class OrderedSet;
 
 template <>
-struct OrderedSet<vm::HermesValue> {
+class OrderedSet<vm::HermesValue> final {
+ public:
   using Compare =
       int32_t(const vm::HermesValue &item1, const vm::HermesValue &item2);
 
@@ -1838,7 +1861,8 @@ struct OrderedSet<vm::HermesValue> {
 };
 
 template <>
-struct OrderedSet<uint32_t> {
+class OrderedSet<uint32_t> final {
+ public:
   bool insert(uint32_t value) noexcept {
     auto it = llvh::lower_bound(items_, value);
     if (it == items_.end() || *it == value) {
@@ -1852,8 +1876,9 @@ struct OrderedSet<uint32_t> {
   llvh::SmallVector<uint32_t, 16> items_;
 };
 
-struct StringBuilder {
-  struct AdoptStringTag {};
+class StringBuilder final {
+ public:
+  class AdoptStringTag {};
   constexpr static AdoptStringTag AdoptString{};
 
   StringBuilder(AdoptStringTag, std::string &&str) noexcept
@@ -1898,7 +1923,8 @@ struct StringBuilder {
   llvh::raw_string_ostream stream_;
 };
 
-struct ExternalBuffer : Buffer {
+class ExternalBuffer final : public Buffer {
+ public:
   ExternalBuffer(
       NodeApiEnvironment &env,
       void *externalData,
@@ -3109,7 +3135,7 @@ napi_status NodeApiEnvironment::getCallbackInfo(
   }
 
   if (data != nullptr) {
-    *data = cbInfo->data();
+    *data = cbInfo->nativeData();
   }
 
   return clearLastError();
