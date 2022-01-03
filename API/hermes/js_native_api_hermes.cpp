@@ -438,8 +438,8 @@ struct NodeApiEnvironment final {
       size_t length,
       napi_value *result) noexcept;
   napi_status
-  createStringUtf8(const char *str, size_t length, napi_value *result) noexcept;
-  napi_status createStringUtf16(
+  createStringUTF8(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status createStringUTF16(
       const char16_t *str,
       size_t length,
       napi_value *result) noexcept;
@@ -475,12 +475,12 @@ struct NodeApiEnvironment final {
       char *buf,
       size_t bufsize,
       size_t *result) noexcept;
-  napi_status getValueStringUtf8(
+  napi_status getValueStringUTF8(
       napi_value value,
       char *buf,
       size_t bufsize,
       size_t *result) noexcept;
-  napi_status getValueStringUtf16(
+  napi_status getValueStringUTF16(
       napi_value value,
       char16_t *buf,
       size_t bufsize,
@@ -733,7 +733,7 @@ struct NodeApiEnvironment final {
   napi_status decRefCount() noexcept;
   napi_status collectGarbage() noexcept;
 
-  napi_status getUniqueStringUtf8Ref(
+  napi_status getUniqueStringUTF8Ref(
       const char *utf8,
       size_t length,
       napi_ext_ref *result) noexcept;
@@ -993,13 +993,13 @@ struct NodeApiEnvironment final {
   napi_status runReferenceFinalizers() noexcept;
 
   napi_status
-  stringFromAscii(const char *str, size_t length, napi_value *result) noexcept;
+  stringFromASCII(const char *str, size_t length, napi_value *result) noexcept;
   napi_status
   stringFromLatin1(const char *str, size_t length, napi_value *result) noexcept;
   napi_status
-  stringFromUtf8(const char *utf8, size_t length, napi_value *result) noexcept;
-  napi_status stringFromUtf8(const char *utf8, napi_value *result) noexcept;
-  static void convertUtf8ToUtf16(
+  stringFromUTF8(const char *utf8, size_t length, napi_value *result) noexcept;
+  napi_status stringFromUTF8(const char *utf8, napi_value *result) noexcept;
+  static void convertUTF8ToUTF16(
       const char *utf8,
       size_t length,
       std::u16string &out) noexcept;
@@ -2161,7 +2161,7 @@ napi_status NodeApiEnvironment::createStringLatin1(
   });
 }
 
-napi_status NodeApiEnvironment::createStringUtf8(
+napi_status NodeApiEnvironment::createStringUTF8(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
@@ -2172,11 +2172,11 @@ napi_status NodeApiEnvironment::createStringUtf8(
     }
     RETURN_STATUS_IF_FALSE(
         length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    return stringFromUtf8(str, length, result);
+    return stringFromUTF8(str, length, result);
   });
 }
 
-napi_status NodeApiEnvironment::createStringUtf16(
+napi_status NodeApiEnvironment::createStringUTF16(
     const char16_t *str,
     size_t length,
     napi_value *result) noexcept {
@@ -2221,7 +2221,7 @@ napi_status NodeApiEnvironment::createFunction(
     napi_value *result) noexcept {
   return handleExceptions([&] {
     napi_value nameValue{};
-    CHECK_NAPI(createStringUtf8(utf8Name, length, &nameValue));
+    CHECK_NAPI(createStringUTF8(utf8Name, length, &nameValue));
     vm::CallResult<vm::Handle<vm::SymbolID>> nameRes = vm::stringToSymbolID(
         &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
     CHECK_NAPI(checkHermesStatus(nameRes));
@@ -2351,7 +2351,7 @@ napi_status NodeApiEnvironment::getValueStringLatin1(
   });
 }
 
-napi_status NodeApiEnvironment::getValueStringUtf8(
+napi_status NodeApiEnvironment::getValueStringUTF8(
     napi_value value,
     char *buf,
     size_t bufSize,
@@ -2390,7 +2390,7 @@ napi_status NodeApiEnvironment::getValueStringUtf8(
   });
 }
 
-napi_status NodeApiEnvironment::getValueStringUtf16(
+napi_status NodeApiEnvironment::getValueStringUTF16(
     napi_value value,
     char16_t *buf,
     size_t bufsize,
@@ -2733,7 +2733,7 @@ napi_status NodeApiEnvironment::setNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
     return putComputed(objValue, name, value);
   });
 }
@@ -2747,7 +2747,7 @@ napi_status NodeApiEnvironment::hasNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
     return hasComputed(objValue, name, result);
   });
 }
@@ -2761,7 +2761,7 @@ napi_status NodeApiEnvironment::getNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUtf8(utf8Name, &name));
+    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
     return getComputed(objValue, name, result);
   });
 }
@@ -3434,7 +3434,7 @@ napi_status NodeApiEnvironment::throwError(
   return handleExceptions([&] {
     // TODO: cleanup intermediate napi_value before return
     napi_value messageValue;
-    CHECK_NAPI(stringFromUtf8(message, &messageValue));
+    CHECK_NAPI(stringFromUTF8(message, &messageValue));
 
     vm::Handle<vm::JSError> errorHandle = makeHandle(
         vm::JSError::create(&runtime_, makeHandle<vm::JSObject>(&prototype)));
@@ -4119,14 +4119,14 @@ napi_status NodeApiEnvironment::collectGarbage() noexcept {
   return clearLastError();
 }
 
-napi_status NodeApiEnvironment::getUniqueStringUtf8Ref(
+napi_status NodeApiEnvironment::getUniqueStringUTF8Ref(
     const char *utf8,
     size_t length,
     napi_ext_ref *result) noexcept {
   return handleExceptions([&] {
     CHECK_ARG(utf8);
     napi_value strValue;
-    CHECK_NAPI(stringFromUtf8(utf8, length, &strValue));
+    CHECK_NAPI(stringFromUTF8(utf8, length, &strValue));
     return getUniqueStringRef(strValue, result);
   });
 }
@@ -4200,11 +4200,11 @@ napi_status NodeApiEnvironment::runScript(
     const char *sourceURL,
     napi_value *result) noexcept {
   size_t sourceSize{};
-  CHECK_NAPI(getValueStringUtf8(source, nullptr, 0, &sourceSize));
+  CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
   std::unique_ptr<std::vector<uint8_t>> buffer =
       std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
-  CHECK_NAPI(getValueStringUtf8(
+  CHECK_NAPI(getValueStringUTF8(
       source,
       reinterpret_cast<char *>(buffer->data()),
       sourceSize + 1,
@@ -4269,11 +4269,11 @@ napi_status NodeApiEnvironment::serializeScript(
     napi_ext_buffer_callback bufferCallback,
     void *bufferHint) noexcept {
   size_t sourceSize{};
-  CHECK_NAPI(getValueStringUtf8(source, nullptr, 0, &sourceSize));
+  CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
   std::unique_ptr<std::vector<uint8_t>> buffer =
       std::make_unique<std::vector<uint8_t>>();
   buffer->assign(sourceSize + 1, '\0');
-  CHECK_NAPI(getValueStringUtf8(
+  CHECK_NAPI(getValueStringUTF8(
       source,
       reinterpret_cast<char *>(buffer->data()),
       sourceSize + 1,
@@ -4668,7 +4668,7 @@ napi_status NodeApiEnvironment::setErrorCode(
     if (code) {
       CHECK_STRING_ARG(code);
     } else {
-      CHECK_NAPI(stringFromUtf8(codeCString, &code));
+      CHECK_NAPI(stringFromUTF8(codeCString, &code));
     }
     return putPredefined(error, NapiPredefined::code, code, nullptr);
   }
@@ -5007,7 +5007,7 @@ ExternalValue *NodeApiEnvironment::getExternalValue(
   return nullptr;
 }
 
-napi_status NodeApiEnvironment::stringFromAscii(
+napi_status NodeApiEnvironment::stringFromASCII(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
@@ -5022,7 +5022,7 @@ napi_status NodeApiEnvironment::stringFromLatin1(
     size_t length,
     napi_value *result) noexcept {
   if (isAllASCII(str, str + length)) {
-    return stringFromAscii(str, length, result);
+    return stringFromASCII(str, length, result);
   }
 
   // Latin1 has the same codes as Unicode. We just need to expand char to
@@ -5036,28 +5036,28 @@ napi_status NodeApiEnvironment::stringFromLatin1(
       result);
 }
 
-napi_status NodeApiEnvironment::stringFromUtf8(
+napi_status NodeApiEnvironment::stringFromUTF8(
     const char *utf8,
     napi_value *result) noexcept {
   size_t length = std::char_traits<char>::length(utf8);
-  return stringFromUtf8(utf8, length, result);
+  return stringFromUTF8(utf8, length, result);
 }
 
-napi_status NodeApiEnvironment::stringFromUtf8(
+napi_status NodeApiEnvironment::stringFromUTF8(
     const char *utf8,
     size_t length,
     napi_value *result) noexcept {
   if (isAllASCII(utf8, utf8 + length)) {
-    return stringFromAscii((const char *)utf8, length, result);
+    return stringFromASCII((const char *)utf8, length, result);
   }
   std::u16string utf16;
-  convertUtf8ToUtf16(utf8, length, utf16);
+  convertUTF8ToUTF16(utf8, length, utf16);
   return setResult(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(utf16)),
       result);
 }
 
-/*static*/ void NodeApiEnvironment::convertUtf8ToUtf16(
+/*static*/ void NodeApiEnvironment::convertUTF8ToUTF16(
     const char *utf8,
     size_t length,
     std::u16string &out) noexcept {
@@ -5194,7 +5194,7 @@ napi_status NodeApiEnvironment::createSymbolID(
     size_t length,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   napi_value strValue{};
-  CHECK_NAPI(createStringUtf8(str, length, &strValue));
+  CHECK_NAPI(createStringUTF8(str, length, &strValue));
   CHECK_NAPI(createSymbolID(strValue, result));
   return napi_ok;
 }
@@ -5370,7 +5370,7 @@ napi_status __cdecl napi_create_string_utf8(
     const char *str,
     size_t length,
     napi_value *result) {
-  return CHECKED_ENV(env)->createStringUtf8(str, length, result);
+  return CHECKED_ENV(env)->createStringUTF8(str, length, result);
 }
 
 napi_status __cdecl napi_create_string_utf16(
@@ -5378,7 +5378,7 @@ napi_status __cdecl napi_create_string_utf16(
     const char16_t *str,
     size_t length,
     napi_value *result) {
-  return CHECKED_ENV(env)->createStringUtf16(str, length, result);
+  return CHECKED_ENV(env)->createStringUTF16(str, length, result);
 }
 
 napi_status __cdecl napi_create_symbol(
@@ -5500,7 +5500,7 @@ napi_status __cdecl napi_get_value_string_utf8(
     char *buf,
     size_t bufsize,
     size_t *result) {
-  return CHECKED_ENV(env)->getValueStringUtf8(value, buf, bufsize, result);
+  return CHECKED_ENV(env)->getValueStringUTF8(value, buf, bufsize, result);
 }
 
 // Copies a JavaScript string into a UTF-16 string buffer. The result is the
@@ -5517,7 +5517,7 @@ napi_status __cdecl napi_get_value_string_utf16(
     char16_t *buf,
     size_t bufsize,
     size_t *result) {
-  return CHECKED_ENV(env)->getValueStringUtf16(value, buf, bufsize, result);
+  return CHECKED_ENV(env)->getValueStringUTF16(value, buf, bufsize, result);
 }
 
 //-----------------------------------------------------------------------------
@@ -6355,7 +6355,7 @@ napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
     const char *str,
     size_t length,
     napi_ext_ref *result) {
-  return CHECKED_ENV(env)->getUniqueStringUtf8Ref(str, length, result);
+  return CHECKED_ENV(env)->getUniqueStringUTF8Ref(str, length, result);
 }
 
 napi_status __cdecl napi_ext_get_unique_string_ref(
