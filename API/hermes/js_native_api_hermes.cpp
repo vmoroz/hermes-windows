@@ -189,10 +189,6 @@ enum class IfNotFound {
   ThenReturnNull,
 };
 
-// napi_status to return when a feature is not implemented.
-// It should be added to the napi_status enum.
-const napi_status napi_not_implemented = napi_generic_failure;
-
 //=============================================================================
 // Forward declaration of standalone functions.
 //=============================================================================
@@ -4939,15 +4935,7 @@ napi_status NapiEnvironment::isPromise(
 napi_status NapiEnvironment::adjustExternalMemory(
     int64_t change_in_bytes,
     int64_t *adjusted_value) noexcept {
-  // TODO: implement
-  // CHECK_ENV(env);
-  // CHECK_ARG(env, adjusted_value);
-
-  // *adjusted_value =
-  //     env->isolate->AdjustAmountOfExternalAllocatedMemory(change_in_bytes);
-
-  // return napi_clear_last_error(env);
-  return napi_not_implemented;
+  return GENERIC_FAILURE("Not implemented");
 }
 
 napi_status NapiEnvironment::collectGarbage() noexcept {
