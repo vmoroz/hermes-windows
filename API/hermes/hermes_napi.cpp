@@ -476,24 +476,21 @@ class NapiEnvironment final {
   napi_status createArray(size_t length, napi_value *result) noexcept;
   template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
   napi_status createNumber(T value, napi_value *result) noexcept;
+  napi_status createStringASCII(
+      const char *str,
+      size_t length,
+      napi_value *result) noexcept;
   napi_status createStringLatin1(
       const char *str,
       size_t length,
       napi_value *result) noexcept;
   napi_status
   createStringUTF8(const char *str, size_t length, napi_value *result) noexcept;
+  napi_status createStringUTF8(const char *str, napi_value *result) noexcept;
   napi_status createStringUTF16(
       const char16_t *str,
       size_t length,
       napi_value *result) noexcept;
-
-  napi_status
-  stringFromASCII(const char *str, size_t length, napi_value *result) noexcept;
-  napi_status
-  stringFromLatin1(const char *str, size_t length, napi_value *result) noexcept;
-  napi_status
-  stringFromUTF8(const char *utf8, size_t length, napi_value *result) noexcept;
-  napi_status stringFromUTF8(const char *utf8, napi_value *result) noexcept;
 
   napi_status createSymbol(napi_value description, napi_value *result) noexcept;
   napi_status createFunction(
@@ -2373,6 +2370,7 @@ napi_status NapiEnvironment::checkPendingExceptions() noexcept {
 
 //-----------------------------------------------------------------------------
 // Getters for defined singletons
+// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
@@ -2401,29 +2399,30 @@ napi_status NapiEnvironment::getBoolean(
 // Methods to create Primitive types and Objects
 //-----------------------------------------------------------------------------
 
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
-  return handleExceptions(
-      [&] { return setResult(vm::JSObject::create(&runtime_), result); });
+  vm::GCScope gcScope(&runtime_);
+  return setResult(vm::JSObject::create(&runtime_), result);
 }
 
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createArray(napi_value *result) noexcept {
-  return handleExceptions([&] {
-    return setResult(
-        vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0), result);
-  });
+  vm::GCScope gcScope(&runtime_);
+  return setResult(
+      vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0), result);
 }
 
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    return setResult(
-        vm::JSArray::create(
-            &runtime_, /*capacity:*/ length, /*length:*/ length),
-        result);
-  });
+  vm::GCScope gcScope(&runtime_);
+  return setResult(
+      vm::JSArray::create(&runtime_, /*capacity:*/ length, /*length:*/ length),
+      result);
 }
 
+// [X] Matches NAPI for V8
 template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
 napi_status NapiEnvironment::createNumber(
     T value,
@@ -2432,101 +2431,95 @@ napi_status NapiEnvironment::createNumber(
       vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
 }
 
-napi_status NapiEnvironment::createStringLatin1(
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::createStringASCII(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    return stringFromLatin1(str, length, result);
-  });
-}
-
-napi_status NapiEnvironment::createStringUTF8(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    return stringFromUTF8(str, length, result);
-  });
-}
-
-napi_status NapiEnvironment::createStringUTF16(
-    const char16_t *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(str);
-    if (length == NAPI_AUTO_LENGTH) {
-      length = std::char_traits<char16_t>::length(str);
-    }
-    RETURN_STATUS_IF_FALSE(
-        length <= std::numeric_limits<int32_t>::max(), napi_invalid_arg);
-    return setResult(
-        vm::StringPrimitive::createEfficient(
-            &runtime_, llvh::makeArrayRef(str, length)),
-        result);
-  });
-}
-
-napi_status NapiEnvironment::stringFromASCII(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
+  vm::GCScope gcScope(&runtime_);
   return setResult(
       vm::StringPrimitive::createEfficient(
           &runtime_, llvh::makeArrayRef(str, length)),
       result);
 }
 
-napi_status NapiEnvironment::stringFromLatin1(
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::createStringLatin1(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
+  CHECK_ARG(str);
+  if (length == NAPI_AUTO_LENGTH) {
+    length = std::char_traits<char>::length(str);
+  }
+  RETURN_STATUS_IF_FALSE(
+      length <= static_cast<size_t>(std::numeric_limits<int32_t>::max()),
+      napi_invalid_arg);
+
   if (isAllASCII(str, str + length)) {
-    return stringFromASCII(str, length, result);
+    return createStringASCII(str, length, result);
   }
 
-  // Latin1 has the same codes as Unicode. We just need to expand char to
-  // char16_t.
-  std::u16string u16str(length, u' ');
-  for (size_t i = 0; i < length; ++i) {
-    u16str[i] = str[i];
-  }
+  // Latin1 has the same codes as Unicode.
+  // We just need to expand char to char16_t.
+  std::u16string u16str(length, u'\0');
+  std::copy(str, str + length, &u16str[0]);
+
+  vm::GCScope gcScope(&runtime_);
   return setResult(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
       result);
 }
 
-napi_status NapiEnvironment::stringFromUTF8(
-    const char *utf8,
-    napi_value *result) noexcept {
-  size_t length = std::char_traits<char>::length(utf8);
-  return stringFromUTF8(utf8, length, result);
-}
-
-napi_status NapiEnvironment::stringFromUTF8(
-    const char *utf8,
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::createStringUTF8(
+    const char *str,
     size_t length,
     napi_value *result) noexcept {
-  if (isAllASCII(utf8, utf8 + length)) {
-    return stringFromASCII((const char *)utf8, length, result);
+  CHECK_ARG(str);
+  if (length == NAPI_AUTO_LENGTH) {
+    length = std::char_traits<char>::length(str);
   }
-  std::u16string utf16;
-  convertUTF8ToUTF16(utf8, length, utf16);
+  RETURN_STATUS_IF_FALSE(
+      length <= static_cast<size_t>(std::numeric_limits<int32_t>::max()),
+      napi_invalid_arg);
+
+  if (isAllASCII(str, str + length)) {
+    return createStringASCII(str, length, result);
+  }
+
+  // TODO: run finalizers in setResult if GC may be invoked
+  std::u16string u16str;
+  // TODO: handle errors from convertUTF8ToUTF16
+  convertUTF8ToUTF16(str, length, u16str);
   return setResult(
-      vm::StringPrimitive::createEfficient(&runtime_, std::move(utf16)),
+      vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
+      result);
+}
+
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::createStringUTF8(
+    const char *str,
+    napi_value *result) noexcept {
+  return createStringUTF8(str, NAPI_AUTO_LENGTH, result);
+}
+
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::createStringUTF16(
+    const char16_t *str,
+    size_t length,
+    napi_value *result) noexcept {
+  CHECK_ARG(str);
+  if (length == NAPI_AUTO_LENGTH) {
+    length = std::char_traits<char16_t>::length(str);
+  }
+  RETURN_STATUS_IF_FALSE(
+      length <= static_cast<size_t>(std::numeric_limits<int32_t>::max()),
+      napi_invalid_arg);
+
+  return setResult(
+      vm::StringPrimitive::createEfficient(
+          &runtime_, llvh::makeArrayRef(str, length)),
       result);
 }
 
@@ -2630,7 +2623,7 @@ napi_status NapiEnvironment::getUniqueStringUTF8Ref(
   return handleExceptions([&] {
     CHECK_ARG(utf8);
     napi_value strValue;
-    CHECK_NAPI(stringFromUTF8(utf8, length, &strValue));
+    CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
     return getUniqueStringRef(strValue, result);
   });
 }
@@ -3234,7 +3227,7 @@ napi_status NapiEnvironment::setNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
+    CHECK_NAPI(createStringUTF8(utf8Name, &name));
     return putComputed(objValue, name, value);
   });
 }
@@ -3248,7 +3241,7 @@ napi_status NapiEnvironment::hasNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
+    CHECK_NAPI(createStringUTF8(utf8Name, &name));
     return hasComputed(objValue, name, result);
   });
 }
@@ -3262,7 +3255,7 @@ napi_status NapiEnvironment::getNamedProperty(
     napi_value objValue;
     napi_value name;
     CHECK_NAPI(coerceToObject(object, &objValue));
-    CHECK_NAPI(stringFromUTF8(utf8Name, &name));
+    CHECK_NAPI(createStringUTF8(utf8Name, &name));
     return getComputed(objValue, name, result);
   });
 }
@@ -4402,7 +4395,7 @@ napi_status NapiEnvironment::throwError(
   return handleExceptions([&] {
     // TODO: cleanup intermediate napi_value before return
     napi_value messageValue;
-    CHECK_NAPI(stringFromUTF8(message, &messageValue));
+    CHECK_NAPI(createStringUTF8(message, &messageValue));
 
     vm::Handle<vm::JSError> errorHandle = makeHandle(
         vm::JSError::create(&runtime_, makeHandle<vm::JSObject>(&prototype)));
@@ -4453,7 +4446,7 @@ napi_status NapiEnvironment::setErrorCode(
     if (code) {
       CHECK_STRING_ARG(code);
     } else {
-      CHECK_NAPI(stringFromUTF8(codeCString, &code));
+      CHECK_NAPI(createStringUTF8(codeCString, &code));
     }
     return putPredefined(error, NapiPredefined::code, code, nullptr);
   }
