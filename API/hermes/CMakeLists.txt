@@ -5,7 +5,7 @@
 
 set(api_sources
   hermes.cpp
-  js_native_api_hermes.cpp 
+  hermes_napi.cpp 
   DebuggerAPI.cpp
   )
 
