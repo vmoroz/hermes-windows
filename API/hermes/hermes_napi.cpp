@@ -2377,8 +2377,7 @@ napi_status NapiEnvironment::checkPendingExceptions() noexcept {
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
   return setPredefinedResult(
-      runtime_.getUndefinedValue().unsafeGetPinnedHermesValue(),
-      result);
+      runtime_.getUndefinedValue().unsafeGetPinnedHermesValue(), result);
 }
 
 napi_status NapiEnvironment::getNull(napi_value *result) noexcept {
@@ -2395,8 +2394,7 @@ napi_status NapiEnvironment::getBoolean(
     bool value,
     napi_value *result) noexcept {
   return setPredefinedResult(
-      runtime_.getBoolValue(value).unsafeGetPinnedHermesValue(),
-      result);
+      runtime_.getBoolValue(value).unsafeGetPinnedHermesValue(), result);
 }
 
 //-----------------------------------------------------------------------------
@@ -5349,6 +5347,7 @@ napi_status NapiEnvironment::setOptionalResult(
 napi_status NapiEnvironment::setPredefinedResult(
     const vm::PinnedHermesValue *value,
     napi_value *result) noexcept {
+  CHECK_ARG(result);
   *result = napiValue(value);
   return clearLastError();
 }
