@@ -1,9 +1,9 @@
 // TODO: Implement unit tests
-// TODO: Reorder the code
+
 // TODO: Better native error handling
+// TODO: use extended message for errors
 
 // TODO: adjustExternalMemory
-// TODO: use extended message for errors
 // TODO: see if finalizers can return error or exception
 
 #define NAPI_EXPERIMENTAL
@@ -420,6 +420,8 @@ class NapiEnvironment final {
   napi_status getLastErrorInfo(
       const napi_extended_error_info **result) noexcept;
 
+  napi_status genericFailure(const char *message) noexcept;
+
   napi_status checkHermesStatus(
       vm::ExecutionStatus hermesStatus,
       napi_status status = napi_generic_failure) noexcept;
@@ -431,8 +433,6 @@ class NapiEnvironment final {
 
   template <class F>
   napi_status handleExceptions(const F &f) noexcept;
-
-  napi_status genericFailure(const char *message) noexcept;
 
   //-----------------------------------------------------------------------------
   // Getters for defined singletons
@@ -737,6 +737,12 @@ class NapiEnvironment final {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
+  napi_status addFinalizer(
+      napi_value object,
+      void *nativeData,
+      napi_finalize finalizeCallback,
+      void *finalizeHint,
+      napi_ref *result) noexcept;
   napi_status
   unwrapObject(napi_value object, UnwrapAction action, void **result) noexcept;
   napi_status typeTagObject(
@@ -775,12 +781,6 @@ class NapiEnvironment final {
   napi_status decReference(napi_ref ref, uint32_t *result) noexcept;
   napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
 
-  napi_status addFinalizer(
-      napi_value object,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_ref *result) noexcept;
   napi_status addObjectFinalizer(
       const vm::PinnedHermesValue *value,
       Finalizer *finalizer) noexcept;
@@ -883,6 +883,8 @@ class NapiEnvironment final {
       napi_value arrayBuffer,
       bool *result) noexcept;
   napi_status isTypedArray(napi_value value, bool *result) noexcept;
+  template <vm::CellKind CellKind>
+  static constexpr const char *getTypedArrayName() noexcept;
   template <class TItem, vm::CellKind CellKind>
   napi_status createTypedArray(
       size_t length,
@@ -1975,7 +1977,7 @@ class ExternalBuffer final : public hermes::Buffer {
       napi_env env,
       const napi_ext_buffer &buffer) noexcept {
     return buffer.data ? std::make_unique<ExternalBuffer>(
-                             *reinterpret_cast<NapiEnvironment*>(env),
+                             *reinterpret_cast<NapiEnvironment *>(env),
                              buffer.data,
                              buffer.byte_length,
                              buffer.finalize_cb,
@@ -2114,7 +2116,6 @@ size_t copyASCIIToUTF8(
 // NapiEnvironment implementation
 //=============================================================================
 
-// TODO: pass parameters
 NapiEnvironment::NapiEnvironment(
     const vm::RuntimeConfig &runtimeConfig) noexcept
     : rt_(vm::Runtime::create(runtimeConfig.rebuild()
@@ -2198,6 +2199,22 @@ NapiEnvironment::NapiEnvironment(
       NapiPredefined::undefined, vm::HermesValue::encodeUndefinedValue());
 }
 
+napi_status NapiEnvironment::incRefCount() noexcept {
+  refCount_++;
+  return napi_status::napi_ok;
+}
+
+napi_status NapiEnvironment::decRefCount() noexcept {
+  if (--refCount_ == 0) {
+    delete this;
+  }
+  return napi_status::napi_ok;
+}
+
+vm::Runtime &NapiEnvironment::runtime() noexcept {
+  return runtime_;
+}
+
 NapiEnvironment::~NapiEnvironment() {
   if (instanceData_) {
     instanceData_->finalize(*this);
@@ -2217,6 +2234,128 @@ NapiEnvironment::~NapiEnvironment() {
   CRASH_IF_FALSE(finalizingGCRoots_.isEmpty());
   CRASH_IF_FALSE(gcRoots_.isEmpty());
 }
+
+//---------------------------------------------------------------------------
+// Native error handling methods
+//---------------------------------------------------------------------------
+
+template <class... TArgs>
+napi_status NapiEnvironment::setLastError(
+    napi_status errorCode,
+    TArgs &&...args) noexcept {
+  // Warning: Keep in-sync with napi_status enum
+  static constexpr const char *errorMessages[] = {
+      "",
+      "Invalid argument",
+      "An object was expected",
+      "A string was expected",
+      "A string or symbol was expected",
+      "A function was expected",
+      "A number was expected",
+      "A boolean was expected",
+      "An array was expected",
+      "Unknown failure",
+      "An exception is pending",
+      "The async work item was cancelled",
+      "napi_escape_handle already called on scope",
+      "Invalid handle scope usage",
+      "Invalid callback scope usage",
+      "Thread-safe function queue is full",
+      "Thread-safe function handle is closing",
+      "A bigint was expected",
+      "A date was expected",
+      "An arraybuffer was expected",
+      "A detachable arraybuffer was expected",
+      "Main thread would deadlock",
+  };
+
+  // The value of the constant below must be updated to reference the last
+  // message in the `napi_status` enum each time a new error message is added.
+  // We don't have a napi_status_last as this would result in an ABI
+  // change each time a message was added.
+  const int lastStatus = napi_would_deadlock;
+  static_assert(
+      size(errorMessages) == lastStatus + 1,
+      "Count of error messages must match count of error values");
+
+  if (errorCode < napi_ok || errorCode >= lastStatus) {
+    errorCode = napi_generic_failure;
+  }
+
+  lastErrorMessage_.clear();
+  StringBuilder sb{StringBuilder::AdoptString, std::move(lastErrorMessage_)};
+  sb.append(errorMessages[errorCode]);
+  if (sizeof...(args) > 0) {
+    sb.append(": ", std::forward<TArgs>(args)...);
+  }
+  lastErrorMessage_ = std::move(sb.str());
+  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
+  return errorCode;
+}
+
+napi_status NapiEnvironment::clearLastError() noexcept {
+  lastErrorMessage_.clear();
+  lastError_ = {"", 0, 0, napi_ok};
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::getLastErrorInfo(
+    const napi_extended_error_info **result) noexcept {
+  CHECK_ARG(result);
+  *result = &lastError_;
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::genericFailure(const char * /*message*/) noexcept {
+  // TODO: set result message
+  return napi_generic_failure;
+}
+
+napi_status NapiEnvironment::checkHermesStatus(
+    vm::ExecutionStatus hermesStatus,
+    napi_status status) noexcept {
+  if (LLVM_LIKELY(hermesStatus != vm::ExecutionStatus::EXCEPTION)) {
+    return napi_ok;
+  }
+
+  lastException_ = runtime_.getThrownValue();
+  runtime_.clearThrownValue();
+  return status;
+}
+
+template <class T>
+napi_status NapiEnvironment::checkHermesStatus(
+    const vm::CallResult<T> &callResult,
+    napi_status status) noexcept {
+  return checkHermesStatus(callResult.getStatus());
+}
+
+template <class F>
+napi_status NapiEnvironment::handleExceptions(const F &f) noexcept {
+  napi_status status{};
+  RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
+  clearLastError();
+  {
+    vm::GCScope gcScope(&runtime_);
+#ifdef HERMESVM_EXCEPTION_ON_OOM
+    try {
+      status = f();
+    } catch (const vm::JSOutOfMemoryError &ex) {
+      return SetLastError(napi_generic_failure);
+    }
+#else // HERMESVM_EXCEPTION_ON_OOM
+    status = f();
+#endif
+  }
+  if (status == napi_ok) {
+    CHECK_NAPI(runReferenceFinalizers());
+  }
+  return status;
+}
+
+//-----------------------------------------------------------------------------
+// Getters for defined singletons
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
   return setResult(
@@ -2241,6 +2380,10 @@ napi_status NapiEnvironment::getBoolean(
       napiValue(runtime_.getBoolValue(value).unsafeGetPinnedHermesValue()),
       result);
 }
+
+//-----------------------------------------------------------------------------
+// Methods to create Primitive types and Objects
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
   return handleExceptions(
@@ -2321,6 +2464,56 @@ napi_status NapiEnvironment::createStringUTF16(
   });
 }
 
+napi_status NapiEnvironment::stringFromASCII(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  return setResult(
+      vm::StringPrimitive::createEfficient(
+          &runtime_, llvh::makeArrayRef(str, length)),
+      result);
+}
+
+napi_status NapiEnvironment::stringFromLatin1(
+    const char *str,
+    size_t length,
+    napi_value *result) noexcept {
+  if (isAllASCII(str, str + length)) {
+    return stringFromASCII(str, length, result);
+  }
+
+  // Latin1 has the same codes as Unicode. We just need to expand char to
+  // char16_t.
+  std::u16string u16str(length, u' ');
+  for (size_t i = 0; i < length; ++i) {
+    u16str[i] = str[i];
+  }
+  return setResult(
+      vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
+      result);
+}
+
+napi_status NapiEnvironment::stringFromUTF8(
+    const char *utf8,
+    napi_value *result) noexcept {
+  size_t length = std::char_traits<char>::length(utf8);
+  return stringFromUTF8(utf8, length, result);
+}
+
+napi_status NapiEnvironment::stringFromUTF8(
+    const char *utf8,
+    size_t length,
+    napi_value *result) noexcept {
+  if (isAllASCII(utf8, utf8 + length)) {
+    return stringFromASCII((const char *)utf8, length, result);
+  }
+  std::u16string utf16;
+  convertUTF8ToUTF16(utf8, length, utf16);
+  return setResult(
+      vm::StringPrimitive::createEfficient(&runtime_, std::move(utf16)),
+      result);
+}
+
 napi_status NapiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
@@ -2354,6 +2547,27 @@ napi_status NapiEnvironment::createFunction(
     CHECK_NAPI(checkHermesStatus(nameRes));
     return newFunction(nameRes->get(), callback, callbackData, result);
   });
+}
+
+napi_status NapiEnvironment::newFunction(
+    vm::SymbolID name,
+    napi_callback callback,
+    void *callbackData,
+    napi_value *result) noexcept {
+  std::unique_ptr<HostFunctionContext> context =
+      std::make_unique<HostFunctionContext>(*this, callback, callbackData);
+  vm::CallResult<vm::HermesValue> funcRes =
+      vm::FinalizableNativeFunction::createWithoutPrototype(
+          &runtime_,
+          context.get(),
+          &HostFunctionContext::func,
+          &HostFunctionContext::finalize,
+          name,
+          /*paramCount:*/ 0);
+  CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
+  context.release();
+  *result = addStackValue(*funcRes);
+  return clearLastError();
 }
 
 napi_status NapiEnvironment::createError(
@@ -2392,6 +2606,56 @@ napi_status NapiEnvironment::createRangeError(
     napi_value *result) noexcept {
   return createError(runtime_.RangeErrorPrototype, code, message, result);
 }
+
+napi_status NapiEnvironment::getUniqueStringUTF8Ref(
+    const char *utf8,
+    size_t length,
+    napi_ext_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(utf8);
+    napi_value strValue;
+    CHECK_NAPI(stringFromUTF8(utf8, length, &strValue));
+    return getUniqueStringRef(strValue, result);
+  });
+}
+
+napi_status NapiEnvironment::getUniqueStringRef(
+    napi_value strValue,
+    napi_ext_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_STRING_ARG(strValue);
+    vm::CallResult<vm::Handle<vm::SymbolID>> cr = vm::stringToSymbolID(
+        &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
+    CHECK_NAPI(checkHermesStatus(cr));
+    return StrongReference::create(
+        *this,
+        cr->getHermesValue(),
+        reinterpret_cast<StrongReference **>(result));
+  });
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    const char *str,
+    size_t length,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  napi_value strValue{};
+  CHECK_NAPI(createStringUTF8(str, length, &strValue));
+  CHECK_NAPI(createSymbolID(strValue, result));
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    napi_value str,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  CHECK_STRING_ARG(str);
+  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
+      &runtime_, vm::createPseudoHandle(phv(str)->getString()));
+  return setResult(std::move(res), result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to get the native napi_value from Primitive type
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::typeOf(
     napi_value value,
@@ -2545,6 +2809,10 @@ napi_status NapiEnvironment::getValueStringUTF16(
   });
 }
 
+//-----------------------------------------------------------------------------
+// Methods to coerce values
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::coerceToBool(
     napi_value value,
     napi_value *result) noexcept {
@@ -2580,6 +2848,61 @@ napi_status NapiEnvironment::coerceToString(
     return setResult(vm::toString_RJS(&runtime_, makeHandle(value)), result);
   });
 }
+
+/*static*/ void NapiEnvironment::convertUTF8ToUTF16(
+    const char *utf8,
+    size_t length,
+    std::u16string &out) noexcept {
+  // length is the number of input bytes
+  out.resize(length);
+  const llvh::UTF8 *sourceStart = reinterpret_cast<const llvh::UTF8 *>(utf8);
+  const llvh::UTF8 *sourceEnd = sourceStart + length;
+  llvh::UTF16 *targetStart = reinterpret_cast<llvh::UTF16 *>(&out[0]);
+  llvh::UTF16 *targetEnd = targetStart + out.size();
+  llvh::ConversionResult cRes;
+  cRes = ConvertUTF8toUTF16(
+      &sourceStart,
+      sourceEnd,
+      &targetStart,
+      targetEnd,
+      llvh::lenientConversion);
+  (void)cRes;
+  assert(
+      cRes != llvh::ConversionResult::targetExhausted &&
+      "not enough space allocated for UTF16 conversion");
+  out.resize((char16_t *)targetStart - &out[0]);
+}
+
+vm::CallResult<vm::Handle<>> NapiEnvironment::convertIndexToString(
+    double value) noexcept {
+  OptValue<uint32_t> index = doubleToArrayIndex(value);
+  if (LLVM_UNLIKELY(!index)) {
+    return runtime_.raiseRangeError("Index property is out of range");
+  }
+  return StringBuilder(*index).makeStringHV(runtime_);
+}
+
+vm::ExecutionStatus NapiEnvironment::convertKeyNumbersToStrings(
+    vm::Handle<vm::JSArray> array) noexcept {
+  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue key = array->at(&runtime_, i);
+    if (LLVM_UNLIKELY(key.isNumber())) {
+      vm::CallResult<vm::Handle<>> strKeyRes =
+          convertIndexToString(key.getNumber());
+      if (LLVM_UNLIKELY(
+              strKeyRes.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+      vm::JSArray::setElementAt(array, &runtime_, i, *strKeyRes);
+    }
+  }
+  return vm::ExecutionStatus::RETURNED;
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Objects
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getPrototype(
     napi_value object,
@@ -2784,6 +3107,41 @@ napi_status NapiEnvironment::getForInPropertyNames(
   CHECK_NAPI(checkHermesStatus(keyStorage));
   return convertKeyStorageToArray(
       *keyStorage, 0, endIndex - beginIndex, keyConversion, result);
+}
+
+napi_status NapiEnvironment::convertKeyStorageToArray(
+    vm::Handle<vm::BigStorage> keyStorage,
+    uint32_t startIndex,
+    uint32_t length,
+    napi_key_conversion keyConversion,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::Handle<vm::JSArray>> cr =
+      vm::JSArray::create(&runtime_, length, length);
+  CHECK_NAPI(checkHermesStatus(cr.getStatus()));
+  vm::Handle<vm::JSArray> array = *cr;
+  if (keyConversion == napi_key_numbers_to_strings) {
+    vm::GCScopeMarkerRAII marker{&runtime_};
+    for (size_t i = 0; i < length; ++i) {
+      vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
+      if (key->isNumber()) {
+        vm::CallResult<vm::Handle<>> keyRes =
+            convertIndexToString(key->getNumber());
+        CHECK_NAPI(checkHermesStatus(keyRes));
+        key = *keyRes;
+      }
+      vm::JSArray::setElementAt(array, &runtime_, i, key);
+      marker.flush();
+    }
+  } else {
+    vm::JSArray::setStorageEndIndex(array, &runtime_, length);
+    vm::NoAllocScope noAlloc{&runtime_};
+    vm::JSArray *arrPtr = array.get();
+    for (uint32_t i = 0; i < length; ++i) {
+      vm::JSArray::unsafeSetExistingElementAt(
+          arrPtr, &runtime_, i, keyStorage->at(startIndex + i));
+    }
+  }
+  return setResult(array.getHermesValue(), result);
 }
 
 napi_status NapiEnvironment::setProperty(
@@ -3022,6 +3380,182 @@ napi_status NapiEnvironment::defineProperties(
   });
 }
 
+napi_status NapiEnvironment::symbolIDFromPropertyDescriptor(
+    const napi_property_descriptor *p,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  if (p->utf8name != nullptr) {
+    CHECK_NAPI(createSymbolID(p->utf8name, NAPI_AUTO_LENGTH, result));
+  } else {
+    RETURN_STATUS_IF_FALSE(p->name, napi_name_expected);
+    const vm::PinnedHermesValue &namePHV = *phv(p->name);
+    if (namePHV.isString()) {
+      CHECK_NAPI(createSymbolID(p->name, result));
+    } else if (namePHV.isSymbol()) {
+      *result = namePHV.getSymbol();
+    } else {
+      return setLastError(napi_name_expected);
+    }
+  }
+
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::objectFreeze(napi_value object) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSObject::freeze(makeHandle<vm::JSObject>(object), &runtime_)));
+    return clearLastError();
+  });
+}
+
+napi_status NapiEnvironment::objectSeal(napi_value object) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_NAPI(checkHermesStatus(
+        vm::JSObject::seal(makeHandle<vm::JSObject>(object), &runtime_)));
+    return clearLastError();
+  });
+}
+
+//-----------------------------------------------------------------------------
+// Property access helpers
+//-----------------------------------------------------------------------------
+
+const vm::PinnedHermesValue &NapiEnvironment::getPredefined(
+    NapiPredefined predefinedKey) noexcept {
+  return predefinedValues_[static_cast<size_t>(predefinedKey)];
+}
+
+template <class TObject, class TValue>
+napi_status NapiEnvironment::putPredefined(
+    TObject object,
+    NapiPredefined key,
+    TValue value,
+    bool *optResult) noexcept {
+  return putNamed(object, getPredefined(key).getSymbol(), value, optResult);
+}
+
+template <class TObject>
+napi_status NapiEnvironment::hasPredefined(
+    TObject object,
+    NapiPredefined key,
+    bool *result) noexcept {
+  return hasNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject>
+napi_status NapiEnvironment::getPredefined(
+    TObject object,
+    NapiPredefined key,
+    napi_value *result) noexcept {
+  return getNamed(object, getPredefined(key).getSymbol(), result);
+}
+
+template <class TObject, class TValue>
+napi_status NapiEnvironment::putNamed(
+    TObject object,
+    vm::SymbolID name,
+    TValue value,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject>
+napi_status NapiEnvironment::hasNamed(
+    TObject object,
+    vm::SymbolID name,
+    bool *result) noexcept {
+  vm::CallResult<bool> res =
+      vm::JSObject::hasNamed(makeHandle<vm::JSObject>(object), &runtime_, name);
+  return setResult(std::move(res), result);
+}
+
+template <class TObject>
+napi_status NapiEnvironment::getNamed(
+    TObject object,
+    vm::SymbolID name,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getNamed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      vm::PropOpFlags().plusThrowOnError());
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey, class TValue>
+napi_status NapiEnvironment::putComputed(
+    TObject object,
+    TKey key,
+    TValue value,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      makeHandle(value),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject, class TKey>
+napi_status
+NapiEnvironment::hasComputed(TObject object, TKey key, bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::hasComputed(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NapiEnvironment::getComputed(
+    TObject object,
+    TKey key,
+    napi_value *result) noexcept {
+  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getComputed_RJS(
+      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
+  return setResult(std::move(res), result);
+}
+
+template <class TObject, class TKey>
+napi_status NapiEnvironment::deleteComputed(
+    TObject object,
+    TKey key,
+    bool *optResult) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::deleteComputed(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), optResult);
+}
+
+template <class TObject, class TKey>
+napi_status NapiEnvironment::getOwnComputedDescriptor(
+    TObject object,
+    TKey key,
+    vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
+    vm::ComputedPropertyDescriptor &desc,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::getOwnComputedDescriptor(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      makeHandle(key),
+      tmpSymbolStorage,
+      desc);
+  return setResult(std::move(res), result);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Arrays
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::isArray(napi_value value, bool *result) noexcept {
   CHECK_ARG(value);
   return setResult(vm::vmisa<vm::JSArray>(*phv(value)), result);
@@ -3043,6 +3577,10 @@ napi_status NapiEnvironment::getArrayLength(
   });
 }
 
+//-----------------------------------------------------------------------------
+// Methods to compare values
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::strictEquals(
     napi_value lhs,
     napi_value rhs,
@@ -3061,6 +3599,10 @@ napi_status NapiEnvironment::strictEquals(
   }
   return napi_ok;
 }
+
+//-----------------------------------------------------------------------------
+// Methods to work with Functions
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::callFunction(
     napi_value object,
@@ -3212,6 +3754,10 @@ napi_status NapiEnvironment::instanceOf(
   });
 }
 
+//-----------------------------------------------------------------------------
+// Methods to work with napi_callbacks
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::getCallbackInfo(
     napi_callback_info callbackInfo,
     size_t *argCount,
@@ -3247,6 +3793,10 @@ napi_status NapiEnvironment::getNewTarget(
   return setResult(
       reinterpret_cast<CallbackInfo *>(callbackInfo)->getNewTarget(), result);
 }
+
+//-----------------------------------------------------------------------------
+// Methods to work with external data objects
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::defineClass(
     const char *utf8Name,
@@ -3340,6 +3890,36 @@ napi_status NapiEnvironment::wrapObject(
   });
 }
 
+napi_status NapiEnvironment::addFinalizer(
+    napi_value object,
+    void *nativeData,
+    napi_finalize finalizeCallback,
+    void *finalizeHint,
+    napi_ref *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_OBJECT_ARG(object);
+    CHECK_ARG(finalizeCallback);
+    if (result != nullptr) {
+      return FinalizingComplexReference::create(
+          *this,
+          0,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          reinterpret_cast<FinalizingComplexReference **>(result));
+    } else {
+      return FinalizingAnonymousReference::create(
+          *this,
+          phv(object),
+          nativeData,
+          finalizeCallback,
+          finalizeHint,
+          nullptr);
+    }
+  });
+}
+
 napi_status NapiEnvironment::unwrapObject(
     napi_value object,
     UnwrapAction action,
@@ -3372,6 +3952,60 @@ napi_status NapiEnvironment::unwrapObject(
   });
 }
 
+napi_status NapiEnvironment::typeTagObject(
+    napi_value object,
+    const napi_type_tag *typeTag) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(typeTag);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+
+    // Fail if the tag already exists
+    bool hasTag{};
+    CHECK_NAPI(hasPredefined(objValue, NapiPredefined::napi_typeTag, &hasTag));
+    RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
+
+    napi_value tagBuffer;
+    void *tagBufferData;
+    CHECK_NAPI(
+        createArrayBuffer(sizeof(napi_type_tag), &tagBufferData, &tagBuffer));
+
+    const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
+    uint8_t *dest = reinterpret_cast<uint8_t *>(tagBufferData);
+    std::copy(source, source + sizeof(napi_type_tag), dest);
+
+    return putPredefined(objValue, NapiPredefined::napi_typeTag, tagBuffer);
+  });
+}
+
+napi_status NapiEnvironment::checkObjectTypeTag(
+    napi_value object,
+    const napi_type_tag *typeTag,
+    bool *result) noexcept {
+  return handleExceptions([&] {
+    CHECK_ARG(typeTag);
+    napi_value objValue;
+    CHECK_NAPI(coerceToObject(object, &objValue));
+
+    napi_value tagBufferValue;
+    CHECK_NAPI(
+        getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
+    vm::JSArrayBuffer *tagBuffer =
+        vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
+    RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
+
+    const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
+    const uint8_t *tagBufferData = tagBuffer->getDataBlock();
+    return setResult(
+        std::equal(
+            source,
+            source + sizeof(napi_type_tag),
+            tagBufferData,
+            tagBufferData + sizeof(napi_type_tag)),
+        result);
+  });
+}
+
 napi_status NapiEnvironment::createExternal(
     void *nativeData,
     napi_finalize finalizeCallback,
@@ -3395,6 +4029,31 @@ napi_status NapiEnvironment::createExternal(
   });
 }
 
+vm::PseudoHandle<vm::DecoratedObject> NapiEnvironment::createExternal(
+    void *nativeData,
+    ExternalValue **externalValue) noexcept {
+  vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
+      vm::DecoratedObject::create(
+          &runtime_,
+          vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
+          std::make_unique<ExternalValue>(*this, nativeData),
+          /*additionalSlotCount:*/ 1);
+
+  // Add a special tag to differentiate from other decorated objects.
+  vm::DecoratedObject::setAdditionalSlotValue(
+      decoratedObj.get(),
+      &runtime_,
+      kExternalTagSlot,
+      vm::SmallHermesValue::encodeNumberValue(kExternalValueTag, &runtime_));
+
+  if (externalValue) {
+    *externalValue =
+        static_cast<ExternalValue *>(decoratedObj->getDecoration());
+  }
+
+  return decoratedObj;
+}
+
 napi_status NapiEnvironment::getValueExternal(
     napi_value value,
     void **result) noexcept {
@@ -3404,6 +4063,48 @@ napi_status NapiEnvironment::getValueExternal(
     return setResult(externalValue->nativeData(), result);
   });
 }
+
+ExternalValue *NapiEnvironment::getExternalValue(
+    const vm::HermesValue &value) noexcept {
+  if (vm::DecoratedObject *decoratedObj =
+          vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
+    vm::SmallHermesValue tag = vm::DecoratedObject::getAdditionalSlotValue(
+        decoratedObj, &runtime_, kExternalTagSlot);
+    if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
+      return static_cast<ExternalValue *>(decoratedObj->getDecoration());
+    }
+  }
+
+  return nullptr;
+}
+
+// TODO: simplify handling the external value
+template <class TObject>
+napi_status NapiEnvironment::getExternalValue(
+    TObject object,
+    IfNotFound ifNotFound,
+    ExternalValue **result) noexcept {
+  return handleExceptions([&] {
+    ExternalValue *externalValue{};
+    napi_value externalNapiValue;
+    napi_status status = getPredefined(
+        object, NapiPredefined::napi_externalValue, &externalNapiValue);
+    if (status == napi_ok) {
+      externalValue = getExternalValue(*phv(externalNapiValue));
+      RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
+    } else if (ifNotFound == IfNotFound::ThenCreate) {
+      vm::Handle<vm::DecoratedObject> decoratedObj =
+          makeHandle(createExternal(nullptr, &externalValue));
+      CHECK_NAPI(putPredefined(
+          object, NapiPredefined::napi_externalValue, decoratedObj));
+    }
+    return setResult(std::move(externalValue), result);
+  });
+}
+
+//-----------------------------------------------------------------------------
+// Methods to control object lifespan
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createReference(
     napi_value value,
@@ -3445,6 +4146,104 @@ napi_status NapiEnvironment::getReferenceValue(
     napi_value *result) noexcept {
   CHECK_ARG(ref);
   return setResult(asReference(ref)->value(env), result);
+}
+
+napi_status NapiEnvironment::addObjectFinalizer(
+    const vm::PinnedHermesValue *value,
+    Finalizer *finalizer) noexcept {
+  return handleExceptions([&] {
+    ExternalValue *externalValue = getExternalValue(*value);
+    if (!externalValue) {
+      CHECK_NAPI(
+          getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
+    }
+
+    externalValue->addFinalizer(finalizer);
+
+    return clearLastError();
+  });
+}
+
+template <class TLambda>
+void NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
+  size_t openHandleScopesBefore = gcRootStackScopes_.size();
+  clearLastError();
+  call(this);
+  CRASH_IF_FALSE(openHandleScopesBefore == gcRootStackScopes_.size());
+  if (!lastException_.isEmpty()) {
+    runtime_.setThrownValue(lastException_);
+    lastException_ = EmptyHermesValue;
+  }
+}
+
+napi_status NapiEnvironment::callFinalizer(
+    napi_finalize finalizeCallback,
+    void *nativeData,
+    void *finalizeHint) noexcept {
+  return handleExceptions([&] {
+    callIntoModule([&](NapiEnvironment *env) {
+      finalizeCallback(napiEnv(env), nativeData, finalizeHint);
+    });
+    return napi_ok;
+  });
+}
+
+napi_status NapiEnvironment::runReferenceFinalizers() noexcept {
+  if (!isRunningFinalizers_) {
+    isRunningFinalizers_ = true;
+    Reference::finalizeAll(*this, finalizerQueue_);
+    isRunningFinalizers_ = false;
+  }
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::createStrongReference(
+    napi_value value,
+    napi_ext_ref *result) noexcept {
+  CHECK_ARG(value);
+  return StrongReference::create(
+      *this, *phv(value), reinterpret_cast<StrongReference **>(result));
+}
+
+napi_status NapiEnvironment::createStrongReferenceWithData(
+    napi_value value,
+    void *nativeData,
+    napi_finalize finalizeCallback,
+    void *finalizeHint,
+    napi_ext_ref *result) noexcept {
+  return FinalizingStrongReference::create(
+      *this,
+      phv(value),
+      nativeData,
+      finalizeCallback,
+      finalizeHint,
+      reinterpret_cast<FinalizingStrongReference **>(result));
+}
+
+napi_status NapiEnvironment::createWeakReference(
+    napi_value value,
+    napi_ext_ref *result) noexcept {
+  return WeakReference::create(
+      *this, phv(value), reinterpret_cast<WeakReference **>(result));
+}
+
+napi_status NapiEnvironment::incReference(napi_ext_ref ref) noexcept {
+  CHECK_ARG(ref);
+  uint32_t refCount{};
+  return asReference(ref)->incRefCount(*this, /*ref*/ refCount);
+}
+
+napi_status NapiEnvironment::decReference(napi_ext_ref ref) noexcept {
+  CHECK_ARG(ref);
+  uint32_t refCount{};
+  return asReference(ref)->decRefCount(*this, /*ref*/ refCount);
+}
+
+napi_status NapiEnvironment::getReferenceValue(
+    napi_ext_ref ref,
+    napi_value *result) noexcept {
+  CHECK_ARG(ref);
+  return setResult(asReference(ref)->value(*this), result);
 }
 
 napi_status NapiEnvironment::openHandleScope(
@@ -3531,6 +4330,49 @@ napi_status NapiEnvironment::escapeHandle(
   return setResult(napiValue(&escapedValue), result);
 }
 
+void NapiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
+  finalizerQueue_.pushBack(finalizer);
+}
+
+void NapiEnvironment::addGCRoot(Reference *reference) noexcept {
+  gcRoots_.pushBack(reference);
+}
+
+void NapiEnvironment::addFinalizingGCRoot(Reference *reference) noexcept {
+  finalizingGCRoots_.pushBack(reference);
+}
+
+void NapiEnvironment::pushOrderedSet(
+    OrderedSet<vm::HermesValue> &set) noexcept {
+  orderedSets_.push_back(&set);
+}
+
+void NapiEnvironment::popOrderedSet() noexcept {
+  orderedSets_.pop_back();
+}
+
+napi_value NapiEnvironment::addStackValue(vm::HermesValue value) noexcept {
+  gcRootStack_.emplace(value);
+  return napiValue(&gcRootStack_.top());
+}
+
+vm::WeakRoot<vm::JSObject> NapiEnvironment::createWeakRoot(
+    vm::JSObject *object) noexcept {
+  return vm::WeakRoot<vm::JSObject>(object, &runtime_);
+}
+
+const vm::PinnedHermesValue &NapiEnvironment::lockWeakObject(
+    vm::WeakRoot<vm::JSObject> &weakRoot) noexcept {
+  if (vm::JSObject *ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
+    return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
+  }
+  return getPredefined(NapiPredefined::undefined);
+}
+
+//-----------------------------------------------------------------------------
+// Methods to support JS error handling
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::throwError(napi_value error) noexcept {
   CHECK_ARG(error);
   runtime_.setThrownValue(*phv(error));
@@ -3589,6 +4431,25 @@ napi_status NapiEnvironment::isError(napi_value value, bool *result) noexcept {
   return setResult(vm::vmisa<vm::JSError>(*phv(value)), result);
 }
 
+napi_status NapiEnvironment::setErrorCode(
+    vm::Handle<vm::JSError> error,
+    napi_value code,
+    const char *codeCString) noexcept {
+  if (code || codeCString) {
+    if (code) {
+      CHECK_STRING_ARG(code);
+    } else {
+      CHECK_NAPI(stringFromUTF8(codeCString, &code));
+    }
+    return putPredefined(error, NapiPredefined::code, code, nullptr);
+  }
+  return napi_ok;
+}
+
+//-----------------------------------------------------------------------------
+// Methods to support catching JS exceptions
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::isExceptionPending(bool *result) noexcept {
   return setResult(!lastException_.isEmpty(), result);
 }
@@ -3600,6 +4461,10 @@ napi_status NapiEnvironment::getAndClearLastException(
   }
   return setResult(std::exchange(lastException_, EmptyHermesValue), result);
 }
+
+//-----------------------------------------------------------------------------
+// Methods to work with array buffers and typed arrays
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::isArrayBuffer(
     napi_value value,
@@ -3660,6 +4525,26 @@ napi_status NapiEnvironment::getArrayBufferInfo(
   return clearLastError();
 }
 
+napi_status NapiEnvironment::detachArrayBuffer(
+    napi_value arrayBuffer) noexcept {
+  CHECK_ARG(arrayBuffer);
+  vm::JSArrayBuffer *buffer =
+      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
+  buffer->detach(&runtime_.getHeap());
+  return clearLastError();
+}
+
+napi_status NapiEnvironment::isDetachedArrayBuffer(
+    napi_value arrayBuffer,
+    bool *result) noexcept {
+  CHECK_ARG(arrayBuffer);
+  vm::JSArrayBuffer *buffer =
+      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
+  return setResult(buffer->attached(), result);
+}
+
 napi_status NapiEnvironment::isTypedArray(
     napi_value value,
     bool *result) noexcept {
@@ -3668,7 +4553,7 @@ napi_status NapiEnvironment::isTypedArray(
 }
 
 template <vm::CellKind CellKind>
-constexpr const char *getTypedArrayName() noexcept {
+/*static*/ constexpr const char *NapiEnvironment::getTypedArrayName() noexcept {
   static constexpr const char *names[] = {
 #define TYPED_ARRAY(name, type) #name "Array",
 #include "hermes/VM/TypedArrays.def"
@@ -3912,9 +4797,17 @@ napi_status NapiEnvironment::getDataViewInfo(
   return clearLastError();
 }
 
+//-----------------------------------------------------------------------------
+// Version management
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::getVersion(uint32_t *result) noexcept {
   return setResult(static_cast<uint32_t>(NAPI_VERSION), result);
 }
+
+//-----------------------------------------------------------------------------
+// Methods to work with Promises
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createPromise(
     napi_value *promise,
@@ -4028,6 +4921,10 @@ napi_status NapiEnvironment::isPromise(
   return instanceOf(value, promiseConstructor, result);
 }
 
+//-----------------------------------------------------------------------------
+// Memory management
+//-----------------------------------------------------------------------------
+
 napi_status NapiEnvironment::adjustExternalMemory(
     int64_t change_in_bytes,
     int64_t *adjusted_value) noexcept {
@@ -4041,6 +4938,16 @@ napi_status NapiEnvironment::adjustExternalMemory(
   // return napi_clear_last_error(env);
   return napi_not_implemented;
 }
+
+napi_status NapiEnvironment::collectGarbage() noexcept {
+  runtime_.collect("test");
+  CHECK_NAPI(runReferenceFinalizers());
+  return clearLastError();
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with Dates
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createDate(
     double dateTime,
@@ -4068,35 +4975,9 @@ napi_status NapiEnvironment::getDateValue(
   });
 }
 
-napi_status NapiEnvironment::addFinalizer(
-    napi_value object,
-    void *nativeData,
-    napi_finalize finalizeCallback,
-    void *finalizeHint,
-    napi_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
-    CHECK_ARG(finalizeCallback);
-    if (result != nullptr) {
-      return FinalizingComplexReference::create(
-          *this,
-          0,
-          phv(object),
-          nativeData,
-          finalizeCallback,
-          finalizeHint,
-          reinterpret_cast<FinalizingComplexReference **>(result));
-    } else {
-      return FinalizingAnonymousReference::create(
-          *this,
-          phv(object),
-          nativeData,
-          finalizeCallback,
-          finalizeHint,
-          nullptr);
-    }
-  });
-}
+//-----------------------------------------------------------------------------
+// Instance data
+//-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::setInstanceData(
     void *nativeData,
@@ -4117,191 +4998,9 @@ napi_status NapiEnvironment::getInstanceData(void **nativeData) noexcept {
       instanceData_ ? instanceData_->nativeData() : nullptr, nativeData);
 }
 
-napi_status NapiEnvironment::detachArrayBuffer(
-    napi_value arrayBuffer) noexcept {
-  CHECK_ARG(arrayBuffer);
-  vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
-  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
-  buffer->detach(&runtime_.getHeap());
-  return clearLastError();
-}
-
-napi_status NapiEnvironment::isDetachedArrayBuffer(
-    napi_value arrayBuffer,
-    bool *result) noexcept {
-  CHECK_ARG(arrayBuffer);
-  vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
-  RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
-  return setResult(buffer->attached(), result);
-}
-
-napi_status NapiEnvironment::typeTagObject(
-    napi_value object,
-    const napi_type_tag *typeTag) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(typeTag);
-    napi_value objValue;
-    CHECK_NAPI(coerceToObject(object, &objValue));
-
-    // Fail if the tag already exists
-    bool hasTag{};
-    CHECK_NAPI(hasPredefined(objValue, NapiPredefined::napi_typeTag, &hasTag));
-    RETURN_STATUS_IF_FALSE(!hasTag, napi_invalid_arg);
-
-    napi_value tagBuffer;
-    void *tagBufferData;
-    CHECK_NAPI(
-        createArrayBuffer(sizeof(napi_type_tag), &tagBufferData, &tagBuffer));
-
-    const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
-    uint8_t *dest = reinterpret_cast<uint8_t *>(tagBufferData);
-    std::copy(source, source + sizeof(napi_type_tag), dest);
-
-    return putPredefined(objValue, NapiPredefined::napi_typeTag, tagBuffer);
-  });
-}
-
-napi_status NapiEnvironment::checkObjectTypeTag(
-    napi_value object,
-    const napi_type_tag *typeTag,
-    bool *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(typeTag);
-    napi_value objValue;
-    CHECK_NAPI(coerceToObject(object, &objValue));
-
-    napi_value tagBufferValue;
-    CHECK_NAPI(
-        getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
-    vm::JSArrayBuffer *tagBuffer =
-        vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
-    RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
-
-    const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
-    const uint8_t *tagBufferData = tagBuffer->getDataBlock();
-    return setResult(
-        std::equal(
-            source,
-            source + sizeof(napi_type_tag),
-            tagBufferData,
-            tagBufferData + sizeof(napi_type_tag)),
-        result);
-  });
-}
-
-napi_status NapiEnvironment::objectFreeze(napi_value object) noexcept {
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
-    CHECK_NAPI(checkHermesStatus(
-        vm::JSObject::freeze(makeHandle<vm::JSObject>(object), &runtime_)));
-    return clearLastError();
-  });
-}
-
-napi_status NapiEnvironment::objectSeal(napi_value object) noexcept {
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
-    CHECK_NAPI(checkHermesStatus(
-        vm::JSObject::seal(makeHandle<vm::JSObject>(object), &runtime_)));
-    return clearLastError();
-  });
-}
-
-napi_status NapiEnvironment::incRefCount() noexcept {
-  refCount_++;
-  return napi_status::napi_ok;
-}
-
-napi_status NapiEnvironment::decRefCount() noexcept {
-  if (--refCount_ == 0) {
-    delete this;
-  }
-  return napi_status::napi_ok;
-}
-
-napi_status NapiEnvironment::collectGarbage() noexcept {
-  runtime_.collect("test");
-  CHECK_NAPI(runReferenceFinalizers());
-  return clearLastError();
-}
-
-napi_status NapiEnvironment::getUniqueStringUTF8Ref(
-    const char *utf8,
-    size_t length,
-    napi_ext_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(utf8);
-    napi_value strValue;
-    CHECK_NAPI(stringFromUTF8(utf8, length, &strValue));
-    return getUniqueStringRef(strValue, result);
-  });
-}
-
-napi_status NapiEnvironment::getUniqueStringRef(
-    napi_value strValue,
-    napi_ext_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(strValue);
-    vm::CallResult<vm::Handle<vm::SymbolID>> cr = vm::stringToSymbolID(
-        &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
-    CHECK_NAPI(checkHermesStatus(cr));
-    return StrongReference::create(
-        *this,
-        cr->getHermesValue(),
-        reinterpret_cast<StrongReference **>(result));
-  });
-}
-
-napi_status NapiEnvironment::createStrongReference(
-    napi_value value,
-    napi_ext_ref *result) noexcept {
-  CHECK_ARG(value);
-  return StrongReference::create(
-      *this, *phv(value), reinterpret_cast<StrongReference **>(result));
-}
-
-napi_status NapiEnvironment::createStrongReferenceWithData(
-    napi_value value,
-    void *nativeData,
-    napi_finalize finalizeCallback,
-    void *finalizeHint,
-    napi_ext_ref *result) noexcept {
-  return FinalizingStrongReference::create(
-      *this,
-      phv(value),
-      nativeData,
-      finalizeCallback,
-      finalizeHint,
-      reinterpret_cast<FinalizingStrongReference **>(result));
-}
-
-napi_status NapiEnvironment::createWeakReference(
-    napi_value value,
-    napi_ext_ref *result) noexcept {
-  return WeakReference::create(
-      *this, phv(value), reinterpret_cast<WeakReference **>(result));
-}
-
-napi_status NapiEnvironment::incReference(napi_ext_ref ref) noexcept {
-  CHECK_ARG(ref);
-  uint32_t refCount{};
-  return asReference(ref)->incRefCount(*this, /*ref*/ refCount);
-}
-
-napi_status NapiEnvironment::decReference(napi_ext_ref ref) noexcept {
-  CHECK_ARG(ref);
-  uint32_t refCount{};
-  return asReference(ref)->decRefCount(*this, /*ref*/ refCount);
-}
-
-napi_status NapiEnvironment::getReferenceValue(
-    napi_ext_ref ref,
-    napi_value *result) noexcept {
-  CHECK_ARG(ref);
-  return setResult(asReference(ref)->value(*this), result);
-}
+//---------------------------------------------------------------------------
+// Script running
+//---------------------------------------------------------------------------
 
 napi_status NapiEnvironment::runScript(
     napi_value source,
@@ -4555,6 +5254,13 @@ napi_status NapiEnvironment::serializePreparedScript(
   return clearLastError();
 }
 
+/*static*/ bool NapiEnvironment::isHermesBytecode(
+    const uint8_t *data,
+    size_t len) noexcept {
+  return hbc::BCProviderFromBuffer::isBytecodeStream(
+      llvh::ArrayRef<uint8_t>(data, len));
+}
+
 //---------------------------------------------------------------------------
 // Handle creation helpers
 //---------------------------------------------------------------------------
@@ -4712,635 +5418,6 @@ napi_status NapiEnvironment::setResultUnsafe(
     TResult *result) noexcept {
   CHECK_NAPI(checkHermesStatus(value.getStatus(), onException));
   return setResultUnsafe(std::move(*value), result);
-}
-
-//---------------------------------------------------------------------------
-// Error handling helpers
-//---------------------------------------------------------------------------
-
-napi_status NapiEnvironment::checkHermesStatus(
-    vm::ExecutionStatus hermesStatus,
-    napi_status status) noexcept {
-  if (LLVM_LIKELY(hermesStatus != vm::ExecutionStatus::EXCEPTION)) {
-    return napi_ok;
-  }
-
-  lastException_ = runtime_.getThrownValue();
-  runtime_.clearThrownValue();
-  return status;
-}
-
-template <class T>
-napi_status NapiEnvironment::checkHermesStatus(
-    const vm::CallResult<T> &callResult,
-    napi_status status) noexcept {
-  return checkHermesStatus(callResult.getStatus());
-}
-
-napi_status NapiEnvironment::setErrorCode(
-    vm::Handle<vm::JSError> error,
-    napi_value code,
-    const char *codeCString) noexcept {
-  if (code || codeCString) {
-    if (code) {
-      CHECK_STRING_ARG(code);
-    } else {
-      CHECK_NAPI(stringFromUTF8(codeCString, &code));
-    }
-    return putPredefined(error, NapiPredefined::code, code, nullptr);
-  }
-  return napi_ok;
-}
-
-//-----------------------------------------------------------------------------
-// Property access helpers
-//-----------------------------------------------------------------------------
-
-const vm::PinnedHermesValue &NapiEnvironment::getPredefined(
-    NapiPredefined predefinedKey) noexcept {
-  return predefinedValues_[static_cast<size_t>(predefinedKey)];
-}
-
-template <class TObject, class TValue>
-napi_status NapiEnvironment::putPredefined(
-    TObject object,
-    NapiPredefined key,
-    TValue value,
-    bool *optResult) noexcept {
-  return putNamed(object, getPredefined(key).getSymbol(), value, optResult);
-}
-
-template <class TObject>
-napi_status NapiEnvironment::hasPredefined(
-    TObject object,
-    NapiPredefined key,
-    bool *result) noexcept {
-  return hasNamed(object, getPredefined(key).getSymbol(), result);
-}
-
-template <class TObject>
-napi_status NapiEnvironment::getPredefined(
-    TObject object,
-    NapiPredefined key,
-    napi_value *result) noexcept {
-  return getNamed(object, getPredefined(key).getSymbol(), result);
-}
-
-template <class TObject, class TValue>
-napi_status NapiEnvironment::putNamed(
-    TObject object,
-    vm::SymbolID name,
-    TValue value,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      name,
-      makeHandle(value),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject>
-napi_status NapiEnvironment::hasNamed(
-    TObject object,
-    vm::SymbolID name,
-    bool *result) noexcept {
-  vm::CallResult<bool> res =
-      vm::JSObject::hasNamed(makeHandle<vm::JSObject>(object), &runtime_, name);
-  return setResult(std::move(res), result);
-}
-
-template <class TObject>
-napi_status NapiEnvironment::getNamed(
-    TObject object,
-    vm::SymbolID name,
-    napi_value *result) noexcept {
-  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getNamed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      name,
-      vm::PropOpFlags().plusThrowOnError());
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey, class TValue>
-napi_status NapiEnvironment::putComputed(
-    TObject object,
-    TKey key,
-    TValue value,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::putComputed_RJS(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      makeHandle(value),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject, class TKey>
-napi_status
-NapiEnvironment::hasComputed(TObject object, TKey key, bool *result) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::hasComputed(
-      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey>
-napi_status NapiEnvironment::getComputed(
-    TObject object,
-    TKey key,
-    napi_value *result) noexcept {
-  vm::CallResult<vm::PseudoHandle<>> res = vm::JSObject::getComputed_RJS(
-      makeHandle<vm::JSObject>(object), &runtime_, makeHandle(key));
-  return setResult(std::move(res), result);
-}
-
-template <class TObject, class TKey>
-napi_status NapiEnvironment::deleteComputed(
-    TObject object,
-    TKey key,
-    bool *optResult) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::deleteComputed(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      vm::PropOpFlags().plusThrowOnError());
-  return setOptionalResult(std::move(res), optResult);
-}
-
-template <class TObject, class TKey>
-napi_status NapiEnvironment::getOwnComputedDescriptor(
-    TObject object,
-    TKey key,
-    vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
-    vm::ComputedPropertyDescriptor &desc,
-    bool *result) noexcept {
-  vm::CallResult<bool> res = vm::JSObject::getOwnComputedDescriptor(
-      makeHandle<vm::JSObject>(object),
-      &runtime_,
-      makeHandle(key),
-      tmpSymbolStorage,
-      desc);
-  return setResult(std::move(res), result);
-}
-
-//---------------------------------------------------------------------------
-// Miscellaneous
-//---------------------------------------------------------------------------
-
-vm::PseudoHandle<vm::DecoratedObject> NapiEnvironment::createExternal(
-    void *nativeData,
-    ExternalValue **externalValue) noexcept {
-  vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
-      vm::DecoratedObject::create(
-          &runtime_,
-          vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
-          std::make_unique<ExternalValue>(*this, nativeData),
-          /*additionalSlotCount:*/ 1);
-
-  // Add a special tag to differentiate from other decorated objects.
-  vm::DecoratedObject::setAdditionalSlotValue(
-      decoratedObj.get(),
-      &runtime_,
-      kExternalTagSlot,
-      vm::SmallHermesValue::encodeNumberValue(kExternalValueTag, &runtime_));
-
-  if (externalValue) {
-    *externalValue =
-        static_cast<ExternalValue *>(decoratedObj->getDecoration());
-  }
-
-  return decoratedObj;
-}
-
-// TODO: simplify handling the external value
-template <class TObject>
-napi_status NapiEnvironment::getExternalValue(
-    TObject object,
-    IfNotFound ifNotFound,
-    ExternalValue **result) noexcept {
-  return handleExceptions([&] {
-    ExternalValue *externalValue{};
-    napi_value externalNapiValue;
-    napi_status status = getPredefined(
-        object, NapiPredefined::napi_externalValue, &externalNapiValue);
-    if (status == napi_ok) {
-      externalValue = getExternalValue(*phv(externalNapiValue));
-      RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
-    } else if (ifNotFound == IfNotFound::ThenCreate) {
-      vm::Handle<vm::DecoratedObject> decoratedObj =
-          makeHandle(createExternal(nullptr, &externalValue));
-      CHECK_NAPI(putPredefined(
-          object, NapiPredefined::napi_externalValue, decoratedObj));
-    }
-    return setResult(std::move(externalValue), result);
-  });
-}
-
-template <class F>
-napi_status NapiEnvironment::handleExceptions(const F &f) noexcept {
-  napi_status status{};
-  RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
-  clearLastError();
-  {
-    vm::GCScope gcScope(&runtime_);
-#ifdef HERMESVM_EXCEPTION_ON_OOM
-    try {
-      status = f();
-    } catch (const vm::JSOutOfMemoryError &ex) {
-      return SetLastError(napi_generic_failure);
-    }
-#else // HERMESVM_EXCEPTION_ON_OOM
-    status = f();
-#endif
-  }
-  if (status == napi_ok) {
-    CHECK_NAPI(runReferenceFinalizers());
-  }
-  return status;
-}
-
-vm::Runtime &NapiEnvironment::runtime() noexcept {
-  return runtime_;
-}
-
-template <class... TArgs>
-napi_status NapiEnvironment::setLastError(
-    napi_status errorCode,
-    TArgs &&...args) noexcept {
-  // Warning: Keep in-sync with napi_status enum
-  static constexpr const char *errorMessages[] = {
-      "",
-      "Invalid argument",
-      "An object was expected",
-      "A string was expected",
-      "A string or symbol was expected",
-      "A function was expected",
-      "A number was expected",
-      "A boolean was expected",
-      "An array was expected",
-      "Unknown failure",
-      "An exception is pending",
-      "The async work item was cancelled",
-      "napi_escape_handle already called on scope",
-      "Invalid handle scope usage",
-      "Invalid callback scope usage",
-      "Thread-safe function queue is full",
-      "Thread-safe function handle is closing",
-      "A bigint was expected",
-      "A date was expected",
-      "An arraybuffer was expected",
-      "A detachable arraybuffer was expected",
-      "Main thread would deadlock",
-  };
-
-  // The value of the constant below must be updated to reference the last
-  // message in the `napi_status` enum each time a new error message is added.
-  // We don't have a napi_status_last as this would result in an ABI
-  // change each time a message was added.
-  const int lastStatus = napi_would_deadlock;
-  static_assert(
-      size(errorMessages) == lastStatus + 1,
-      "Count of error messages must match count of error values");
-
-  if (errorCode < napi_ok || errorCode >= lastStatus) {
-    errorCode = napi_generic_failure;
-  }
-
-  lastErrorMessage_.clear();
-  StringBuilder sb{StringBuilder::AdoptString, std::move(lastErrorMessage_)};
-  sb.append(errorMessages[errorCode]);
-  if (sizeof...(args) > 0) {
-    sb.append(": ", std::forward<TArgs>(args)...);
-  }
-  lastErrorMessage_ = std::move(sb.str());
-  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
-  return errorCode;
-}
-
-napi_status NapiEnvironment::clearLastError() noexcept {
-  lastErrorMessage_.clear();
-  lastError_ = {"", 0, 0, napi_ok};
-  return napi_ok;
-}
-
-napi_status NapiEnvironment::getLastErrorInfo(
-    const napi_extended_error_info **result) noexcept {
-  CHECK_ARG(result);
-  *result = &lastError_;
-  return napi_ok;
-}
-
-napi_status NapiEnvironment::genericFailure(const char * /*message*/) noexcept {
-  // TODO: set result message
-  return napi_generic_failure;
-}
-
-vm::WeakRoot<vm::JSObject> NapiEnvironment::createWeakRoot(
-    vm::JSObject *object) noexcept {
-  return vm::WeakRoot<vm::JSObject>(object, &runtime_);
-}
-
-const vm::PinnedHermesValue &NapiEnvironment::lockWeakObject(
-    vm::WeakRoot<vm::JSObject> &weakRoot) noexcept {
-  if (vm::JSObject *ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
-    return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
-  }
-  return getPredefined(NapiPredefined::undefined);
-}
-
-napi_status NapiEnvironment::addObjectFinalizer(
-    const vm::PinnedHermesValue *value,
-    Finalizer *finalizer) noexcept {
-  return handleExceptions([&] {
-    ExternalValue *externalValue = getExternalValue(*value);
-    if (!externalValue) {
-      CHECK_NAPI(
-          getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
-    }
-
-    externalValue->addFinalizer(finalizer);
-
-    return clearLastError();
-  });
-}
-
-ExternalValue *NapiEnvironment::getExternalValue(
-    const vm::HermesValue &value) noexcept {
-  if (vm::DecoratedObject *decoratedObj =
-          vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
-    vm::SmallHermesValue tag = vm::DecoratedObject::getAdditionalSlotValue(
-        decoratedObj, &runtime_, kExternalTagSlot);
-    if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
-      return static_cast<ExternalValue *>(decoratedObj->getDecoration());
-    }
-  }
-
-  return nullptr;
-}
-
-napi_status NapiEnvironment::stringFromASCII(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
-  return setResult(
-      vm::StringPrimitive::createEfficient(
-          &runtime_, llvh::makeArrayRef(str, length)),
-      result);
-}
-
-napi_status NapiEnvironment::stringFromLatin1(
-    const char *str,
-    size_t length,
-    napi_value *result) noexcept {
-  if (isAllASCII(str, str + length)) {
-    return stringFromASCII(str, length, result);
-  }
-
-  // Latin1 has the same codes as Unicode. We just need to expand char to
-  // char16_t.
-  std::u16string u16str(length, u' ');
-  for (size_t i = 0; i < length; ++i) {
-    u16str[i] = str[i];
-  }
-  return setResult(
-      vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
-      result);
-}
-
-napi_status NapiEnvironment::stringFromUTF8(
-    const char *utf8,
-    napi_value *result) noexcept {
-  size_t length = std::char_traits<char>::length(utf8);
-  return stringFromUTF8(utf8, length, result);
-}
-
-napi_status NapiEnvironment::stringFromUTF8(
-    const char *utf8,
-    size_t length,
-    napi_value *result) noexcept {
-  if (isAllASCII(utf8, utf8 + length)) {
-    return stringFromASCII((const char *)utf8, length, result);
-  }
-  std::u16string utf16;
-  convertUTF8ToUTF16(utf8, length, utf16);
-  return setResult(
-      vm::StringPrimitive::createEfficient(&runtime_, std::move(utf16)),
-      result);
-}
-
-/*static*/ void NapiEnvironment::convertUTF8ToUTF16(
-    const char *utf8,
-    size_t length,
-    std::u16string &out) noexcept {
-  // length is the number of input bytes
-  out.resize(length);
-  const llvh::UTF8 *sourceStart = reinterpret_cast<const llvh::UTF8 *>(utf8);
-  const llvh::UTF8 *sourceEnd = sourceStart + length;
-  llvh::UTF16 *targetStart = reinterpret_cast<llvh::UTF16 *>(&out[0]);
-  llvh::UTF16 *targetEnd = targetStart + out.size();
-  llvh::ConversionResult cRes;
-  cRes = ConvertUTF8toUTF16(
-      &sourceStart,
-      sourceEnd,
-      &targetStart,
-      targetEnd,
-      llvh::lenientConversion);
-  (void)cRes;
-  assert(
-      cRes != llvh::ConversionResult::targetExhausted &&
-      "not enough space allocated for UTF16 conversion");
-  out.resize((char16_t *)targetStart - &out[0]);
-}
-
-napi_value NapiEnvironment::addStackValue(vm::HermesValue value) noexcept {
-  gcRootStack_.emplace(value);
-  return napiValue(&gcRootStack_.top());
-}
-
-napi_status NapiEnvironment::newFunction(
-    vm::SymbolID name,
-    napi_callback callback,
-    void *callbackData,
-    napi_value *result) noexcept {
-  std::unique_ptr<HostFunctionContext> context =
-      std::make_unique<HostFunctionContext>(*this, callback, callbackData);
-  vm::CallResult<vm::HermesValue> funcRes =
-      vm::FinalizableNativeFunction::createWithoutPrototype(
-          &runtime_,
-          context.get(),
-          &HostFunctionContext::func,
-          &HostFunctionContext::finalize,
-          name,
-          /*paramCount:*/ 0);
-  CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
-  context.release();
-  *result = addStackValue(*funcRes);
-  return clearLastError();
-}
-
-napi_status NapiEnvironment::convertKeyStorageToArray(
-    vm::Handle<vm::BigStorage> keyStorage,
-    uint32_t startIndex,
-    uint32_t length,
-    napi_key_conversion keyConversion,
-    napi_value *result) noexcept {
-  vm::CallResult<vm::Handle<vm::JSArray>> cr =
-      vm::JSArray::create(&runtime_, length, length);
-  CHECK_NAPI(checkHermesStatus(cr.getStatus()));
-  vm::Handle<vm::JSArray> array = *cr;
-  if (keyConversion == napi_key_numbers_to_strings) {
-    vm::GCScopeMarkerRAII marker{&runtime_};
-    for (size_t i = 0; i < length; ++i) {
-      vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
-      if (key->isNumber()) {
-        vm::CallResult<vm::Handle<>> keyRes =
-            convertIndexToString(key->getNumber());
-        CHECK_NAPI(checkHermesStatus(keyRes));
-        key = *keyRes;
-      }
-      vm::JSArray::setElementAt(array, &runtime_, i, key);
-      marker.flush();
-    }
-  } else {
-    vm::JSArray::setStorageEndIndex(array, &runtime_, length);
-    vm::NoAllocScope noAlloc{&runtime_};
-    vm::JSArray *arrPtr = array.get();
-    for (uint32_t i = 0; i < length; ++i) {
-      vm::JSArray::unsafeSetExistingElementAt(
-          arrPtr, &runtime_, i, keyStorage->at(startIndex + i));
-    }
-  }
-  return setResult(array.getHermesValue(), result);
-}
-
-vm::ExecutionStatus NapiEnvironment::convertKeyNumbersToStrings(
-    vm::Handle<vm::JSArray> array) noexcept {
-  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
-  for (size_t i = 0; i < length; ++i) {
-    vm::HermesValue key = array->at(&runtime_, i);
-    if (LLVM_UNLIKELY(key.isNumber())) {
-      vm::CallResult<vm::Handle<>> strKeyRes =
-          convertIndexToString(key.getNumber());
-      if (LLVM_UNLIKELY(
-              strKeyRes.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
-        return vm::ExecutionStatus::EXCEPTION;
-      }
-      vm::JSArray::setElementAt(array, &runtime_, i, *strKeyRes);
-    }
-  }
-  return vm::ExecutionStatus::RETURNED;
-}
-
-vm::CallResult<vm::Handle<>> NapiEnvironment::convertIndexToString(
-    double value) noexcept {
-  OptValue<uint32_t> index = doubleToArrayIndex(value);
-  if (LLVM_UNLIKELY(!index)) {
-    return runtime_.raiseRangeError("Index property is out of range");
-  }
-  return StringBuilder(*index).makeStringHV(runtime_);
-}
-
-napi_status NapiEnvironment::symbolIDFromPropertyDescriptor(
-    const napi_property_descriptor *p,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  if (p->utf8name != nullptr) {
-    CHECK_NAPI(createSymbolID(p->utf8name, NAPI_AUTO_LENGTH, result));
-  } else {
-    RETURN_STATUS_IF_FALSE(p->name, napi_name_expected);
-    const vm::PinnedHermesValue &namePHV = *phv(p->name);
-    if (namePHV.isString()) {
-      CHECK_NAPI(createSymbolID(p->name, result));
-    } else if (namePHV.isSymbol()) {
-      *result = namePHV.getSymbol();
-    } else {
-      return setLastError(napi_name_expected);
-    }
-  }
-
-  return napi_ok;
-}
-
-napi_status NapiEnvironment::createSymbolID(
-    const char *str,
-    size_t length,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  napi_value strValue{};
-  CHECK_NAPI(createStringUTF8(str, length, &strValue));
-  CHECK_NAPI(createSymbolID(strValue, result));
-  return napi_ok;
-}
-
-napi_status NapiEnvironment::createSymbolID(
-    napi_value str,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  CHECK_STRING_ARG(str);
-  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
-      &runtime_, vm::createPseudoHandle(phv(str)->getString()));
-  return setResult(std::move(res), result);
-}
-
-void NapiEnvironment::addToFinalizerQueue(Finalizer *finalizer) noexcept {
-  finalizerQueue_.pushBack(finalizer);
-}
-
-void NapiEnvironment::addGCRoot(Reference *reference) noexcept {
-  gcRoots_.pushBack(reference);
-}
-
-void NapiEnvironment::addFinalizingGCRoot(Reference *reference) noexcept {
-  finalizingGCRoots_.pushBack(reference);
-}
-
-void NapiEnvironment::pushOrderedSet(
-    OrderedSet<vm::HermesValue> &set) noexcept {
-  orderedSets_.push_back(&set);
-}
-
-void NapiEnvironment::popOrderedSet() noexcept {
-  orderedSets_.pop_back();
-}
-
-template <class TLambda>
-void NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
-  size_t openHandleScopesBefore = gcRootStackScopes_.size();
-  clearLastError();
-  call(this);
-  CRASH_IF_FALSE(openHandleScopesBefore == gcRootStackScopes_.size());
-  if (!lastException_.isEmpty()) {
-    runtime_.setThrownValue(lastException_);
-    lastException_ = EmptyHermesValue;
-  }
-}
-
-napi_status NapiEnvironment::callFinalizer(
-    napi_finalize finalizeCallback,
-    void *nativeData,
-    void *finalizeHint) noexcept {
-  return handleExceptions([&] {
-    callIntoModule([&](NapiEnvironment *env) {
-      finalizeCallback(napiEnv(env), nativeData, finalizeHint);
-    });
-    return napi_ok;
-  });
-}
-
-/*static*/ bool NapiEnvironment::isHermesBytecode(
-    const uint8_t *data,
-    size_t len) noexcept {
-  return hbc::BCProviderFromBuffer::isBytecodeStream(
-      llvh::ArrayRef<uint8_t>(data, len));
-}
-
-napi_status NapiEnvironment::runReferenceFinalizers() noexcept {
-  if (!isRunningFinalizers_) {
-    isRunningFinalizers_ = true;
-    Reference::finalizeAll(*this, finalizerQueue_);
-    isRunningFinalizers_ = false;
-  }
-  return napi_ok;
 }
 
 } // namespace
