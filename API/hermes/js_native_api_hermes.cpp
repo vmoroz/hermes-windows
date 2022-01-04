@@ -66,6 +66,11 @@
   RETURN_STATUS_IF_FALSE_WITH_MESSAGE(            \
       condition, status, "Condition is false: " #condition)
 
+// Check conditions and return napi_generic_failure if it is false.
+#define RETURN_FAILURE_IF_FALSE(condition) \
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE(     \
+      condition, napi_generic_failure, "Condition is false: " #condition)
+
 // Check that the argument is not nullptr.
 #define CHECK_ARG(arg)                 \
   RETURN_STATUS_IF_FALSE_WITH_MESSAGE( \
@@ -116,7 +121,7 @@ template <class T>
 class StableAddressStack;
 class StringBuilder;
 
-// Forward declarations for Reference-related classes
+// Forward declarations of Reference-related classes
 class AtomicRefCountReference;
 class ComplexReference;
 template <class TBaseReference>
@@ -415,12 +420,12 @@ class NapiEnvironment final {
   //---------------------------------------------------------------------------
  public:
   template <class... TArgs>
-  napi_status setLastError(napi_status errorCode, TArgs &&...args) noexcept;
+  napi_status setLastError(napi_status status, TArgs &&...args) noexcept;
+  template <class... TArgs>
+  napi_status genericFailure(TArgs &&...args) noexcept;
   napi_status clearLastError() noexcept;
   napi_status getLastErrorInfo(
       const napi_extended_error_info **result) noexcept;
-
-  napi_status genericFailure(const char *message) noexcept;
 
   napi_status checkHermesStatus(
       vm::ExecutionStatus hermesStatus,
@@ -2241,7 +2246,7 @@ NapiEnvironment::~NapiEnvironment() {
 
 template <class... TArgs>
 napi_status NapiEnvironment::setLastError(
-    napi_status errorCode,
+    napi_status status,
     TArgs &&...args) noexcept {
   // Warning: Keep in-sync with napi_status enum
   static constexpr const char *errorMessages[] = {
@@ -2278,19 +2283,24 @@ napi_status NapiEnvironment::setLastError(
       size(errorMessages) == lastStatus + 1,
       "Count of error messages must match count of error values");
 
-  if (errorCode < napi_ok || errorCode >= lastStatus) {
-    errorCode = napi_generic_failure;
+  if (status < napi_ok || status >= lastStatus) {
+    status = napi_generic_failure;
   }
 
   lastErrorMessage_.clear();
   StringBuilder sb{StringBuilder::AdoptString, std::move(lastErrorMessage_)};
-  sb.append(errorMessages[errorCode]);
+  sb.append(errorMessages[status]);
   if (sizeof...(args) > 0) {
     sb.append(": ", std::forward<TArgs>(args)...);
   }
   lastErrorMessage_ = std::move(sb.str());
-  lastError_ = {lastErrorMessage_.c_str(), 0, 0, errorCode};
-  return errorCode;
+  lastError_ = {lastErrorMessage_.c_str(), 0, 0, status};
+  return status;
+}
+
+template <class... TArgs>
+napi_status NapiEnvironment::genericFailure(TArgs &&...args) noexcept {
+  return setLastError(napi_generic_failure, std::forward<TArgs>(args)...);
 }
 
 napi_status NapiEnvironment::clearLastError() noexcept {
@@ -2304,11 +2314,6 @@ napi_status NapiEnvironment::getLastErrorInfo(
   CHECK_ARG(result);
   *result = &lastError_;
   return napi_ok;
-}
-
-napi_status NapiEnvironment::genericFailure(const char * /*message*/) noexcept {
-  // TODO: set result message
-  return napi_generic_failure;
 }
 
 napi_status NapiEnvironment::checkHermesStatus(
@@ -2332,16 +2337,16 @@ napi_status NapiEnvironment::checkHermesStatus(
 
 template <class F>
 napi_status NapiEnvironment::handleExceptions(const F &f) noexcept {
-  napi_status status{};
   RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
   clearLastError();
+  napi_status status{};
   {
     vm::GCScope gcScope(&runtime_);
 #ifdef HERMESVM_EXCEPTION_ON_OOM
     try {
       status = f();
-    } catch (const vm::JSOutOfMemoryError &ex) {
-      return SetLastError(napi_generic_failure);
+    } catch (const vm::JSOutOfMemoryError &) {
+      return genericFailure("Out of memory");
     }
 #else // HERMESVM_EXCEPTION_ON_OOM
     status = f();
@@ -3619,8 +3624,7 @@ napi_status NapiEnvironment::callFunction(
     vm::Handle<vm::Callable> handle = makeHandle<vm::Callable>(func);
     if (argCount > std::numeric_limits<uint32_t>::max() ||
         !runtime_.checkAvailableStack((uint32_t)argCount)) {
-      return setLastError(
-          napi_generic_failure,
+      return genericFailure(
           "NapiEnvironment::callFunction: Unable to call function: stack overflow");
     }
 
@@ -3646,7 +3650,7 @@ napi_status NapiEnvironment::callFunction(
     CHECK_NAPI(checkHermesStatus(callRes));
 
     if (result) {
-      RETURN_STATUS_IF_FALSE(!callRes->get().isEmpty(), napi_generic_failure);
+      RETURN_FAILURE_IF_FALSE(!callRes->get().isEmpty());
       *result = addStackValue(callRes->get());
     }
     return clearLastError();
@@ -3671,8 +3675,7 @@ napi_status NapiEnvironment::newInstance(
 
     if (argc > std::numeric_limits<uint32_t>::max() ||
         !runtime_.checkAvailableStack((uint32_t)argc)) {
-      return setLastError(
-          napi_generic_failure,
+      return genericFailure(
           "NapiEnvironment::newInstance: Unable to call function: stack overflow");
     }
 
@@ -3992,7 +3995,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
         getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
     vm::JSArrayBuffer *tagBuffer =
         vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
-    RETURN_STATUS_IF_FALSE(tagBuffer, napi_generic_failure);
+    RETURN_FAILURE_IF_FALSE(tagBuffer != nullptr);
 
     const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
     const uint8_t *tagBufferData = tagBuffer->getDataBlock();
@@ -4091,7 +4094,7 @@ napi_status NapiEnvironment::getExternalValue(
         object, NapiPredefined::napi_externalValue, &externalNapiValue);
     if (status == napi_ok) {
       externalValue = getExternalValue(*phv(externalNapiValue));
-      RETURN_STATUS_IF_FALSE(externalValue, napi_generic_failure);
+      RETURN_FAILURE_IF_FALSE(externalValue != nullptr);
     } else if (ifNotFound == IfNotFound::ThenCreate) {
       vm::Handle<vm::DecoratedObject> decoratedObj =
           makeHandle(createExternal(nullptr, &externalValue));
@@ -4703,7 +4706,7 @@ napi_status NapiEnvironment::getTypedArrayInfo(
     } else if (vm::vmisa<vm::Float64Array>(array)) {
       *type = napi_float64_array;
     } else {
-      return setLastError(napi_generic_failure, "Unknown TypedArray type");
+      return genericFailure("Unknown TypedArray type");
     }
   }
 
@@ -5114,10 +5117,7 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
   // Construct the BC provider either from buffer or source.
   if (isBytecode) {
     if (sourceMapBuf) {
-      return setLastError(
-          napi_generic_failure,
-          0,
-          "Source map cannot be specified with bytecode");
+      return genericFailure("Source map cannot be specified with bytecode");
     }
     bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
         std::move(buffer));
@@ -5141,7 +5141,7 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
         // TODO: Implement
         //  LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
         //  errorStr.c_str());
-        return setLastError(napi_generic_failure);
+        return genericFailure();
         // TODO: throw std::runtime_error("Error parsing source map:" +
         // errorStr);
       }
@@ -5165,7 +5165,7 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
     //     os.str().c_str());
     //  throw jsi::JSINativeException(
     //     "Compiling JS failed: " + std::move(bcErr.second) + os.str());
-    return setLastError(napi_generic_failure);
+    return genericFailure();
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
@@ -6304,16 +6304,16 @@ napi_status __cdecl napi_create_bigint_int64(
     napi_env env,
     int64_t value,
     napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 napi_status __cdecl napi_create_bigint_uint64(
     napi_env env,
     uint64_t value,
     napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 napi_status __cdecl napi_create_bigint_words(
@@ -6322,8 +6322,8 @@ napi_status __cdecl napi_create_bigint_words(
     size_t word_count,
     const uint64_t *words,
     napi_value *result) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 napi_status __cdecl napi_get_value_bigint_int64(
@@ -6331,8 +6331,8 @@ napi_status __cdecl napi_get_value_bigint_int64(
     napi_value value,
     int64_t *result,
     bool *lossless) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 napi_status __cdecl napi_get_value_bigint_uint64(
@@ -6340,8 +6340,8 @@ napi_status __cdecl napi_get_value_bigint_uint64(
     napi_value value,
     uint64_t *result,
     bool *lossless) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 napi_status __cdecl napi_get_value_bigint_words(
@@ -6350,8 +6350,8 @@ napi_status __cdecl napi_get_value_bigint_words(
     int *sign_bit,
     size_t *word_count,
     uint64_t *words) {
-  // Not implemented in Hermes
-  return CHECKED_ENV(env)->setLastError(napi_generic_failure);
+  return CHECKED_ENV(env)->genericFailure(
+      "BigInt is not implemented by Hermes");
 }
 
 //-----------------------------------------------------------------------------
@@ -6472,15 +6472,15 @@ napi_status __cdecl napi_ext_env_unref(napi_env env) {
 napi_status __cdecl napi_ext_open_env_scope(
     napi_env env,
     napi_ext_env_scope *result) {
-  // TODO: implement
-  return napi_generic_failure;
+  return napi_open_handle_scope(
+      env, reinterpret_cast<napi_handle_scope *>(result));
 }
 
 napi_status __cdecl napi_ext_close_env_scope(
     napi_env env,
     napi_ext_env_scope scope) {
-  // TODO: implement
-  return napi_generic_failure;
+  return napi_close_handle_scope(
+      env, reinterpret_cast<napi_handle_scope>(scope));
 }
 
 napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
