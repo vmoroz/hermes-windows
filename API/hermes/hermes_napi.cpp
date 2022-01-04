@@ -456,6 +456,8 @@ class NapiEnvironment final {
   template <class F>
   napi_status handleExceptions(const F &f) noexcept;
 
+  napi_status checkPendingExceptions() noexcept;
+
   //-----------------------------------------------------------------------------
   // Getters for defined singletons
   //-----------------------------------------------------------------------------
@@ -2353,17 +2355,17 @@ napi_status NapiEnvironment::checkHermesStatus(
 
 template <class F>
 napi_status NapiEnvironment::handleExceptions(const F &f) noexcept {
-  RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
-  clearLastError();
-  napi_status status{};
+  CHECK_NAPI(checkPendingExceptions());
   {
     vm::GCScope gcScope(&runtime_);
-    status = f();
+    CHECK_NAPI(f());
   }
-  if (status == napi_ok) {
-    CHECK_NAPI(runReferenceFinalizers());
-  }
-  return status;
+  return runReferenceFinalizers();
+}
+
+napi_status NapiEnvironment::checkPendingExceptions() noexcept {
+  RETURN_STATUS_IF_FALSE(lastException_.isEmpty(), napi_pending_exception);
+  return clearLastError();
 }
 
 //-----------------------------------------------------------------------------
