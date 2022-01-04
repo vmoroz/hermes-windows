@@ -30,7 +30,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <vector>
 
 //=============================================================================
 // Macros
@@ -108,7 +107,6 @@ namespace {
 class CallbackInfo;
 class ExternalBuffer;
 class ExternalValue;
-class HermesBuffer;
 class HermesPreparedJavaScript;
 class HostFunctionContext;
 class NapiEnvironment;
@@ -993,13 +991,13 @@ class NapiEnvironment final {
       napi_ext_buffer_callback bufferCallback,
       void *bufferHint) noexcept;
   napi_status runScriptWithSourceMap(
-      std::unique_ptr<HermesBuffer> script,
-      std::unique_ptr<HermesBuffer> sourceMap,
+      std::unique_ptr<hermes::Buffer> script,
+      std::unique_ptr<hermes::Buffer> sourceMap,
       const char *sourceURL,
       napi_value *result) noexcept;
   napi_status prepareScriptWithSourceMap(
-      std::unique_ptr<HermesBuffer> script,
-      std::unique_ptr<HermesBuffer> sourceMap,
+      std::unique_ptr<hermes::Buffer> script,
+      std::unique_ptr<hermes::Buffer> sourceMap,
       const char *sourceURL,
       napi_ext_prepared_script *preparedScript) noexcept;
   napi_status runPreparedScript(
@@ -1166,76 +1164,6 @@ class ExternalValue final : public vm::DecoratedObject::Decoration {
   LinkedList<Finalizer> finalizers_;
 };
 
-// hermes::Buffer implementation that wraps napi_ext_buffer.
-class HermesBuffer final : public hermes::Buffer {
- public:
-  static std::unique_ptr<HermesBuffer> make(
-      napi_env env,
-      napi_ext_buffer buffer,
-      napi_ext_get_buffer_range getBufferRange,
-      napi_ext_delete_buffer deleteBuffer) noexcept {
-    return buffer ? std::make_unique<HermesBuffer>(
-                        env, buffer, getBufferRange, deleteBuffer)
-                  : nullptr;
-  }
-
-  HermesBuffer(
-      napi_env env,
-      napi_ext_buffer buffer,
-      napi_ext_get_buffer_range getBufferRange,
-      napi_ext_delete_buffer deleteBuffer) noexcept
-      : env_(env), buffer_(buffer), deleteBuffer_(deleteBuffer) {
-    getBufferRange(env, buffer, &data_, &size_);
-  }
-
-  ~HermesBuffer() noexcept {
-    if (buffer_ && deleteBuffer_) {
-      deleteBuffer_(env_, buffer_);
-    }
-  }
-
- private:
-  napi_env env_;
-  napi_ext_buffer buffer_;
-  napi_ext_delete_buffer deleteBuffer_;
-};
-
-// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
-class HermesPreparedJavaScript final {
- public:
-  explicit HermesPreparedJavaScript(
-      std::unique_ptr<hbc::BCProvider> bcProvider,
-      vm::RuntimeModuleFlags runtimeFlags,
-      std::string sourceURL,
-      bool isBytecode)
-      : bcProvider_(std::move(bcProvider)),
-        runtimeFlags_(runtimeFlags),
-        sourceURL_(std::move(sourceURL)),
-        isBytecode_(isBytecode) {}
-
-  std::shared_ptr<hbc::BCProvider> bytecodeProvider() const {
-    return bcProvider_;
-  }
-
-  vm::RuntimeModuleFlags runtimeFlags() const {
-    return runtimeFlags_;
-  }
-
-  const std::string &sourceURL() const {
-    return sourceURL_;
-  }
-
-  bool isBytecode() const {
-    return isBytecode_;
-  }
-
- private:
-  std::shared_ptr<hbc::BCProvider> bcProvider_;
-  vm::RuntimeModuleFlags runtimeFlags_;
-  std::string sourceURL_;
-  bool isBytecode_{false};
-};
-
 class HostFunctionContext final {
  public:
   HostFunctionContext(
@@ -1317,10 +1245,10 @@ class CallbackInfo final {
 // 1. Strong reference - it can wrap up object of any type
 //   a. Ref count maintains the reference lifetime. When it reaches zero it is
 //   removed.
-// 2. Weak reference - it can only wrap up objects
+// 2. Weak reference - it can wrap up only objects
 //   a. Ref count maintains the lifetime of the reference. When it reaches zero
 //   it is removed.
-// 3. Combined reference -
+// 3. Combined reference - it can wrap up only objects
 //   a. Ref count only for strong references. Zero converts it to a weak ref.
 //   Removal is explicit if external code holds a reference.
 
@@ -1910,6 +1838,7 @@ class FinalizingComplexReference : public ComplexReference, public Finalizer {
   bool deleteSelf_{false};
 };
 
+// Hold custom data associated with the NapiEnvironment.
 class InstanceData : public Reference {
  public:
   static napi_status create(
@@ -1927,6 +1856,7 @@ class InstanceData : public Reference {
   }
 };
 
+// Sorted list of unique HermesValues.
 template <>
 class OrderedSet<vm::HermesValue> final {
  public:
@@ -1972,6 +1902,7 @@ class OrderedSet<vm::HermesValue> final {
   Compare *compare_{};
 };
 
+// Sorted list of unique uint32_t.
 template <>
 class OrderedSet<uint32_t> final {
  public:
@@ -1988,8 +1919,10 @@ class OrderedSet<uint32_t> final {
   llvh::SmallVector<uint32_t, 16> items_;
 };
 
+// Helper class to build a string.
 class StringBuilder final {
  public:
+  // To adopt an existing string instead of creating a new one.
   class AdoptStringTag {};
   constexpr static AdoptStringTag AdoptString{};
 
@@ -2035,8 +1968,21 @@ class StringBuilder final {
   llvh::raw_string_ostream stream_;
 };
 
-class ExternalBuffer final : public Buffer {
+// The external buffer that implements hermes::Buffer
+class ExternalBuffer final : public hermes::Buffer {
  public:
+  static std::unique_ptr<ExternalBuffer> make(
+      napi_env env,
+      const napi_ext_buffer &buffer) noexcept {
+    return buffer.data ? std::make_unique<ExternalBuffer>(
+                             *reinterpret_cast<NapiEnvironment*>(env),
+                             buffer.data,
+                             buffer.byte_length,
+                             buffer.finalize_cb,
+                             buffer.finalize_hint)
+                       : nullptr;
+  }
+
   ExternalBuffer(
       NapiEnvironment &env,
       void *externalData,
@@ -2058,6 +2004,42 @@ class ExternalBuffer final : public Buffer {
  private:
   NapiEnvironment &env_;
   FinalizingAnonymousReference *finalizer_;
+};
+
+// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
+class HermesPreparedJavaScript final {
+ public:
+  explicit HermesPreparedJavaScript(
+      std::unique_ptr<hbc::BCProvider> bcProvider,
+      vm::RuntimeModuleFlags runtimeFlags,
+      std::string sourceURL,
+      bool isBytecode)
+      : bcProvider_(std::move(bcProvider)),
+        runtimeFlags_(runtimeFlags),
+        sourceURL_(std::move(sourceURL)),
+        isBytecode_(isBytecode) {}
+
+  std::shared_ptr<hbc::BCProvider> bytecodeProvider() const {
+    return bcProvider_;
+  }
+
+  vm::RuntimeModuleFlags runtimeFlags() const {
+    return runtimeFlags_;
+  }
+
+  const std::string &sourceURL() const {
+    return sourceURL_;
+  }
+
+  bool isBytecode() const {
+    return isBytecode_;
+  }
+
+ private:
+  std::shared_ptr<hbc::BCProvider> bcProvider_;
+  vm::RuntimeModuleFlags runtimeFlags_;
+  std::string sourceURL_;
+  bool isBytecode_{false};
 };
 
 // Max size of the runtime's register stack.
@@ -4327,31 +4309,19 @@ napi_status NapiEnvironment::runScript(
     napi_value *result) noexcept {
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
-  std::unique_ptr<std::vector<uint8_t>> buffer =
-      std::make_unique<std::vector<uint8_t>>();
-  buffer->assign(sourceSize + 1, '\0');
-  CHECK_NAPI(getValueStringUTF8(
-      source,
-      reinterpret_cast<char *>(buffer->data()),
-      sourceSize + 1,
-      nullptr));
+  std::unique_ptr<char[]> buffer =
+      std::unique_ptr<char[]>(new char[sourceSize + 1]);
+  CHECK_NAPI(getValueStringUTF8(source, buffer.get(), sourceSize + 1, nullptr));
   return runScriptWithSourceMap(
-      HermesBuffer::make(
+      ExternalBuffer::make(
           napiEnv(this),
-          reinterpret_cast<napi_ext_buffer>(buffer.release()),
-          [](napi_env /*env*/,
-             napi_ext_buffer buffer,
-             const uint8_t **buffer_start,
-             size_t *buffer_length) {
-            std::vector<uint8_t> *buf =
-                reinterpret_cast<std::vector<uint8_t> *>(buffer);
-            *buffer_start = buf->data();
-            *buffer_length = buf->size() - 1;
-          },
-          [](napi_env /*env*/, napi_ext_buffer buffer) {
-            std::unique_ptr<std::vector<uint8_t>> buf(
-                reinterpret_cast<std::vector<uint8_t> *>(buffer));
-          }),
+          napi_ext_buffer{
+              buffer.release(),
+              sourceSize + 1,
+              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
+                std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
+              },
+              nullptr}),
       nullptr,
       sourceURL,
       result);
@@ -4363,27 +4333,20 @@ napi_status NapiEnvironment::runSerializedScript(
     napi_value /*source*/,
     const char *sourceURL,
     napi_value *result) noexcept {
-  std::unique_ptr<std::vector<uint8_t>> bufferCopy =
-      std::make_unique<std::vector<uint8_t>>();
-  bufferCopy->assign(bufferLength, '\0');
-  std::copy(buffer, buffer + bufferLength, bufferCopy->data());
+  std::unique_ptr<uint8_t[]> bufferCopy =
+      std::unique_ptr<uint8_t[]>(new uint8_t[bufferLength]);
+  std::copy(buffer, buffer + bufferLength, bufferCopy.get());
   return runScriptWithSourceMap(
-      HermesBuffer::make(
+      ExternalBuffer::make(
           napiEnv(this),
-          reinterpret_cast<napi_ext_buffer>(bufferCopy.release()),
-          [](napi_env /*env*/,
-             napi_ext_buffer buffer,
-             const uint8_t **buffer_start,
-             size_t *buffer_length) {
-            std::vector<uint8_t> *buf =
-                reinterpret_cast<std::vector<uint8_t> *>(buffer);
-            *buffer_start = buf->data();
-            *buffer_length = buf->size();
-          },
-          [](napi_env /*env*/, napi_ext_buffer buffer) {
-            std::unique_ptr<std::vector<uint8_t>> buf(
-                reinterpret_cast<std::vector<uint8_t> *>(buffer));
-          }),
+          napi_ext_buffer{
+              bufferCopy.release(),
+              bufferLength,
+              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
+                std::unique_ptr<uint8_t[]> buf(
+                    reinterpret_cast<uint8_t *>(data));
+              },
+              nullptr}),
       nullptr,
       sourceURL,
       result);
@@ -4396,32 +4359,20 @@ napi_status NapiEnvironment::serializeScript(
     void *bufferHint) noexcept {
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
-  std::unique_ptr<std::vector<uint8_t>> buffer =
-      std::make_unique<std::vector<uint8_t>>();
-  buffer->assign(sourceSize + 1, '\0');
-  CHECK_NAPI(getValueStringUTF8(
-      source,
-      reinterpret_cast<char *>(buffer->data()),
-      sourceSize + 1,
-      nullptr));
+  std::unique_ptr<char[]> buffer =
+      std::unique_ptr<char[]>(new char[sourceSize + 1]);
+  CHECK_NAPI(getValueStringUTF8(source, buffer.get(), sourceSize + 1, nullptr));
   napi_ext_prepared_script preparedScript{};
   CHECK_NAPI(prepareScriptWithSourceMap(
-      HermesBuffer::make(
+      ExternalBuffer::make(
           napiEnv(this),
-          reinterpret_cast<napi_ext_buffer>(buffer.release()),
-          [](napi_env /*env*/,
-             napi_ext_buffer buffer,
-             const uint8_t **buffer_start,
-             size_t *buffer_length) {
-            std::vector<uint8_t> *buf =
-                reinterpret_cast<std::vector<uint8_t> *>(buffer);
-            *buffer_start = buf->data();
-            *buffer_length = buf->size() - 1;
-          },
-          [](napi_env /*env*/, napi_ext_buffer buffer) {
-            std::unique_ptr<std::vector<uint8_t>> buf(
-                reinterpret_cast<std::vector<uint8_t> *>(buffer));
-          }),
+          napi_ext_buffer{
+              buffer.release(),
+              sourceSize + 1,
+              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
+                std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
+              },
+              nullptr}),
       nullptr,
       sourceURL,
       &preparedScript));
@@ -4429,8 +4380,8 @@ napi_status NapiEnvironment::serializeScript(
 }
 
 napi_status NapiEnvironment::runScriptWithSourceMap(
-    std::unique_ptr<HermesBuffer> script,
-    std::unique_ptr<HermesBuffer> sourceMap,
+    std::unique_ptr<hermes::Buffer> script,
+    std::unique_ptr<hermes::Buffer> sourceMap,
     const char *sourceURL,
     napi_value *result) noexcept {
   return handleExceptions([&] {
@@ -4442,8 +4393,8 @@ napi_status NapiEnvironment::runScriptWithSourceMap(
 }
 
 napi_status NapiEnvironment::prepareScriptWithSourceMap(
-    std::unique_ptr<HermesBuffer> buffer,
-    std::unique_ptr<HermesBuffer> sourceMapBuf,
+    std::unique_ptr<hermes::Buffer> buffer,
+    std::unique_ptr<hermes::Buffer> sourceMapBuf,
     const char *sourceURL,
     napi_ext_prepared_script *preparedScript) noexcept {
   std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
@@ -6575,18 +6526,12 @@ napi_status __cdecl napi_ext_serialize_script(
 napi_status __cdecl napi_ext_run_script_with_source_map(
     napi_env env,
     napi_ext_buffer script,
-    napi_ext_get_buffer_range get_script_range,
-    napi_ext_delete_buffer delete_script,
     napi_ext_buffer source_map,
-    napi_ext_get_buffer_range get_source_map_range,
-    napi_ext_delete_buffer delete_source_map,
     const char *source_url,
     napi_value *result) {
   return CHECKED_ENV(env)->runScriptWithSourceMap(
-      hermes::napi::HermesBuffer::make(
-          env, script, get_script_range, delete_script),
-      hermes::napi::HermesBuffer::make(
-          env, source_map, get_source_map_range, delete_source_map),
+      hermes::napi::ExternalBuffer::make(env, script),
+      hermes::napi::ExternalBuffer::make(env, source_map),
       source_url,
       result);
 }
@@ -6594,18 +6539,12 @@ napi_status __cdecl napi_ext_run_script_with_source_map(
 napi_status __cdecl napi_ext_prepare_script_with_source_map(
     napi_env env,
     napi_ext_buffer script,
-    napi_ext_get_buffer_range get_script_range,
-    napi_ext_delete_buffer delete_script,
     napi_ext_buffer source_map,
-    napi_ext_get_buffer_range get_source_map_range,
-    napi_ext_delete_buffer delete_source_map,
     const char *source_url,
     napi_ext_prepared_script *prepared_script) {
   return CHECKED_ENV(env)->prepareScriptWithSourceMap(
-      hermes::napi::HermesBuffer::make(
-          env, script, get_script_range, delete_script),
-      hermes::napi::HermesBuffer::make(
-          env, source_map, get_source_map_range, delete_source_map),
+      hermes::napi::ExternalBuffer::make(env, script),
+      hermes::napi::ExternalBuffer::make(env, source_map),
       source_url,
       prepared_script);
 }
