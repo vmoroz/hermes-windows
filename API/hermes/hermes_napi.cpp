@@ -5100,10 +5100,6 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
   runtimeFlags.persistent = true;
 
   bool isBytecode = isHermesBytecode(buffer->data(), buffer->size());
-#ifdef HERMESVM_PLATFORM_LOGGING
-  hermesLog(
-      "HermesVM", "Prepare JS on %s.", isBytecode ? "bytecode" : "source");
-#endif
   // Save the first few bytes of the buffer so that we can later append them
   // to any error message.
   uint8_t bufPrefix[16];
@@ -5133,13 +5129,8 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
       diag.installInto(sm);
       sourceMap = SourceMapParser::parse(mbref, sm);
       if (!sourceMap) {
-        std::string errorStr = diag.getErrorString();
-        // TODO: Implement
-        //  LOG_EXCEPTION_CAUSE("Error parsing source map: %s",
-        //  errorStr.c_str());
-        return GENERIC_FAILURE();
-        // TODO: throw std::runtime_error("Error parsing source map:" +
-        // errorStr);
+        return GENERIC_FAILURE(
+            "Error parsing source map: ", diag.getErrorString());
       }
     }
     bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
@@ -5153,15 +5144,10 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
     std::string storage;
     llvh::raw_string_ostream os(storage);
     os << " Buffer size " << bufSize << " starts with: ";
-    for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
+    for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i) {
       os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
-    // TODO: Implement
-    // LOG_EXCEPTION_CAUSE(
-    //     "Compiling JS failed: %s, %s", bcErr.second.c_str(),
-    //     os.str().c_str());
-    //  throw jsi::JSINativeException(
-    //     "Compiling JS failed: " + std::move(bcErr.second) + os.str());
-    return GENERIC_FAILURE();
+    }
+    return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, os.str());
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
