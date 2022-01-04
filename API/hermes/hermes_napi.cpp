@@ -8,7 +8,7 @@
 
 #define NAPI_EXPERIMENTAL
 
-#include "hermes_napi.h"
+#include "napi/hermes_napi.h"
 
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/DebuggerAPI.h"

@@ -14,12 +14,12 @@ file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 
 add_hermes_library(hermesapi
         ${api_sources}
-        LINK_LIBS jsi hermesVMRuntime)
+        LINK_LIBS jsi hermesNapi hermesVMRuntime)
 target_include_directories(hermesapi PUBLIC ..)
 
 add_hermes_library(hermesapiLean
         ${api_sources}
-        LINK_LIBS jsi hermesVMRuntimeLean)
+        LINK_LIBS jsi hermesNapi hermesVMRuntimeLean)
 target_include_directories(hermesapiLean PUBLIC ..)
 
 add_hermes_library(synthTrace hermes_tracing.cpp SynthTrace.cpp TracingRuntime.cpp
@@ -56,6 +56,7 @@ endif()
 
 target_link_libraries(libhermes
   jsi
+  hermesNapi
   ${LIBHERMES_VM_DEP}
   # Linker flags
   ${OPTIONAL_GC_SECTIONS}
