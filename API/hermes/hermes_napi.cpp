@@ -852,7 +852,7 @@ class NapiEnvironment final {
   void pushOrderedSet(OrderedSet<vm::HermesValue> &set) noexcept;
   void popOrderedSet() noexcept;
 
-  napi_value addStackValue(vm::HermesValue value) noexcept;
+  napi_value addGCRootStackValue(vm::HermesValue value) noexcept;
 
   vm::WeakRoot<vm::JSObject> createWeakRoot(vm::JSObject *object) noexcept;
   const vm::PinnedHermesValue &lockWeakObject(
@@ -1074,6 +1074,9 @@ class NapiEnvironment final {
   napi_status setOptionalResult(T &&value, TResult *result) noexcept;
   template <class T>
   napi_status setOptionalResult(T &&value, std::nullptr_t) noexcept;
+  napi_status setPredefinedResult(
+      const vm::PinnedHermesValue *value,
+      napi_value *result) noexcept;
   template <class T>
   napi_status setResultUnsafe(T &&value, T *result) noexcept;
   napi_status setResultUnsafe(
@@ -2373,26 +2376,26 @@ napi_status NapiEnvironment::checkPendingExceptions() noexcept {
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
-  return setResult(
-      napiValue(runtime_.getUndefinedValue().unsafeGetPinnedHermesValue()),
+  return setPredefinedResult(
+      runtime_.getUndefinedValue().unsafeGetPinnedHermesValue(),
       result);
 }
 
 napi_status NapiEnvironment::getNull(napi_value *result) noexcept {
-  return setResult(
-      napiValue(runtime_.getNullValue().unsafeGetPinnedHermesValue()), result);
+  return setPredefinedResult(
+      runtime_.getNullValue().unsafeGetPinnedHermesValue(), result);
 }
 
 napi_status NapiEnvironment::getGlobal(napi_value *result) noexcept {
-  return setResult(
-      napiValue(runtime_.getGlobal().unsafeGetPinnedHermesValue()), result);
+  return setPredefinedResult(
+      runtime_.getGlobal().unsafeGetPinnedHermesValue(), result);
 }
 
 napi_status NapiEnvironment::getBoolean(
     bool value,
     napi_value *result) noexcept {
-  return setResult(
-      napiValue(runtime_.getBoolValue(value).unsafeGetPinnedHermesValue()),
+  return setPredefinedResult(
+      runtime_.getBoolValue(value).unsafeGetPinnedHermesValue(),
       result);
 }
 
@@ -2581,7 +2584,7 @@ napi_status NapiEnvironment::newFunction(
           /*paramCount:*/ 0);
   CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
   context.release();
-  *result = addStackValue(*funcRes);
+  *result = addGCRootStackValue(*funcRes);
   return clearLastError();
 }
 
@@ -3661,7 +3664,7 @@ napi_status NapiEnvironment::callFunction(
 
     if (result) {
       RETURN_FAILURE_IF_FALSE(!callRes->get().isEmpty());
-      *result = addStackValue(callRes->get());
+      *result = addGCRootStackValue(callRes->get());
     }
     return clearLastError();
   });
@@ -3832,7 +3835,8 @@ napi_status NapiEnvironment::defineClass(
     vm::Handle<vm::JSObject> classHandle = makeHandle<vm::JSObject>(*result);
     vm::Handle<vm::JSObject> prototypeHandle =
         makeHandle(vm::JSObject::create(&runtime_));
-    napi_value prototype = addStackValue(prototypeHandle.getHermesValue());
+    napi_value prototype =
+        addGCRootStackValue(prototypeHandle.getHermesValue());
     vm::PropertyFlags pf;
     pf.clear();
     pf.enumerable = 0;
@@ -4027,7 +4031,7 @@ napi_status NapiEnvironment::createExternal(
     CHECK_ARG(result);
     vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
         createExternal(nativeData, nullptr);
-    *result = addStackValue(decoratedObj.getHermesValue());
+    *result = addGCRootStackValue(decoratedObj.getHermesValue());
     if (finalizeCallback) {
       CHECK_NAPI(FinalizingAnonymousReference::create(
           *this,
@@ -4362,7 +4366,8 @@ void NapiEnvironment::popOrderedSet() noexcept {
   orderedSets_.pop_back();
 }
 
-napi_value NapiEnvironment::addStackValue(vm::HermesValue value) noexcept {
+napi_value NapiEnvironment::addGCRootStackValue(
+    vm::HermesValue value) noexcept {
   gcRootStack_.emplace(value);
   return napiValue(&gcRootStack_.top());
 }
@@ -4375,7 +4380,7 @@ vm::WeakRoot<vm::JSObject> NapiEnvironment::createWeakRoot(
 const vm::PinnedHermesValue &NapiEnvironment::lockWeakObject(
     vm::WeakRoot<vm::JSObject> &weakRoot) noexcept {
   if (vm::JSObject *ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
-    return *phv(addStackValue(vm::HermesValue::encodeObjectValue(ptr)));
+    return *phv(addGCRootStackValue(vm::HermesValue::encodeObjectValue(ptr)));
   }
   return getPredefined(NapiPredefined::undefined);
 }
@@ -4728,7 +4733,7 @@ napi_status NapiEnvironment::getTypedArrayInfo(
 
   if (arrayBuffer != nullptr) {
     *arrayBuffer = array->attached(&runtime_)
-        ? addStackValue(
+        ? addGCRootStackValue(
               vm::HermesValue::encodeObjectValue(array->getBuffer(&runtime_)))
         : (napi_value)&getPredefined(NapiPredefined::undefined);
   }
@@ -4795,7 +4800,7 @@ napi_status NapiEnvironment::getDataViewInfo(
 
   if (arrayBuffer != nullptr) {
     *arrayBuffer = view->attached(&runtime_)
-        ? addStackValue(view->getBuffer(&runtime_).getHermesValue())
+        ? addGCRootStackValue(view->getBuffer(&runtime_).getHermesValue())
         : (napi_value)&getPredefined(NapiPredefined::undefined);
   }
 
@@ -4842,8 +4847,8 @@ napi_status NapiEnvironment::createPromise(
     }
 
     vm::CallResult<vm::HermesValue> callback(const vm::NativeArgs &args) {
-      *resolve = env_->addStackValue(args.getArg(0));
-      *reject = env_->addStackValue(args.getArg(1));
+      *resolve = env_->addGCRootStackValue(args.getArg(0));
+      *reject = env_->addGCRootStackValue(args.getArg(1));
       return vm::HermesValue();
     }
 
@@ -4859,7 +4864,7 @@ napi_status NapiEnvironment::createPromise(
           &ExecutorData::callback,
           getPredefined(NapiPredefined::Promise).getSymbol(),
           2);
-  napi_value func = addStackValue(executorFunction.getHermesValue());
+  napi_value func = addGCRootStackValue(executorFunction.getHermesValue());
   return newInstance(promiseConstructor, 1, &func, promise);
 }
 
@@ -5341,6 +5346,13 @@ napi_status NapiEnvironment::setOptionalResult(
   return clearLastError();
 }
 
+napi_status NapiEnvironment::setPredefinedResult(
+    const vm::PinnedHermesValue *value,
+    napi_value *result) noexcept {
+  *result = napiValue(value);
+  return clearLastError();
+}
+
 template <class T>
 napi_status NapiEnvironment::setResultUnsafe(T &&value, T *result) noexcept {
   *result = std::forward<T>(value);
@@ -5350,7 +5362,7 @@ napi_status NapiEnvironment::setResultUnsafe(T &&value, T *result) noexcept {
 napi_status NapiEnvironment::setResultUnsafe(
     vm::HermesValue value,
     napi_value *result) noexcept {
-  *result = addStackValue(value);
+  *result = addGCRootStackValue(value);
   return clearLastError();
 }
 
