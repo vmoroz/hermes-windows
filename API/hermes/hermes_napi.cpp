@@ -132,6 +132,7 @@ class CallbackInfo;
 class EscapableHandleScope;
 class ExternalBuffer;
 class ExternalValue;
+class HandleScope;
 class HermesPreparedJavaScript;
 class HostFunctionContext;
 class NapiEnvironment;
@@ -493,7 +494,24 @@ class NapiEnvironment final {
       size_t length,
       napi_value *result) noexcept;
 
+  napi_status getUniqueStringRef(
+      const char *utf8,
+      size_t length,
+      napi_ext_ref *result) noexcept;
+  napi_status getUniqueStringRef(
+      napi_value strValue,
+      napi_ext_ref *result) noexcept;
+
+  napi_status createSymbolID(
+      const char *utf8,
+      size_t length,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
+  napi_status createSymbolID(
+      napi_value strValue,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
+
   napi_status createSymbol(napi_value description, napi_value *result) noexcept;
+
   napi_status createFunction(
       const char *utf8Name,
       size_t length,
@@ -505,13 +523,6 @@ class NapiEnvironment final {
       napi_callback callback,
       void *callbackData,
       napi_value *result) noexcept;
-  napi_status createSymbolID(
-      const char *utf8,
-      size_t length,
-      vm::MutableHandle<vm::SymbolID> *result) noexcept;
-  napi_status createSymbolID(
-      napi_value strValue,
-      vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
   napi_status createError(
       const vm::PinnedHermesValue &errorPrototype,
@@ -528,14 +539,6 @@ class NapiEnvironment final {
       napi_value code,
       napi_value message,
       napi_value *result) noexcept;
-
-  napi_status getUniqueStringUTF8Ref(
-      const char *utf8,
-      size_t length,
-      napi_ext_ref *result) noexcept;
-  napi_status getUniqueStringRef(
-      napi_value strValue,
-      napi_ext_ref *result) noexcept;
 
   //-----------------------------------------------------------------------------
   // Methods to get the native napi_value from Primitive type
@@ -1154,6 +1157,23 @@ class NapiEnvironment final {
       vm::HermesValue::encodeEmptyValue()};
 };
 
+// RAII class to open and close GC stack value scope.
+class HandleScope final {
+ public:
+  HandleScope(NapiEnvironment &env) noexcept : env_(env) {
+    CRASH_IF_FALSE(env_.openHandleScope(&scope_) == napi_ok);
+  }
+
+  ~HandleScope() noexcept {
+    CRASH_IF_FALSE(env_.closeHandleScope(scope_) == napi_ok);
+  }
+
+ private:
+  NapiEnvironment &env_;
+  napi_handle_scope scope_{};
+};
+
+// RAII class to open and close GC stack value scope.
 // Allow to escape one result value from the handle scope.
 class EscapableHandleScope final {
  public:
@@ -1475,7 +1495,7 @@ class StrongReference : public AtomicRefCountReference {
  public:
   static napi_status create(
       NapiEnvironment &env,
-      vm::PinnedHermesValue value,
+      vm::HermesValue value,
       StrongReference **result) noexcept {
     CHECK_ARG(result);
     *result = new StrongReference(value);
@@ -1497,7 +1517,7 @@ class StrongReference : public AtomicRefCountReference {
   }
 
  protected:
-  StrongReference(vm::PinnedHermesValue value) noexcept : value_(value) {}
+  StrongReference(vm::HermesValue value) noexcept : value_(value) {}
 
  private:
   vm::PinnedHermesValue value_;
@@ -2419,22 +2439,20 @@ napi_status NapiEnvironment::getBoolean(
 
 //-----------------------------------------------------------------------------
 // Methods to create Primitive types and Objects
+// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
   return setResult(vm::JSObject::create(&runtime_), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createArray(napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
   return setResult(
       vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
@@ -2444,7 +2462,6 @@ napi_status NapiEnvironment::createArray(
       result);
 }
 
-// [X] Matches NAPI for V8
 template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
 napi_status NapiEnvironment::createNumber(
     T value,
@@ -2453,7 +2470,6 @@ napi_status NapiEnvironment::createNumber(
       vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createStringASCII(
     const char *str,
     size_t length,
@@ -2465,7 +2481,6 @@ napi_status NapiEnvironment::createStringASCII(
       result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createStringLatin1(
     const char *str,
     size_t length,
@@ -2493,7 +2508,6 @@ napi_status NapiEnvironment::createStringLatin1(
       result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createStringUTF8(
     const char *str,
     size_t length,
@@ -2520,14 +2534,12 @@ napi_status NapiEnvironment::createStringUTF8(
       result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createStringUTF8(
     const char *str,
     napi_value *result) noexcept {
   return createStringUTF8(str, NAPI_AUTO_LENGTH, result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createStringUTF16(
     const char16_t *str,
     size_t length,
@@ -2547,7 +2559,48 @@ napi_status NapiEnvironment::createStringUTF16(
       result);
 }
 
-// [X] Matches NAPI for V8
+napi_status NapiEnvironment::getUniqueStringRef(
+    const char *utf8,
+    size_t length,
+    napi_ext_ref *result) noexcept {
+  CHECK_ARG(utf8);
+  HandleScope handleScope{*this};
+  napi_value strValue{};
+  CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
+  return getUniqueStringRef(strValue, result);
+}
+
+napi_status NapiEnvironment::getUniqueStringRef(
+    napi_value strValue,
+    napi_ext_ref *result) noexcept {
+  vm::GCScope scope{&runtime_};
+  vm::MutableHandle<vm::SymbolID> symbolHandle{&runtime_};
+  CHECK_NAPI(createSymbolID(strValue, &symbolHandle));
+  return StrongReference::create(
+      *this,
+      symbolHandle.getHermesValue(),
+      reinterpret_cast<StrongReference **>(result));
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    const char *utf8,
+    size_t length,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  HandleScope handleScope{*this};
+  napi_value strValue{};
+  CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
+  return createSymbolID(strValue, result);
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    napi_value strValue,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  CHECK_STRING_ARG(strValue);
+  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
+      &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
+  return setResult(std::move(res), result);
+}
+
 napi_status NapiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
@@ -2566,7 +2619,6 @@ napi_status NapiEnvironment::createSymbol(
       result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createFunction(
     const char *utf8Name,
     size_t length,
@@ -2575,7 +2627,6 @@ napi_status NapiEnvironment::createFunction(
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   CHECK_ARG(callback);
-  EscapableHandleScope handleScope{*this};
   vm::GCScope scope{&runtime_};
   vm::MutableHandle<vm::SymbolID> nameSymbolID{&runtime_};
   if (utf8Name != nullptr) {
@@ -2583,9 +2634,8 @@ napi_status NapiEnvironment::createFunction(
   } else {
     CHECK_NAPI(createSymbolID("hostFunction", NAPI_AUTO_LENGTH, &nameSymbolID));
   }
-  CHECK_NAPI(newFunction(nameSymbolID.get(), callback, callbackData, result));
   // TODO: Run finalizers
-  return handleScope.escape(result);
+  return newFunction(nameSymbolID.get(), callback, callbackData, result);
 }
 
 napi_status NapiEnvironment::newFunction(
@@ -2608,38 +2658,19 @@ napi_status NapiEnvironment::newFunction(
   return setResult(*funcRes, result);
 }
 
-napi_status NapiEnvironment::createSymbolID(
-    const char *utf8,
-    size_t length,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  napi_value strValue{};
-  CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
-  return createSymbolID(strValue, result);
-}
-
-napi_status NapiEnvironment::createSymbolID(
-    napi_value strValue,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  CHECK_STRING_ARG(strValue);
-  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
-      &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
-  return setResult(std::move(res), result);
-}
-
 napi_status NapiEnvironment::createError(
     const vm::PinnedHermesValue &errorPrototype,
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(message);
-    vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
-        &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
-    CHECK_NAPI(checkHermesStatus(
-        vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message))));
-    CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
-    return setResult(std::move(errorHandle), result);
-  });
+  CHECK_STRING_ARG(message);
+  vm::GCScope scope{&runtime_};
+  vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
+      &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
+  CHECK_NAPI(checkHermesStatus(
+      vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message))));
+  CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
+  return setResult(std::move(errorHandle), result);
 }
 
 napi_status NapiEnvironment::createError(
@@ -2661,33 +2692,6 @@ napi_status NapiEnvironment::createRangeError(
     napi_value message,
     napi_value *result) noexcept {
   return createError(runtime_.RangeErrorPrototype, code, message, result);
-}
-
-napi_status NapiEnvironment::getUniqueStringUTF8Ref(
-    const char *utf8,
-    size_t length,
-    napi_ext_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(utf8);
-    napi_value strValue;
-    CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
-    return getUniqueStringRef(strValue, result);
-  });
-}
-
-napi_status NapiEnvironment::getUniqueStringRef(
-    napi_value strValue,
-    napi_ext_ref *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(strValue);
-    vm::CallResult<vm::Handle<vm::SymbolID>> cr = vm::stringToSymbolID(
-        &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
-    CHECK_NAPI(checkHermesStatus(cr));
-    return StrongReference::create(
-        *this,
-        cr->getHermesValue(),
-        reinterpret_cast<StrongReference **>(result));
-  });
 }
 
 //-----------------------------------------------------------------------------
@@ -6522,7 +6526,7 @@ napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
     const char *str,
     size_t length,
     napi_ext_ref *result) {
-  return CHECKED_ENV(env)->getUniqueStringUTF8Ref(str, length, result);
+  return CHECKED_ENV(env)->getUniqueStringRef(str, length, result);
 }
 
 napi_status __cdecl napi_ext_get_unique_string_ref(
