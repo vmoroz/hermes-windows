@@ -1,3 +1,55 @@
+/*
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT license.
+ *
+ * Copyright notices for portions of code adapted from Hermes, Node.js, and V8
+ * projects:
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *
+ * Copyright Node.js contributors. All rights reserved.
+ * https://github.com/nodejs/node/blob/master/LICENSE
+ *
+ * Copyright 2011 the V8 project authors. All rights reserved.
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file.
+ * https://github.com/v8/v8/blob/main/LICENSE
+ */
+
+//
+// Implementation of Node-API for Hermes engine.
+//
+// The Node-API C functions are redirecting all calls to the NapiEnvironment
+// class which implements the API details.
+// The most notable parts of the implementation are:
+// - The NapiEnvironment class is ref-counted.
+// - It maintains local stack-based GC roots as gcRootStack_.
+//   - The gcRootStackScopes_ is used to control gcRootStack_ handle scopes.
+//   - The gcRootStack_ and gcRootStackScopes_ are instances of
+//     StableAddressStack to maintain stable address of returned napi_value and
+//     handle scopes.
+//   - napi_value is a pointer to the vm::PinnedHermesValue stored in
+//     gcRootStack_.
+// - The heap-based GC roots are in the gcRoots_ and finalizingGCRoots_.
+//   - gcRoots_ vs finalizingGCRoots_ is chosen based on whether the root needs
+//     finalizer call or not.
+//   - gcRoots_ and finalizingGCRoots_ are double-linked list.
+//   - All heap-based GC roots are stored as references - instances of classes
+//     derived from Reference class. There are many varieties of that class to
+//     accommodate different lifetime strategies and to optimize storage size.
+//   - napi_ref and napi_ext_ref are pointers to gcRoots_ and finalizingGCRoots_
+//     items.
+//   - Reference finalizers are run in JS thread by runReferenceFinalizers
+//     method which is called by setResultAndRunFinalizers from methods that may
+//     cause memory garbage collection.
+// - Each returned error status is backed up by the extended error message
+//   stored in lastError_ that can be retrived by napi_get_last_error_info.
+// - We use macros to handle error statuses. It is done to reduce extensive use
+//   of "if-return" statements, and to report failing expressions along with the
+//   file name and code line number.
+
 // TODO: Implement unit tests
 
 // TODO: Better native error handling
@@ -2124,12 +2176,6 @@ class HermesPreparedJavaScript final {
 // The code is adopted from V8 source code to match the NAPI for V8 behavior.
 // https://github.com/v8/v8/blob/main/src/numbers/conversions-inl.h
 // https://github.com/v8/v8/blob/main/src/base/numbers/double.h
-//
-// The original copyright notice for V8 code:
-// Copyright 2011 the V8 project authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-// https://github.com/v8/v8/blob/main/LICENSE
 class DoubleConversion final {
  public:
   // Implements most of https://tc39.github.io/ecma262/#sec-toint32.
