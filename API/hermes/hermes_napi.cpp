@@ -492,6 +492,10 @@ class NapiEnvironment final {
   napi_status
   createStringUTF8(const char *str, size_t length, napi_value *result) noexcept;
   napi_status createStringUTF8(const char *str, napi_value *result) noexcept;
+  napi_status convertUTF8ToUTF16(
+      const char *utf8,
+      size_t length,
+      std::u16string &out) noexcept;
   napi_status createStringUTF16(
       const char16_t *str,
       size_t length,
@@ -577,13 +581,6 @@ class NapiEnvironment final {
   napi_status coerceToNumber(napi_value value, napi_value *result) noexcept;
   napi_status coerceToObject(napi_value value, napi_value *result) noexcept;
   napi_status coerceToString(napi_value value, napi_value *result) noexcept;
-  static void convertUTF8ToUTF16(
-      const char *utf8,
-      size_t length,
-      std::u16string &out) noexcept;
-  vm::CallResult<vm::Handle<>> convertIndexToString(double value) noexcept;
-  vm::ExecutionStatus convertKeyNumbersToStrings(
-      vm::Handle<vm::JSArray> array) noexcept;
 
   //-----------------------------------------------------------------------------
   // Methods to work with Objects
@@ -607,6 +604,10 @@ class NapiEnvironment final {
       uint32_t length,
       napi_key_conversion keyConversion,
       napi_value *result) noexcept;
+  napi_status convertToStringKeys(vm::Handle<vm::JSArray> array) noexcept;
+  napi_status convertIndexToString(
+      double value,
+      vm::MutableHandle<> *result) noexcept;
   napi_status
   setProperty(napi_value object, napi_value key, napi_value value) noexcept;
   napi_status
@@ -1104,6 +1105,9 @@ class NapiEnvironment final {
   napi_status setResultUnsafe(
       vm::Handle<T> &&handle,
       vm::MutableHandle<T> *result) noexcept;
+  napi_status setResultUnsafe(
+      vm::HermesValue value,
+      vm::MutableHandle<> *result) noexcept;
   template <class T, class TResult>
   napi_status setResultUnsafe(
       vm::CallResult<T> &&value,
@@ -2028,14 +2032,13 @@ class StringBuilder final {
     return str().c_str();
   }
 
-  vm::CallResult<vm::Handle<>> makeStringHV(vm::Runtime &runtime) noexcept {
+  napi_status makeHVString(
+      NapiEnvironment &env,
+      vm::MutableHandle<> *result) noexcept {
     stream_.flush();
     vm::CallResult<vm::HermesValue> res = vm::StringPrimitive::createEfficient(
-        &runtime, llvh::makeArrayRef(str_.data(), str_.size()));
-    if (LLVM_UNLIKELY(res.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
-      return vm::ExecutionStatus::EXCEPTION;
-    }
-    return runtime.makeHandle(*res);
+        &env.runtime(), llvh::makeArrayRef(str_.data(), str_.size()));
+    return env.setResult(std::move(res), result);
   }
 
  private:
@@ -2628,8 +2631,7 @@ napi_status NapiEnvironment::createStringUTF8(
 
   vm::GCScope gcScope(&runtime_);
   std::u16string u16str;
-  // TODO: handle errors from convertUTF8ToUTF16
-  convertUTF8ToUTF16(str, length, u16str);
+  CHECK_NAPI(convertUTF8ToUTF16(str, length, u16str));
   return setResultAndRunFinalizers(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
       result);
@@ -2639,6 +2641,30 @@ napi_status NapiEnvironment::createStringUTF8(
     const char *str,
     napi_value *result) noexcept {
   return createStringUTF8(str, NAPI_AUTO_LENGTH, result);
+}
+
+napi_status NapiEnvironment::convertUTF8ToUTF16(
+    const char *utf8,
+    size_t length,
+    std::u16string &out) noexcept {
+  // length is the number of input bytes
+  out.resize(length);
+  const llvh::UTF8 *sourceStart = reinterpret_cast<const llvh::UTF8 *>(utf8);
+  const llvh::UTF8 *sourceEnd = sourceStart + length;
+  llvh::UTF16 *targetStart = reinterpret_cast<llvh::UTF16 *>(&out[0]);
+  llvh::UTF16 *targetEnd = targetStart + out.size();
+  llvh::ConversionResult convRes = ConvertUTF8toUTF16(
+      &sourceStart,
+      sourceEnd,
+      &targetStart,
+      targetEnd,
+      llvh::lenientConversion);
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE(
+      convRes != llvh::ConversionResult::targetExhausted,
+      napi_generic_failure,
+      "not enough space allocated for UTF16 conversion");
+  out.resize((char16_t *)targetStart - &out[0]);
+  return clearLastError();
 }
 
 napi_status NapiEnvironment::createStringUTF16(
@@ -2984,93 +3010,42 @@ napi_status NapiEnvironment::getValueStringUTF16(
 
 //-----------------------------------------------------------------------------
 // Methods to coerce values
+// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::coerceToBool(
     napi_value value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(value);
-    return setResult(vm::toBoolean(*phv(value)), result);
-  });
+  CHECK_ARG(value);
+  CHECK_NAPI(checkPendingExceptions());
+  return setResult(vm::toBoolean(*phv(value)), result);
 }
 
 napi_status NapiEnvironment::coerceToNumber(
     napi_value value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(value);
-    return setResult(vm::toNumber_RJS(&runtime_, makeHandle(value)), result);
-  });
+  CHECK_ARG(value);
+  CHECK_NAPI(checkPendingExceptions());
+  return setResultAndRunFinalizers(
+      vm::toNumber_RJS(&runtime_, makeHandle(value)), result);
 }
 
 napi_status NapiEnvironment::coerceToObject(
     napi_value value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(value);
-    return setResult(vm::toObject(&runtime_, makeHandle(value)), result);
-  });
+  CHECK_ARG(value);
+  CHECK_NAPI(checkPendingExceptions());
+  return setResultAndRunFinalizers(
+      vm::toObject(&runtime_, makeHandle(value)), result);
 }
 
 napi_status NapiEnvironment::coerceToString(
     napi_value value,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_ARG(value);
-    return setResult(vm::toString_RJS(&runtime_, makeHandle(value)), result);
-  });
-}
-
-/*static*/ void NapiEnvironment::convertUTF8ToUTF16(
-    const char *utf8,
-    size_t length,
-    std::u16string &out) noexcept {
-  // length is the number of input bytes
-  out.resize(length);
-  const llvh::UTF8 *sourceStart = reinterpret_cast<const llvh::UTF8 *>(utf8);
-  const llvh::UTF8 *sourceEnd = sourceStart + length;
-  llvh::UTF16 *targetStart = reinterpret_cast<llvh::UTF16 *>(&out[0]);
-  llvh::UTF16 *targetEnd = targetStart + out.size();
-  llvh::ConversionResult cRes;
-  cRes = ConvertUTF8toUTF16(
-      &sourceStart,
-      sourceEnd,
-      &targetStart,
-      targetEnd,
-      llvh::lenientConversion);
-  (void)cRes;
-  assert(
-      cRes != llvh::ConversionResult::targetExhausted &&
-      "not enough space allocated for UTF16 conversion");
-  out.resize((char16_t *)targetStart - &out[0]);
-}
-
-vm::CallResult<vm::Handle<>> NapiEnvironment::convertIndexToString(
-    double value) noexcept {
-  OptValue<uint32_t> index = doubleToArrayIndex(value);
-  if (LLVM_UNLIKELY(!index)) {
-    return runtime_.raiseRangeError("Index property is out of range");
-  }
-  return StringBuilder(*index).makeStringHV(runtime_);
-}
-
-vm::ExecutionStatus NapiEnvironment::convertKeyNumbersToStrings(
-    vm::Handle<vm::JSArray> array) noexcept {
-  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
-  for (size_t i = 0; i < length; ++i) {
-    vm::HermesValue key = array->at(&runtime_, i);
-    if (LLVM_UNLIKELY(key.isNumber())) {
-      vm::CallResult<vm::Handle<>> strKeyRes =
-          convertIndexToString(key.getNumber());
-      if (LLVM_UNLIKELY(
-              strKeyRes.getStatus() == vm::ExecutionStatus::EXCEPTION)) {
-        return vm::ExecutionStatus::EXCEPTION;
-      }
-      vm::JSArray::setElementAt(array, &runtime_, i, *strKeyRes);
-    }
-  }
-  return vm::ExecutionStatus::RETURNED;
+  CHECK_ARG(value);
+  CHECK_NAPI(checkPendingExceptions());
+  return setResultAndRunFinalizers(
+      vm::toString_RJS(&runtime_, makeHandle(value)), result);
 }
 
 //-----------------------------------------------------------------------------
@@ -3146,7 +3121,7 @@ napi_status NapiEnvironment::getAllPropertyNames(
               makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags);
       CHECK_NAPI(checkHermesStatus(ownKeysRes));
       if (keyConversion == napi_key_numbers_to_strings) {
-        CHECK_NAPI(checkHermesStatus(convertKeyNumbersToStrings(*ownKeysRes)));
+        CHECK_NAPI(convertToStringKeys(*ownKeysRes));
       }
       return setResult(std::move(*ownKeysRes), result);
     }
@@ -3294,13 +3269,11 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
   vm::Handle<vm::JSArray> array = *cr;
   if (keyConversion == napi_key_numbers_to_strings) {
     vm::GCScopeMarkerRAII marker{&runtime_};
+    vm::MutableHandle<> key{&runtime_};
     for (size_t i = 0; i < length; ++i) {
-      vm::Handle<> key = makeHandle(keyStorage->at(startIndex + i));
+      key = makeHandle(keyStorage->at(startIndex + i));
       if (key->isNumber()) {
-        vm::CallResult<vm::Handle<>> keyRes =
-            convertIndexToString(key->getNumber());
-        CHECK_NAPI(checkHermesStatus(keyRes));
-        key = *keyRes;
+        CHECK_NAPI(convertIndexToString(key->getNumber(), &key));
       }
       vm::JSArray::setElementAt(array, &runtime_, i, key);
       marker.flush();
@@ -3315,6 +3288,31 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
     }
   }
   return setResult(array.getHermesValue(), result);
+}
+
+napi_status NapiEnvironment::convertToStringKeys(
+    vm::Handle<vm::JSArray> array) noexcept {
+  vm::GCScopeMarkerRAII marker{&runtime_};
+  vm::MutableHandle<> strKey{&runtime_};
+  size_t length = vm::JSArray::getLength(array.get(), &runtime_);
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue key = array->at(&runtime_, i);
+    if (LLVM_UNLIKELY(key.isNumber())) {
+      CHECK_NAPI(convertIndexToString(key.getNumber(), &strKey));
+      vm::JSArray::setElementAt(array, &runtime_, i, strKey);
+      marker.flush();
+    }
+  }
+  return clearLastError();
+}
+
+napi_status NapiEnvironment::convertIndexToString(
+    double value,
+    vm::MutableHandle<> *result) noexcept {
+  OptValue<uint32_t> index = doubleToArrayIndex(value);
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE(
+      index.hasValue(), napi_generic_failure, "Index property is out of range");
+  return StringBuilder(*index).makeHVString(*this, result);
 }
 
 napi_status NapiEnvironment::setProperty(
@@ -5561,6 +5559,13 @@ napi_status NapiEnvironment::setResultUnsafe(
     vm::Handle<T> &&handle,
     vm::MutableHandle<T> *result) noexcept {
   *result = std::move(handle);
+  return clearLastError();
+}
+
+napi_status NapiEnvironment::setResultUnsafe(
+    vm::HermesValue value,
+    vm::MutableHandle<> *result) noexcept {
+  *result = value;
   return clearLastError();
 }
 
