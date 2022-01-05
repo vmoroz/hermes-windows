@@ -2603,7 +2603,6 @@ napi_status NapiEnvironment::newFunction(
           &HostFunctionContext::finalize,
           name,
           /*paramCount:*/ 0);
-  // TODO: remove extra use of .getStatus()
   CHECK_NAPI(checkHermesStatus(funcRes));
   context.release(); // the context is now owned by the func.
   return setResult(*funcRes, result);
@@ -3155,7 +3154,7 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
     napi_value *result) noexcept {
   vm::CallResult<vm::Handle<vm::JSArray>> cr =
       vm::JSArray::create(&runtime_, length, length);
-  CHECK_NAPI(checkHermesStatus(cr.getStatus()));
+  CHECK_NAPI(checkHermesStatus(cr));
   vm::Handle<vm::JSArray> array = *cr;
   if (keyConversion == napi_key_numbers_to_strings) {
     vm::GCScopeMarkerRAII marker{&runtime_};
@@ -5433,7 +5432,7 @@ napi_status NapiEnvironment::setResultUnsafe(
     vm::CallResult<T> &&value,
     napi_status onException,
     TResult *result) noexcept {
-  CHECK_NAPI(checkHermesStatus(value.getStatus(), onException));
+  CHECK_NAPI(checkHermesStatus(value, onException));
   return setResultUnsafe(std::move(*value), result);
 }
 
