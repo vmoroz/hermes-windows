@@ -184,6 +184,7 @@ namespace {
 
 class CallbackInfo;
 class DoubleConversion;
+template <class TGCScope>
 class EscapableHandleScope;
 class ExternalBuffer;
 class ExternalValue;
@@ -284,6 +285,9 @@ CallbackInfo *asCallbackInfo(napi_callback_info callbackInfo) noexcept;
 
 // Get object from HermesValue and cast it to JSObject
 vm::JSObject *getObjectUnsafe(const vm::HermesValue &value) noexcept;
+
+// Get object from napi_value and cast it to JSObject
+vm::JSObject *getObjectUnsafe(napi_value value) noexcept;
 
 // Copy ASCII input to UTF8 buffer. It is a convenience function to match the
 // convertUTF16ToUTF8WithReplacements signature when using std::copy.
@@ -1238,6 +1242,7 @@ class HandleScope final {
 
 // RAII class to open and close GC stack value scope.
 // Allow to escape one result value from the handle scope.
+template <class TGCScope = void>
 class EscapableHandleScope final {
  public:
   EscapableHandleScope(NapiEnvironment &env) noexcept : env_(env) {
@@ -1252,9 +1257,43 @@ class EscapableHandleScope final {
     return env_.escapeHandle(scope_, *value, value);
   }
 
+  template <class T>
+  napi_status setResult(T &&value, napi_value *result) noexcept {
+    CHECK_NAPI(env_.setResult(std::forward<T>(value), result));
+    return escape(result);
+  }
+
  private:
   NapiEnvironment &env_;
   napi_escapable_handle_scope scope_{};
+};
+
+template <>
+class EscapableHandleScope<vm::GCScope> final {
+ public:
+  EscapableHandleScope(NapiEnvironment &env) noexcept
+      : env_(env), gcScope_{&env.runtime()} {
+    CRASH_IF_FALSE(env_.openEscapableHandleScope(&scope_) == napi_ok);
+  }
+
+  ~EscapableHandleScope() noexcept {
+    CRASH_IF_FALSE(env_.closeEscapableHandleScope(scope_) == napi_ok);
+  }
+
+  napi_status escape(napi_value *value) noexcept {
+    return env_.escapeHandle(scope_, *value, value);
+  }
+
+  template <class T>
+  napi_status setResult(T &&value, napi_value *result) noexcept {
+    CHECK_NAPI(env_.setResultAndRunFinalizers(std::forward<T>(value), result));
+    return escape(result);
+  }
+
+ private:
+  NapiEnvironment &env_;
+  napi_escapable_handle_scope scope_{};
+  vm::GCScope gcScope_;
 };
 
 // Keep external data with an object.
@@ -2320,6 +2359,10 @@ vm::JSObject *getObjectUnsafe(const vm::HermesValue &value) noexcept {
   return reinterpret_cast<vm::JSObject *>(value.getObject());
 }
 
+vm::JSObject *getObjectUnsafe(napi_value value) noexcept {
+  return getObjectUnsafe(*phv(value));
+}
+
 size_t copyASCIIToUTF8(
     llvh::ArrayRef<char> input,
     char *buf,
@@ -3101,13 +3144,15 @@ napi_status NapiEnvironment::coerceToString(
 napi_status NapiEnvironment::getPrototype(
     napi_value object,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_OBJECT_ARG(object);
-    return setResult(
-        vm::JSObject::getPrototypeOf(
-            makeHandle<vm::JSObject>(object), &runtime_),
-        result);
-  });
+  CHECK_NAPI(checkPendingExceptions());
+  EscapableHandleScope<vm::GCScope> scope{*this};
+
+  napi_value objValue{};
+  CHECK_NAPI(coerceToObject(object, &objValue));
+  return scope.setResult(
+      vm::JSObject::getPrototypeOf(
+          vm::createPseudoHandle(getObjectUnsafe(objValue)), &runtime_),
+      result);
 }
 
 napi_status NapiEnvironment::getPropertyNames(
