@@ -6,6 +6,8 @@
 // TODO: adjustExternalMemory
 // TODO: see if finalizers can return error or exception
 
+// TODO: use modern C++ initialization syntax.
+
 #define NAPI_EXPERIMENTAL
 
 #include "napi/hermes_napi.h"
@@ -125,11 +127,11 @@ namespace napi {
 namespace {
 
 //=============================================================================
-// Forward declarations of classes and structs
+// Forward declaration of all classes.
 //=============================================================================
 
 class CallbackInfo;
-class Double;
+class DoubleConversion;
 class EscapableHandleScope;
 class ExternalBuffer;
 class ExternalValue;
@@ -143,7 +145,7 @@ template <class T>
 class StableAddressStack;
 class StringBuilder;
 
-// Forward declarations of Reference-related classes
+// Forward declaration of Reference-related classes.
 class AtomicRefCountReference;
 class ComplexReference;
 template <class TBaseReference>
@@ -554,17 +556,17 @@ class NapiEnvironment final {
   napi_status getValueStringLatin1(
       napi_value value,
       char *buf,
-      size_t bufsize,
+      size_t bufSize,
       size_t *result) noexcept;
   napi_status getValueStringUTF8(
       napi_value value,
       char *buf,
-      size_t bufsize,
+      size_t bufSize,
       size_t *result) noexcept;
   napi_status getValueStringUTF16(
       napi_value value,
       char16_t *buf,
-      size_t bufsize,
+      size_t bufSize,
       size_t *result) noexcept;
 
   //-----------------------------------------------------------------------------
@@ -2117,13 +2119,15 @@ class HermesPreparedJavaScript final {
 
 // Conversion routines from double to int32, uin32 and int64.
 // The code is adopted from V8 source code to match the NAPI for V8 behavior.
+// https://github.com/v8/v8/blob/main/src/numbers/conversions-inl.h
+// https://github.com/v8/v8/blob/main/src/base/numbers/double.h
 //
 // The original copyright notice for V8 code:
 // Copyright 2011 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 // https://github.com/v8/v8/blob/main/LICENSE
-class Double final {
+class DoubleConversion final {
  public:
   // Implements most of https://tc39.github.io/ecma262/#sec-toint32.
   static int32_t toInt32(double value) noexcept {
@@ -2158,6 +2162,14 @@ class Double final {
   }
 
   static int64_t toInt64(double value) {
+    // This code has the NAPI for V8 special behavior.
+    // The comment from the napi_get_value_int64 code:
+    // https://github.com/nodejs/node/blob/master/src/js_native_api_v8.cc
+    //
+    // v8::Value::IntegerValue() converts NaN, +Inf, and -Inf to INT64_MIN,
+    // inconsistent with v8::Value::Int32Value() which converts those values to
+    // 0. Special-case all non-finite values to match that behavior.
+    //
     if (!std::isnormal(value)) {
       return 0;
     }
@@ -2784,9 +2796,9 @@ napi_status NapiEnvironment::createRangeError(
 
 //-----------------------------------------------------------------------------
 // Methods to get the native napi_value from Primitive type
+// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::typeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
@@ -2824,7 +2836,6 @@ napi_status NapiEnvironment::typeOf(
   return clearLastError();
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::getNumberValue(
     napi_value value,
     double *result) noexcept {
@@ -2833,31 +2844,28 @@ napi_status NapiEnvironment::getNumberValue(
   return setResult(phv(value)->getDouble(), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::getNumberValue(
     napi_value value,
     int32_t *result) noexcept {
   CHECK_ARG(value);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
-  return setResult(Double::toInt32(phv(value)->getDouble()), result);
+  return setResult(DoubleConversion::toInt32(phv(value)->getDouble()), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::getNumberValue(
     napi_value value,
     uint32_t *result) noexcept {
   CHECK_ARG(value);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
-  return setResult(Double::toUint32(phv(value)->getDouble()), result);
+  return setResult(DoubleConversion::toUint32(phv(value)->getDouble()), result);
 }
 
-// [X] Matches NAPI for V8
 napi_status NapiEnvironment::getNumberValue(
     napi_value value,
     int64_t *result) noexcept {
   CHECK_ARG(value);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
-  return setResult(Double::toInt64(phv(value)->getDouble()), result);
+  return setResult(DoubleConversion::toInt64(phv(value)->getDouble()), result);
 }
 
 napi_status NapiEnvironment::getBoolValue(
@@ -2868,102 +2876,110 @@ napi_status NapiEnvironment::getBoolValue(
   return setResult(phv(value)->getBool(), result);
 }
 
+// Copies a JavaScript string into a LATIN-1 string buffer. The result is the
+// number of bytes (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufSize is insufficient, the string will be truncated and null terminated.
+// If buf is nullptr, this method returns the length of the string (in bytes)
+// via the result parameter.
+// The result argument is optional unless buf is nullptr.
 napi_status NapiEnvironment::getValueStringLatin1(
     napi_value value,
     char *buf,
-    size_t bufsize,
+    size_t bufSize,
     size_t *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(value);
-    vm::StringView view = vm::StringPrimitive::createStringView(
-        &runtime_, makeHandle<vm::StringPrimitive>(value));
+  CHECK_STRING_ARG(value);
+  vm::GCScope scope{&runtime_};
+  vm::StringView view = vm::StringPrimitive::createStringView(
+      &runtime_, makeHandle<vm::StringPrimitive>(value));
 
-    if (!buf) {
-      CHECK_ARG(result);
-      *result = view.length();
-    } else if (bufsize != 0) {
-      size_t copied = std::min(bufsize - 1, view.length());
-      for (auto cur = view.begin(), end = view.begin() + copied; cur < end;
-           ++cur) {
-        *buf++ = static_cast<char>(*cur);
-      }
-      *buf = '\0';
-      if (result != nullptr) {
-        *result = copied;
-      }
-    } else if (result != nullptr) {
-      *result = 0;
+  if (buf == nullptr) {
+    return setResult(view.length(), result);
+  } else if (bufSize != 0) {
+    size_t copied = std::min(bufSize - 1, view.length());
+    for (auto cur = view.begin(), end = view.begin() + copied; cur < end;
+         ++cur) {
+      *buf++ = static_cast<char>(*cur);
     }
-
-    return clearLastError();
-  });
+    *buf = '\0';
+    return setOptionalResult(std::move(copied), result);
+  } else {
+    return setOptionalResult(static_cast<size_t>(0), result);
+  }
 }
 
+// Copies a JavaScript string into a UTF-8 string buffer. The result is the
+// number of bytes (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufSize is insufficient, the string will be truncated and null terminated.
+// If buf is nullptr, this method returns the length of the string (in bytes)
+// via the result parameter.
+// The result argument is optional unless buf is nullptr.
 napi_status NapiEnvironment::getValueStringUTF8(
     napi_value value,
     char *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(value);
-    vm::StringView view = vm::StringPrimitive::createStringView(
-        &runtime_, makeHandle<vm::StringPrimitive>(value));
+  CHECK_STRING_ARG(value);
+  vm::GCScope scope{&runtime_};
+  vm::StringView view = vm::StringPrimitive::createStringView(
+      &runtime_, makeHandle<vm::StringPrimitive>(value));
 
-    if (!buf) {
-      CHECK_ARG(result);
-      *result = view.isASCII() || view.length() == 0
-          ? view.length()
-          : utf8LengthWithReplacements(
-                vm::UTF16Ref(view.castToChar16Ptr(), view.length()));
-    } else if (bufSize != 0) {
-      size_t copied = view.length() > 0 ? view.isASCII()
-              ? copyASCIIToUTF8(
-                    vm::ASCIIRef(view.castToCharPtr(), view.length()),
-                    buf,
-                    bufSize - 1)
-              : convertUTF16ToUTF8WithReplacements(
-                    vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
-                    buf,
-                    bufSize - 1)
-                                        : 0;
-      buf[copied] = '\0';
-      if (result != nullptr) {
-        *result = copied;
-      }
-    } else if (result != nullptr) {
-      *result = 0;
-    }
-
-    return clearLastError();
-  });
+  if (buf == nullptr) {
+    return setResult(
+        view.isASCII() || view.length() == 0
+            ? view.length()
+            : utf8LengthWithReplacements(
+                  vm::UTF16Ref(view.castToChar16Ptr(), view.length())),
+        result);
+  } else if (bufSize != 0) {
+    size_t copied = view.length() > 0 ? view.isASCII()
+            ? copyASCIIToUTF8(
+                  vm::ASCIIRef(view.castToCharPtr(), view.length()),
+                  buf,
+                  bufSize - 1)
+            : convertUTF16ToUTF8WithReplacements(
+                  vm::UTF16Ref(view.castToChar16Ptr(), view.length()),
+                  buf,
+                  bufSize - 1)
+                                      : 0;
+    buf[copied] = '\0';
+    return setOptionalResult(std::move(copied), result);
+  } else {
+    return setOptionalResult(static_cast<size_t>(0), result);
+  }
 }
 
+// Copies a JavaScript string into a UTF-16 string buffer. The result is the
+// number of 2-byte code units (excluding the null terminator) copied into buf.
+// A sufficient buffer size should be greater than the length of string,
+// reserving space for null terminator.
+// If bufSize is insufficient, the string will be truncated and null terminated.
+// If buf is nullptr, this method returns the length of the string (in 2-byte
+// code units) via the result parameter.
+// The result argument is optional unless buf is nullptr.
 napi_status NapiEnvironment::getValueStringUTF16(
     napi_value value,
     char16_t *buf,
-    size_t bufsize,
+    size_t bufSize,
     size_t *result) noexcept {
-  return handleExceptions([&] {
-    CHECK_STRING_ARG(value);
-    vm::StringView view = vm::StringPrimitive::createStringView(
-        &runtime_, makeHandle<vm::StringPrimitive>(value));
+  CHECK_STRING_ARG(value);
+  vm::GCScope scope{&runtime_};
+  vm::StringView view = vm::StringPrimitive::createStringView(
+      &runtime_, makeHandle<vm::StringPrimitive>(value));
 
-    if (!buf) {
-      CHECK_ARG(result);
-      *result = view.length();
-    } else if (bufsize != 0) {
-      size_t copied = std::min(bufsize - 1, view.length());
-      std::copy(view.begin(), view.begin() + copied, buf);
-      buf[copied] = '\0';
-      if (result != nullptr) {
-        *result = copied;
-      }
-    } else if (result != nullptr) {
-      *result = 0;
-    }
-
-    return clearLastError();
-  });
+  if (buf == nullptr) {
+    return setResult(view.length(), result);
+  } else if (bufSize != 0) {
+    size_t copied = std::min(bufSize - 1, view.length());
+    std::copy(view.begin(), view.begin() + copied, buf);
+    buf[copied] = '\0';
+    return setOptionalResult(std::move(copied), result);
+  } else {
+    return setOptionalResult(static_cast<size_t>(0), result);
+  }
 }
 
 //-----------------------------------------------------------------------------
