@@ -1078,6 +1078,8 @@ class NapiEnvironment final {
   napi_status setPredefinedResult(
       const vm::PinnedHermesValue *value,
       napi_value *result) noexcept;
+  template <class T, class TResult>
+  napi_status setResultAndRunFinalizers(T &&value, TResult *result) noexcept;
   template <class T>
   napi_status setResultUnsafe(T &&value, T *result) noexcept;
   napi_status setResultUnsafe(
@@ -2444,12 +2446,12 @@ napi_status NapiEnvironment::getBoolean(
 
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
-  return setResult(vm::JSObject::create(&runtime_), result);
+  return setResultAndRunFinalizers(vm::JSObject::create(&runtime_), result);
 }
 
 napi_status NapiEnvironment::createArray(napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0), result);
 }
 
@@ -2457,7 +2459,7 @@ napi_status NapiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::JSArray::create(&runtime_, /*capacity:*/ length, /*length:*/ length),
       result);
 }
@@ -2475,7 +2477,7 @@ napi_status NapiEnvironment::createStringASCII(
     size_t length,
     napi_value *result) noexcept {
   vm::GCScope gcScope(&runtime_);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::StringPrimitive::createEfficient(
           &runtime_, llvh::makeArrayRef(str, length)),
       result);
@@ -2503,7 +2505,7 @@ napi_status NapiEnvironment::createStringLatin1(
   std::copy(str, str + length, &u16str[0]);
 
   vm::GCScope gcScope(&runtime_);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
       result);
 }
@@ -2525,11 +2527,10 @@ napi_status NapiEnvironment::createStringUTF8(
   }
 
   vm::GCScope gcScope(&runtime_);
-  // TODO: run finalizers in setResult if GC may be invoked
   std::u16string u16str;
   // TODO: handle errors from convertUTF8ToUTF16
   convertUTF8ToUTF16(str, length, u16str);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)),
       result);
 }
@@ -2553,7 +2554,7 @@ napi_status NapiEnvironment::createStringUTF16(
       napi_invalid_arg);
 
   vm::GCScope gcScope(&runtime_);
-  return setResult(
+  return setResultAndRunFinalizers(
       vm::StringPrimitive::createEfficient(
           &runtime_, llvh::makeArrayRef(str, length)),
       result);
@@ -2598,7 +2599,7 @@ napi_status NapiEnvironment::createSymbolID(
   CHECK_STRING_ARG(strValue);
   vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
       &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
-  return setResult(std::move(res), result);
+  return setResultAndRunFinalizers(std::move(res), result);
 }
 
 napi_status NapiEnvironment::createSymbol(
@@ -2613,7 +2614,7 @@ napi_status NapiEnvironment::createSymbol(
     // If description is undefined, the descString will eventually be "".
     descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
   }
-  return setResult(
+  return setResultAndRunFinalizers(
       runtime_.getIdentifierTable().createNotUniquedSymbol(
           &runtime_, descString),
       result);
@@ -2634,7 +2635,6 @@ napi_status NapiEnvironment::createFunction(
   } else {
     CHECK_NAPI(createSymbolID("hostFunction", NAPI_AUTO_LENGTH, &nameSymbolID));
   }
-  // TODO: Run finalizers
   return newFunction(nameSymbolID.get(), callback, callbackData, result);
 }
 
@@ -2655,7 +2655,7 @@ napi_status NapiEnvironment::newFunction(
           /*paramCount:*/ 0);
   CHECK_NAPI(checkHermesStatus(funcRes));
   context.release(); // the context is now owned by the func.
-  return setResult(*funcRes, result);
+  return setResultAndRunFinalizers(*funcRes, result);
 }
 
 napi_status NapiEnvironment::createError(
@@ -2670,7 +2670,7 @@ napi_status NapiEnvironment::createError(
   CHECK_NAPI(checkHermesStatus(
       vm::JSError::setMessage(errorHandle, &runtime_, makeHandle(message))));
   CHECK_NAPI(setErrorCode(errorHandle, code, nullptr));
-  return setResult(std::move(errorHandle), result);
+  return setResultAndRunFinalizers(std::move(errorHandle), result);
 }
 
 napi_status NapiEnvironment::createError(
@@ -5375,6 +5375,14 @@ napi_status NapiEnvironment::setPredefinedResult(
   CHECK_ARG(result);
   *result = napiValue(value);
   return clearLastError();
+}
+
+template <class T, class TResult>
+napi_status NapiEnvironment::setResultAndRunFinalizers(
+    T &&value,
+    TResult *result) noexcept {
+  CHECK_NAPI(setResult(std::forward<T>(value), result));
+  return runReferenceFinalizers();
 }
 
 template <class T>
