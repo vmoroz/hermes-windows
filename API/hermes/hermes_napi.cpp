@@ -504,6 +504,14 @@ class NapiEnvironment final {
       napi_callback callback,
       void *callbackData,
       napi_value *result) noexcept;
+  napi_status createSymbolID(
+      const char *utf8,
+      size_t length,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
+  napi_status createSymbolID(
+      napi_value strValue,
+      vm::MutableHandle<vm::SymbolID> *result) noexcept;
+
   napi_status createError(
       const vm::PinnedHermesValue &errorPrototype,
       napi_value code,
@@ -527,14 +535,6 @@ class NapiEnvironment final {
   napi_status getUniqueStringRef(
       napi_value strValue,
       napi_ext_ref *result) noexcept;
-
-  napi_status createSymbolID(
-      const char *str,
-      size_t length,
-      vm::MutableHandle<vm::SymbolID> *result) noexcept;
-  napi_status createSymbolID(
-      napi_value str,
-      vm::MutableHandle<vm::SymbolID> *result) noexcept;
 
   //-----------------------------------------------------------------------------
   // Methods to get the native napi_value from Primitive type
@@ -2488,6 +2488,7 @@ napi_status NapiEnvironment::createStringUTF8(
     return createStringASCII(str, length, result);
   }
 
+  vm::GCScope gcScope(&runtime_);
   // TODO: run finalizers in setResult if GC may be invoked
   std::u16string u16str;
   // TODO: handle errors from convertUTF8ToUTF16
@@ -2517,45 +2518,71 @@ napi_status NapiEnvironment::createStringUTF16(
       length <= static_cast<size_t>(std::numeric_limits<int32_t>::max()),
       napi_invalid_arg);
 
+  vm::GCScope gcScope(&runtime_);
   return setResult(
       vm::StringPrimitive::createEfficient(
           &runtime_, llvh::makeArrayRef(str, length)),
       result);
 }
 
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
-    if (description) {
-      CHECK_STRING_ARG(description);
-      descString = phv(description)->getString();
-    } else {
-      // If description is undefined, the descString will eventually be "".
-      descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
-    }
-    return setResult(
-        runtime_.getIdentifierTable().createNotUniquedSymbol(
-            &runtime_, descString),
-        result);
-  });
+  vm::GCScope gcScope(&runtime_);
+  vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
+  if (description != nullptr) {
+    CHECK_STRING_ARG(description);
+    descString = phv(description)->getString();
+  } else {
+    // If description is undefined, the descString will eventually be "".
+    descString = runtime_.getPredefinedString(vm::Predefined::emptyString);
+  }
+  return setResult(
+      runtime_.getIdentifierTable().createNotUniquedSymbol(
+          &runtime_, descString),
+      result);
 }
 
+// TODO: move to the right location
+class EscapableHandleScope final {
+ public:
+  EscapableHandleScope(NapiEnvironment &env) noexcept : env_(env) {
+    CRASH_IF_FALSE(env_.openEscapableHandleScope(&scope_) == napi_ok);
+  }
+  ~EscapableHandleScope() noexcept {
+    CRASH_IF_FALSE(env_.closeEscapableHandleScope(scope_) == napi_ok);
+  }
+
+  napi_status escape(napi_value *value) noexcept {
+    return env_.escapeHandle(scope_, *value, value);
+  }
+
+ private:
+  NapiEnvironment &env_;
+  napi_escapable_handle_scope scope_{};
+};
+
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::createFunction(
     const char *utf8Name,
     size_t length,
     napi_callback callback,
     void *callbackData,
     napi_value *result) noexcept {
-  return handleExceptions([&] {
-    napi_value nameValue{};
-    CHECK_NAPI(createStringUTF8(utf8Name, length, &nameValue));
-    vm::CallResult<vm::Handle<vm::SymbolID>> nameRes = vm::stringToSymbolID(
-        &runtime_, vm::createPseudoHandle(phv(nameValue)->getString()));
-    CHECK_NAPI(checkHermesStatus(nameRes));
-    return newFunction(nameRes->get(), callback, callbackData, result);
-  });
+  CHECK_NAPI(checkPendingExceptions());
+  CHECK_ARG(callback);
+  EscapableHandleScope handleScope{*this};
+  vm::GCScope scope{&runtime_};
+  vm::MutableHandle<vm::SymbolID> nameSymbolID{&runtime_};
+  if (utf8Name != nullptr) {
+    CHECK_NAPI(createSymbolID(utf8Name, length, &nameSymbolID));
+  } else {
+    CHECK_NAPI(createSymbolID("hostFunction", NAPI_AUTO_LENGTH, &nameSymbolID));
+  }
+  CHECK_NAPI(newFunction(nameSymbolID.get(), callback, callbackData, result));
+  // TODO: Run finalizers
+  return handleScope.escape(result);
 }
 
 napi_status NapiEnvironment::newFunction(
@@ -2573,10 +2600,28 @@ napi_status NapiEnvironment::newFunction(
           &HostFunctionContext::finalize,
           name,
           /*paramCount:*/ 0);
-  CHECK_NAPI(checkHermesStatus(funcRes.getStatus()));
-  context.release();
-  *result = addGCRootStackValue(*funcRes);
-  return clearLastError();
+  // TODO: remove extra use of .getStatus()
+  CHECK_NAPI(checkHermesStatus(funcRes));
+  context.release(); // the context is now owned by the func.
+  return setResult(*funcRes, result);
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    const char *utf8,
+    size_t length,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  napi_value strValue{};
+  CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
+  return createSymbolID(strValue, result);
+}
+
+napi_status NapiEnvironment::createSymbolID(
+    napi_value strValue,
+    vm::MutableHandle<vm::SymbolID> *result) noexcept {
+  CHECK_STRING_ARG(strValue);
+  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
+      &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
+  return setResult(std::move(res), result);
 }
 
 napi_status NapiEnvironment::createError(
@@ -2641,25 +2686,6 @@ napi_status NapiEnvironment::getUniqueStringRef(
         cr->getHermesValue(),
         reinterpret_cast<StrongReference **>(result));
   });
-}
-
-napi_status NapiEnvironment::createSymbolID(
-    const char *str,
-    size_t length,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  napi_value strValue{};
-  CHECK_NAPI(createStringUTF8(str, length, &strValue));
-  CHECK_NAPI(createSymbolID(strValue, result));
-  return napi_ok;
-}
-
-napi_status NapiEnvironment::createSymbolID(
-    napi_value str,
-    vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  CHECK_STRING_ARG(str);
-  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
-      &runtime_, vm::createPseudoHandle(phv(str)->getString()));
-  return setResult(std::move(res), result);
 }
 
 //-----------------------------------------------------------------------------
