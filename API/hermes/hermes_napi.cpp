@@ -129,6 +129,7 @@ namespace {
 //=============================================================================
 
 class CallbackInfo;
+class EscapableHandleScope;
 class ExternalBuffer;
 class ExternalValue;
 class HermesPreparedJavaScript;
@@ -1153,7 +1154,27 @@ class NapiEnvironment final {
       vm::HermesValue::encodeEmptyValue()};
 };
 
-// Ths class hosts external data
+// Allow to escape one result value from the handle scope.
+class EscapableHandleScope final {
+ public:
+  EscapableHandleScope(NapiEnvironment &env) noexcept : env_(env) {
+    CRASH_IF_FALSE(env_.openEscapableHandleScope(&scope_) == napi_ok);
+  }
+
+  ~EscapableHandleScope() noexcept {
+    CRASH_IF_FALSE(env_.closeEscapableHandleScope(scope_) == napi_ok);
+  }
+
+  napi_status escape(napi_value *value) noexcept {
+    return env_.escapeHandle(scope_, *value, value);
+  }
+
+ private:
+  NapiEnvironment &env_;
+  napi_escapable_handle_scope scope_{};
+};
+
+// Keep external data with an object.
 class ExternalValue final : public vm::DecoratedObject::Decoration {
  public:
   ExternalValue(NapiEnvironment &env) noexcept : env_(env) {}
@@ -1190,6 +1211,7 @@ class ExternalValue final : public vm::DecoratedObject::Decoration {
   LinkedList<Finalizer> finalizers_;
 };
 
+// Keep native data associated with a function.
 class HostFunctionContext final {
  public:
   HostFunctionContext(
@@ -2543,25 +2565,6 @@ napi_status NapiEnvironment::createSymbol(
           &runtime_, descString),
       result);
 }
-
-// TODO: move to the right location
-class EscapableHandleScope final {
- public:
-  EscapableHandleScope(NapiEnvironment &env) noexcept : env_(env) {
-    CRASH_IF_FALSE(env_.openEscapableHandleScope(&scope_) == napi_ok);
-  }
-  ~EscapableHandleScope() noexcept {
-    CRASH_IF_FALSE(env_.closeEscapableHandleScope(scope_) == napi_ok);
-  }
-
-  napi_status escape(napi_value *value) noexcept {
-    return env_.escapeHandle(scope_, *value, value);
-  }
-
- private:
-  NapiEnvironment &env_;
-  napi_escapable_handle_scope scope_{};
-};
 
 // [X] Matches NAPI for V8
 napi_status NapiEnvironment::createFunction(
