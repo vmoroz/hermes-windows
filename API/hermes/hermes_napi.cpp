@@ -129,6 +129,7 @@ namespace {
 //=============================================================================
 
 class CallbackInfo;
+class Double;
 class EscapableHandleScope;
 class ExternalBuffer;
 class ExternalValue;
@@ -545,8 +546,10 @@ class NapiEnvironment final {
   //-----------------------------------------------------------------------------
  public:
   napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
-  template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
-  napi_status getNumberValue(napi_value value, T *result) noexcept;
+  napi_status getNumberValue(napi_value value, double *result) noexcept;
+  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
+  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
   napi_status getBoolValue(napi_value value, bool *result) noexcept;
   napi_status getValueStringLatin1(
       napi_value value,
@@ -2112,6 +2115,91 @@ class HermesPreparedJavaScript final {
   bool isBytecode_{false};
 };
 
+// Conversion routines from double to int32, uin32 and int64.
+// The code is adopted from V8 source code to match the NAPI for V8 behavior.
+//
+// The original copyright notice for V8 code:
+// Copyright 2011 the V8 project authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+// https://github.com/v8/v8/blob/main/LICENSE
+class Double final {
+ public:
+  // Implements most of https://tc39.github.io/ecma262/#sec-toint32.
+  static int32_t toInt32(double value) noexcept {
+    if (!std::isnormal(value)) {
+      return 0;
+    }
+    if (value >= std::numeric_limits<int32_t>::min() &&
+        value <= std::numeric_limits<int32_t>::max()) {
+      // All doubles within these limits are trivially convertable to an int32.
+      return static_cast<int32_t>(value);
+    }
+    uint64_t u64 = toUint64Bits(value);
+    int exponent = getExponent(u64);
+    uint64_t bits;
+    if (exponent < 0) {
+      if (exponent <= -kSignificandSize) {
+        return 0;
+      }
+      bits = getSignificand(u64) >> -exponent;
+    } else {
+      if (exponent > 31) {
+        return 0;
+      }
+      bits = getSignificand(u64) << exponent;
+    }
+    return static_cast<int32_t>(
+        getSign(u64) * static_cast<int64_t>(bits & 0xFFFFFFFFul));
+  }
+
+  static uint32_t toUint32(double value) noexcept {
+    return static_cast<uint32_t>(toInt32(value));
+  }
+
+  static int64_t toInt64(double value) {
+    if (!std::isnormal(value)) {
+      return 0;
+    }
+    if (value >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+      return std::numeric_limits<int64_t>::max();
+    }
+    if (value <= static_cast<double>(std::numeric_limits<int64_t>::min())) {
+      return std::numeric_limits<int64_t>::min();
+    }
+    return static_cast<int64_t>(value);
+  }
+
+ private:
+  static uint64_t toUint64Bits(double value) noexcept {
+    uint64_t result;
+    std::memcpy(&result, &value, sizeof(value));
+    return result;
+  }
+
+  static int getSign(uint64_t u64) noexcept {
+    return (u64 & kSignMask) == 0 ? 1 : -1;
+  }
+
+  static int getExponent(uint64_t u64) noexcept {
+    int biased_e =
+        static_cast<int>((u64 & kExponentMask) >> kPhysicalSignificandSize);
+    return biased_e - kExponentBias;
+  }
+
+  static uint64_t getSignificand(uint64_t u64) noexcept {
+    return (u64 & kSignificandMask) + kHiddenBit;
+  }
+
+  static constexpr uint64_t kSignMask = 0x8000'0000'0000'0000;
+  static constexpr uint64_t kExponentMask = 0x7FF0'0000'0000'0000;
+  static constexpr uint64_t kSignificandMask = 0x000F'FFFF'FFFF'FFFF;
+  static constexpr uint64_t kHiddenBit = 0x0010'0000'0000'0000;
+  static constexpr int kPhysicalSignificandSize = 52;
+  static constexpr int kSignificandSize = 53;
+  static constexpr int kExponentBias = 0x3FF + kPhysicalSignificandSize;
+};
+
 // Max size of the runtime's register stack.
 // The runtime register stack needs to be small enough to be allocated on the
 // native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
@@ -2698,13 +2786,14 @@ napi_status NapiEnvironment::createRangeError(
 // Methods to get the native napi_value from Primitive type
 //-----------------------------------------------------------------------------
 
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::typeOf(
     napi_value value,
     napi_valuetype *result) noexcept {
   CHECK_ARG(value);
   CHECK_ARG(result);
 
-  const vm::HermesValue *hv = phv(value);
+  const vm::PinnedHermesValue *hv = phv(value);
 
   // BigInt is not supported by Hermes yet.
   if (hv->isNumber()) {
@@ -2735,13 +2824,40 @@ napi_status NapiEnvironment::typeOf(
   return clearLastError();
 }
 
-template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool>>
+// [X] Matches NAPI for V8
 napi_status NapiEnvironment::getNumberValue(
     napi_value value,
-    T *result) noexcept {
+    double *result) noexcept {
   CHECK_ARG(value);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
-  return setResult(phv(value)->getNumberAs<T>(), result);
+  return setResult(phv(value)->getDouble(), result);
+}
+
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::getNumberValue(
+    napi_value value,
+    int32_t *result) noexcept {
+  CHECK_ARG(value);
+  RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
+  return setResult(Double::toInt32(phv(value)->getDouble()), result);
+}
+
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::getNumberValue(
+    napi_value value,
+    uint32_t *result) noexcept {
+  CHECK_ARG(value);
+  RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
+  return setResult(Double::toUint32(phv(value)->getDouble()), result);
+}
+
+// [X] Matches NAPI for V8
+napi_status NapiEnvironment::getNumberValue(
+    napi_value value,
+    int64_t *result) noexcept {
+  CHECK_ARG(value);
+  RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
+  return setResult(Double::toInt64(phv(value)->getDouble()), result);
 }
 
 napi_status NapiEnvironment::getBoolValue(
