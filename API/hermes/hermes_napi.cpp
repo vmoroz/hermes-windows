@@ -3816,19 +3816,20 @@ napi_status NapiEnvironment::strictEquals(
     napi_value lhs,
     napi_value rhs,
     bool *result) noexcept {
-  const vm::PinnedHermesValue &lhsHV = *phv(lhs);
-  const vm::PinnedHermesValue &rhsHV = *phv(rhs);
-  vm::TagKind lhsTag = lhsHV.getTag();
-  if (lhsTag != rhsHV.getTag()) {
-    *result = false;
+  CHECK_NAPI(checkPendingExceptions());
+  CHECK_ARG(lhs);
+  CHECK_ARG(rhs);
+  vm::TagKind lhsTag = phv(lhs)->getTag();
+  if (lhsTag != phv(lhs)->getTag()) {
+    return setResult(false, result);
   } else if (lhsTag == vm::StrTag) {
-    *result = lhsHV.getString()->equals(rhsHV.getString());
+    return setResult(
+        phv(lhs)->getString()->equals(phv(lhs)->getString()), result);
   } else if (lhsTag == vm::SymbolTag) {
-    *result = lhsHV.getSymbol() == rhsHV.getSymbol();
+    return setResult(phv(lhs)->getSymbol() == phv(rhs)->getSymbol(), result);
   } else {
-    *result = lhsHV.getRaw() == rhsHV.getRaw();
+    return setResult(phv(lhs)->getRaw() == phv(rhs)->getRaw(), result);
   }
-  return napi_ok;
 }
 
 //-----------------------------------------------------------------------------
