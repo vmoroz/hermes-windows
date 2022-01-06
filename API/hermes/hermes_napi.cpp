@@ -1314,12 +1314,14 @@ class ExternalValue final : public vm::DecoratedObject::Decoration {
 
 // Keep native data associated with a function.
 class HostFunctionContext final {
+  friend class CallbackInfo;
+
  public:
   HostFunctionContext(
       NapiEnvironment &env,
       napi_callback hostCallback,
       void *nativeData) noexcept
-      : env_(env), hostCallback_(hostCallback), nativeData_(nativeData) {}
+      : env_{env}, hostCallback_{hostCallback}, nativeData_{nativeData} {}
 
   static vm::CallResult<vm::HermesValue>
   func(void *context, vm::Runtime *runtime, vm::NativeArgs hvArgs);
@@ -1345,9 +1347,16 @@ class CallbackInfo final {
       vm::NativeArgs &nativeArgs) noexcept
       : context_(context), nativeArgs_(nativeArgs) {}
 
-  void args(napi_value *args, size_t *argCount) noexcept {
-    *args = napiValue(&*nativeArgs_.begin());
-    *argCount = nativeArgs_.getArgCount();
+  void args(napi_value *buffer, size_t bufferLength) noexcept {
+    size_t min =
+        std::min(bufferLength, static_cast<size_t>(nativeArgs_.getArgCount()));
+    size_t i{0};
+    for (; i < min; ++i) {
+      buffer[i] = napiValue(&nativeArgs_.begin()[i]);
+    }
+    for (; i < bufferLength; ++i) {
+      buffer[i] = napiValue(&context_.env_.undefined());
+    }
   }
 
   size_t argCount() noexcept {
@@ -4000,17 +4009,14 @@ napi_status NapiEnvironment::getCallbackInfo(
   CallbackInfo *cbInfo = asCallbackInfo(callbackInfo);
   if (args != nullptr) {
     CHECK_ARG(argCount);
-    cbInfo->args(args, argCount);
+    cbInfo->args(args, *argCount);
   }
-
   if (argCount != nullptr) {
     *argCount = cbInfo->argCount();
   }
-
   if (thisArg != nullptr) {
     *thisArg = cbInfo->thisArg();
   }
-
   if (data != nullptr) {
     *data = cbInfo->nativeData();
   }
