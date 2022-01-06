@@ -230,6 +230,7 @@ enum class UnwrapAction { KeepWrap, RemoveWrap };
 enum class NapiPredefined {
   Promise,
   code,
+  hostFunction,
   napi_externalValue,
   napi_typeTag,
   reject,
@@ -496,6 +497,8 @@ class NapiEnvironment final {
   // Native error handling methods
   //---------------------------------------------------------------------------
  public:
+  napi_status getLastErrorInfo(
+      const napi_extended_error_info **result) noexcept;
   template <class... TArgs>
   napi_status setLastError(
       napi_status status,
@@ -503,8 +506,6 @@ class NapiEnvironment final {
       uint32_t line,
       TArgs &&...args) noexcept;
   napi_status clearLastError() noexcept;
-  napi_status getLastErrorInfo(
-      const napi_extended_error_info **result) noexcept;
 
   napi_status checkHermesStatus(
       vm::ExecutionStatus hermesStatus,
@@ -531,7 +532,6 @@ class NapiEnvironment final {
   //-----------------------------------------------------------------------------
  public:
   napi_status createObject(napi_value *result) noexcept;
-  napi_status createArray(napi_value *result) noexcept;
   napi_status createArray(size_t length, napi_value *result) noexcept;
   template <class T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
   napi_status createNumber(T value, napi_value *result) noexcept;
@@ -2412,6 +2412,11 @@ NapiEnvironment::NapiEnvironment(
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier("code")));
   setPredefined(
+      NapiPredefined::hostFunction,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              "hostFunction")));
+  setPredefined(
       NapiPredefined::napi_externalValue,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
@@ -2480,6 +2485,13 @@ StableAddressStack<vm::PinnedHermesValue>
 // Native error handling methods
 //---------------------------------------------------------------------------
 
+napi_status NapiEnvironment::getLastErrorInfo(
+    const napi_extended_error_info **result) noexcept {
+  CHECK_ARG(result);
+  *result = &lastError_;
+  return napi_ok;
+}
+
 template <class... TArgs>
 napi_status NapiEnvironment::setLastError(
     napi_status status,
@@ -2544,13 +2556,6 @@ napi_status NapiEnvironment::clearLastError() noexcept {
   return napi_ok;
 }
 
-napi_status NapiEnvironment::getLastErrorInfo(
-    const napi_extended_error_info **result) noexcept {
-  CHECK_ARG(result);
-  *result = &lastError_;
-  return napi_ok;
-}
-
 napi_status NapiEnvironment::checkHermesStatus(
     vm::ExecutionStatus hermesStatus,
     napi_status status) noexcept {
@@ -2577,7 +2582,6 @@ napi_status NapiEnvironment::checkPendingExceptions() noexcept {
 
 //-----------------------------------------------------------------------------
 // Getters for defined singletons
-// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
@@ -2603,18 +2607,11 @@ napi_status NapiEnvironment::getBoolean(
 
 //-----------------------------------------------------------------------------
 // Methods to create Primitive types and Objects
-// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
   NapiHandleScope scope(*this, result);
   return scope.setResult(vm::JSObject::create(&runtime_));
-}
-
-napi_status NapiEnvironment::createArray(napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
-  return scope.setResult(
-      vm::JSArray::create(&runtime_, /*capacity:*/ 0, /*length:*/ 0));
 }
 
 napi_status NapiEnvironment::createArray(
@@ -2637,15 +2634,17 @@ napi_status NapiEnvironment::createStringASCII(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
-  return scope.setResult(vm::StringPrimitive::createEfficient(
-      &runtime_, llvh::makeArrayRef(str, length)));
+  return setResult(
+      vm::StringPrimitive::createEfficient(
+          &runtime_, llvh::makeArrayRef(str, length)),
+      result);
 }
 
 napi_status NapiEnvironment::createStringLatin1(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
+  NapiHandleScope scope(*this, result);
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char>::length(str);
@@ -2655,15 +2654,13 @@ napi_status NapiEnvironment::createStringLatin1(
       napi_invalid_arg);
 
   if (isAllASCII(str, str + length)) {
-    return createStringASCII(str, length, result);
+    return scope.setResult(createStringASCII(str, length, result));
   }
 
   // Latin1 has the same codes as Unicode.
   // We just need to expand char to char16_t.
   std::u16string u16str(length, u'\0');
   std::copy(str, str + length, &u16str[0]);
-
-  NapiHandleScope scope(*this, result);
   return scope.setResult(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)));
 }
@@ -2672,6 +2669,7 @@ napi_status NapiEnvironment::createStringUTF8(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
+  NapiHandleScope scope(*this, result);
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char>::length(str);
@@ -2681,10 +2679,9 @@ napi_status NapiEnvironment::createStringUTF8(
       napi_invalid_arg);
 
   if (isAllASCII(str, str + length)) {
-    return createStringASCII(str, length, result);
+    return scope.setResult(createStringASCII(str, length, result));
   }
 
-  NapiHandleScope scope(*this, result);
   std::u16string u16str;
   CHECK_NAPI(convertUTF8ToUTF16(str, length, u16str));
   return scope.setResult(
@@ -2717,7 +2714,7 @@ napi_status NapiEnvironment::convertUTF8ToUTF16(
       convRes != llvh::ConversionResult::targetExhausted,
       napi_generic_failure,
       "not enough space allocated for UTF16 conversion");
-  out.resize((char16_t *)targetStart - &out[0]);
+  out.resize(reinterpret_cast<char16_t *>(targetStart) - &out[0]);
   return clearLastError();
 }
 
@@ -2725,6 +2722,7 @@ napi_status NapiEnvironment::createStringUTF16(
     const char16_t *str,
     size_t length,
     napi_value *result) noexcept {
+  NapiHandleScope scope(*this, result);
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char16_t>::length(str);
@@ -2733,7 +2731,6 @@ napi_status NapiEnvironment::createStringUTF16(
       length <= static_cast<size_t>(std::numeric_limits<int32_t>::max()),
       napi_invalid_arg);
 
-  NapiHandleScope scope(*this, result);
   return scope.setResult(vm::StringPrimitive::createEfficient(
       &runtime_, llvh::makeArrayRef(str, length)));
 }
@@ -2742,9 +2739,9 @@ napi_status NapiEnvironment::getUniqueStringRef(
     const char *utf8,
     size_t length,
     napi_ext_ref *result) noexcept {
+  NapiHandleScope handleScope(*this);
   CHECK_ARG(utf8);
-  NapiHandleScope handleScope{*this};
-  napi_value strValue{};
+  napi_value strValue;
   CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
   return getUniqueStringRef(strValue, result);
 }
@@ -2752,8 +2749,8 @@ napi_status NapiEnvironment::getUniqueStringRef(
 napi_status NapiEnvironment::getUniqueStringRef(
     napi_value strValue,
     napi_ext_ref *result) noexcept {
-  NapiHandleScope handleScope{*this};
-  vm::MutableHandle<vm::SymbolID> symbolHandle{&runtime_};
+  NapiHandleScope handleScope(*this);
+  vm::MutableHandle<vm::SymbolID> symbolHandle(&runtime_);
   CHECK_NAPI(createSymbolID(strValue, &symbolHandle));
   return StrongReference::create(
       *this,
@@ -2765,7 +2762,7 @@ napi_status NapiEnvironment::createSymbolID(
     const char *utf8,
     size_t length,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
-  napi_value strValue{};
+  napi_value strValue;
   CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
   return createSymbolID(strValue, result);
 }
@@ -2774,16 +2771,17 @@ napi_status NapiEnvironment::createSymbolID(
     napi_value strValue,
     vm::MutableHandle<vm::SymbolID> *result) noexcept {
   CHECK_STRING_ARG(strValue);
-  vm::CallResult<vm::Handle<vm::SymbolID>> res = vm::stringToSymbolID(
-      &runtime_, vm::createPseudoHandle(phv(strValue)->getString()));
-  return setResult(std::move(res), result);
+  return setResult(
+      vm::stringToSymbolID(
+          &runtime_, vm::createPseudoHandle(phv(strValue)->getString())),
+      result);
 }
 
 napi_status NapiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
   NapiHandleScope scope(*this, result);
-  vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
+  vm::MutableHandle<vm::StringPrimitive> descString(&runtime_);
   if (description != nullptr) {
     CHECK_STRING_ARG(description);
     descString = phv(description)->getString();
@@ -2802,13 +2800,13 @@ napi_status NapiEnvironment::createFunction(
     void *callbackData,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  CHECK_ARG(callback);
   NapiHandleScope scope(*this, result);
-  vm::MutableHandle<vm::SymbolID> nameSymbolID{&runtime_};
+  CHECK_ARG(callback);
+  vm::MutableHandle<vm::SymbolID> nameSymbolID(&runtime_);
   if (utf8Name != nullptr) {
     CHECK_NAPI(createSymbolID(utf8Name, length, &nameSymbolID));
   } else {
-    CHECK_NAPI(createSymbolID("hostFunction", NAPI_AUTO_LENGTH, &nameSymbolID));
+    nameSymbolID = getPredefined(NapiPredefined::hostFunction).getSymbol();
   }
   return scope.setResult(
       newFunction(nameSymbolID.get(), callback, callbackData, result));
@@ -2839,8 +2837,8 @@ napi_status NapiEnvironment::createError(
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  CHECK_STRING_ARG(message);
   NapiHandleScope scope(*this, result);
+  CHECK_STRING_ARG(message);
   vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
       &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
   CHECK_NAPI(checkHermesStatus(
@@ -5657,7 +5655,7 @@ napi_status __cdecl napi_create_object(napi_env env, napi_value *result) {
 }
 
 napi_status __cdecl napi_create_array(napi_env env, napi_value *result) {
-  return CHECKED_ENV(env)->createArray(result);
+  return CHECKED_ENV(env)->createArray(/*length:*/ 0, result);
 }
 
 napi_status __cdecl napi_create_array_with_length(
