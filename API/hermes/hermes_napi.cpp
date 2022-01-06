@@ -782,15 +782,15 @@ class NapiEnvironment final {
   //-----------------------------------------------------------------------------
  public:
   napi_status callFunction(
-      napi_value object,
+      napi_value thisArg,
       napi_value func,
       size_t argCount,
       const napi_value *args,
       napi_value *result) noexcept;
   napi_status newInstance(
       napi_value constructor,
-      size_t argc,
-      const napi_value *argv,
+      size_t argCount,
+      const napi_value *args,
       napi_value *result) noexcept;
   napi_status
   instanceOf(napi_value object, napi_value constructor, bool *result) noexcept;
@@ -3833,25 +3833,29 @@ napi_status NapiEnvironment::strictEquals(
 }
 
 //-----------------------------------------------------------------------------
-// Methods to work with Functions
+// Methods to work with functions
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::callFunction(
-    napi_value object,
+    napi_value thisArg,
     napi_value func,
     size_t argCount,
     const napi_value *args,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope(*this, result);
-  // TODO: review arg checks
-  CHECK_ARG(object);
+
+  CHECK_ARG(thisArg);
+  CHECK_ARG(func);
   if (argCount > 0) {
     CHECK_ARG(args);
   }
-  vm::Handle<vm::Callable> handle = makeHandle<vm::Callable>(func);
-  if (argCount > std::numeric_limits<uint32_t>::max() ||
-      !runtime_.checkAvailableStack((uint32_t)argCount)) {
+  vm::Handle<vm::Callable> funcHandle =
+      vm::Handle<vm::Callable>::vmcast_or_null(phv(func));
+  RETURN_STATUS_IF_FALSE(funcHandle, napi_invalid_arg);
+
+  if (argCount >= std::numeric_limits<uint32_t>::max() ||
+      !runtime_.checkAvailableStack(static_cast<uint32_t>(argCount))) {
     return GENERIC_FAILURE("Unable to call function: stack overflow");
   }
 
@@ -3861,49 +3865,48 @@ napi_status NapiEnvironment::callFunction(
   vm::ScopedNativeCallFrame newFrame{
       &runtime_,
       static_cast<uint32_t>(argCount),
-      handle.getHermesValue(),
-      vm::HermesValue::encodeUndefinedValue(),
-      *phv(object)};
+      funcHandle.getHermesValue(),
+      /*newTarget:*/ undefined(),
+      *phv(thisArg)};
   if (LLVM_UNLIKELY(newFrame.overflowed())) {
     CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
         vm::StackRuntime::StackOverflowKind::NativeStack)));
   }
 
   for (uint32_t i = 0; i < argCount; ++i) {
-    newFrame->getArgRef(i) = *phv(args[i]);
+    newFrame->getArgRef(static_cast<int32_t>(i)) = *phv(args[i]);
   }
   vm::CallResult<vm::PseudoHandle<>> callRes =
-      vm::Callable::call(handle, &runtime_);
+      vm::Callable::call(funcHandle, &runtime_);
   CHECK_NAPI(checkHermesStatus(callRes));
 
   if (result) {
     RETURN_FAILURE_IF_FALSE(!callRes->get().isEmpty());
-    *result = addGCRootStackValue(callRes->get());
-    // TODO: scope setResult
+    return scope.setResult(callRes->get());
   }
   return clearLastError();
 }
 
 napi_status NapiEnvironment::newInstance(
     napi_value constructor,
-    size_t argc,
-    const napi_value *argv,
+    size_t argCount,
+    const napi_value *args,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  CHECK_ARG(constructor);
-  CHECK_ARG(result);
-  if (argc > 0) {
-    CHECK_ARG(argv);
-  }
   NapiHandleScope scope(*this, result);
 
-  RETURN_STATUS_IF_FALSE(
-      vm::vmisa<vm::Callable>(*phv(constructor)), napi_function_expected);
-  vm::Handle<vm::Callable> funcHandle = makeHandle<vm::Callable>(constructor);
+  CHECK_ARG(constructor);
+  if (argCount > 0) {
+    CHECK_ARG(args);
+  }
 
-  if (argc > std::numeric_limits<uint32_t>::max() ||
-      !runtime_.checkAvailableStack((uint32_t)argc)) {
-    return GENERIC_FAILURE("Unable to call function: stack overflow");
+  vm::Handle<vm::Callable> ctorHandle =
+      vm::Handle<vm::Callable>::vmcast_or_null(phv(constructor));
+  RETURN_STATUS_IF_FALSE(ctorHandle, napi_invalid_arg);
+
+  if (argCount >= std::numeric_limits<uint32_t>::max() ||
+      !runtime_.checkAvailableStack(static_cast<uint32_t>(argCount))) {
+    return GENERIC_FAILURE("Unable to call constructor: stack overflow");
   }
 
   vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
@@ -3924,11 +3927,11 @@ napi_status NapiEnvironment::newInstance(
   //
   // Note that 13.2.2.1-4 are also handled by the call to newObject.
   vm::CallResult<vm::PseudoHandle<vm::JSObject>> thisRes =
-      vm::Callable::createThisForConstruct(funcHandle, &runtime_);
+      vm::Callable::createThisForConstruct(ctorHandle, &runtime_);
   CHECK_NAPI(checkHermesStatus(thisRes));
   // We need to capture this in case the ctor doesn't return an object,
   // we need to return this object.
-  vm::Handle<vm::JSObject> objHandle = makeHandle(std::move(*thisRes));
+  vm::Handle<vm::JSObject> thisHandle = makeHandle(std::move(*thisRes));
 
   // 13.2.2.8:
   //    Let result be the result of calling the [[Call]] internal property of
@@ -3939,20 +3942,20 @@ napi_status NapiEnvironment::newInstance(
 
   vm::ScopedNativeCallFrame newFrame{
       &runtime_,
-      static_cast<uint32_t>(argc),
-      funcHandle.getHermesValue(),
-      funcHandle.getHermesValue(),
-      objHandle.getHermesValue()};
-  if (newFrame.overflowed()) {
+      static_cast<uint32_t>(argCount),
+      ctorHandle.getHermesValue(),
+      ctorHandle.getHermesValue(),
+      thisHandle.getHermesValue()};
+  if (LLVM_UNLIKELY(newFrame.overflowed())) {
     CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
-        ::hermes::vm::StackRuntime::StackOverflowKind::NativeStack)));
+        vm::StackRuntime::StackOverflowKind::NativeStack)));
   }
-  for (uint32_t i = 0; i != argc; ++i) {
-    newFrame->getArgRef(i) = *phv(argv[i]);
+  for (size_t i = 0; i != argCount; ++i) {
+    newFrame->getArgRef(static_cast<int32_t>(i)) = *phv(args[i]);
   }
   // The last parameter indicates that this call should construct an object.
   vm::CallResult<vm::PseudoHandle<>> callRes =
-      vm::Callable::call(funcHandle, &runtime_);
+      vm::Callable::call(ctorHandle, &runtime_);
   CHECK_NAPI(checkHermesStatus(callRes));
 
   // 13.2.2.9:
@@ -3961,7 +3964,7 @@ napi_status NapiEnvironment::newInstance(
   //    Return obj
   vm::HermesValue resultValue = callRes->get();
   return scope.setResult(
-      resultValue.isObject() ? resultValue : objHandle.getHermesValue());
+      resultValue.isObject() ? resultValue : thisHandle.getHermesValue());
 }
 
 napi_status NapiEnvironment::instanceOf(
@@ -3969,12 +3972,14 @@ napi_status NapiEnvironment::instanceOf(
     napi_value constructor,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  CHECK_OBJECT_ARG(object);
+  NapiHandleScope scope{*this};
+
+  CHECK_ARG(object);
   CHECK_ARG(constructor);
+  napi_value ctorValue;
+  CHECK_NAPI(coerceToObject(constructor, &ctorValue));
   RETURN_STATUS_IF_FALSE(
-      vm::vmisa<vm::Callable>(*phv(constructor)), napi_function_expected);
-  NapiHandleScope scope(*this);
-  // TODO: run finalizers
+      vm::vmisa<vm::Callable>(*phv(ctorValue)), napi_function_expected);
   return setResult(
       vm::instanceOfOperator_RJS(
           &runtime_, makeHandle(object), makeHandle(constructor)),
