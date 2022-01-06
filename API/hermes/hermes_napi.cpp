@@ -234,7 +234,6 @@ enum class NapiPredefined {
   napi_typeTag,
   reject,
   resolve,
-  undefined,
   PredefinedCount // a special value that must be last in the enum
 };
 
@@ -490,6 +489,7 @@ class NapiEnvironment final {
   napi_status decRefCount() noexcept;
 
   vm::Runtime &runtime() noexcept;
+  const vm::PinnedHermesValue &undefined() noexcept;
   StableAddressStack<vm::PinnedHermesValue> &gcRootStack() noexcept;
 
   //---------------------------------------------------------------------------
@@ -1176,6 +1176,8 @@ class NapiEnvironment final {
   std::shared_ptr<vm::Runtime> rt_;
   vm::Runtime &runtime_;
 
+  const vm::PinnedHermesValue *undefined_{};
+
   // Convenience field used in macros
   NapiEnvironment &env{*this};
 
@@ -1438,7 +1440,7 @@ class Reference : public LinkedList<Reference>::Item {
   }
 
   virtual const vm::PinnedHermesValue &value(NapiEnvironment &env) noexcept {
-    return env.getPredefined(NapiPredefined::undefined);
+    return env.undefined();
   }
 
   virtual void *nativeData() noexcept {
@@ -2394,6 +2396,8 @@ NapiEnvironment::NapiEnvironment(
         Reference::getGCWeakRoots(*this, finalizingGCRoots_, acceptor);
       });
 
+  undefined_ = runtime_.getUndefinedValue().unsafeGetPinnedHermesValue();
+
   vm::GCScope gcScope(&runtime_);
   auto setPredefined = [this](
                            NapiPredefined key, vm::HermesValue value) noexcept {
@@ -2425,8 +2429,6 @@ NapiEnvironment::NapiEnvironment(
       NapiPredefined::resolve,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier("resolve")));
-  setPredefined(
-      NapiPredefined::undefined, vm::HermesValue::encodeUndefinedValue());
 }
 
 NapiEnvironment::~NapiEnvironment() {
@@ -2463,6 +2465,10 @@ napi_status NapiEnvironment::decRefCount() noexcept {
 
 vm::Runtime &NapiEnvironment::runtime() noexcept {
   return runtime_;
+}
+
+const vm::PinnedHermesValue &NapiEnvironment::undefined() noexcept {
+  return *undefined_;
 }
 
 StableAddressStack<vm::PinnedHermesValue>
@@ -2575,8 +2581,7 @@ napi_status NapiEnvironment::checkPendingExceptions() noexcept {
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::getUndefined(napi_value *result) noexcept {
-  return setPredefinedResult(
-      runtime_.getUndefinedValue().unsafeGetPinnedHermesValue(), result);
+  return setPredefinedResult(undefined_, result);
 }
 
 napi_status NapiEnvironment::getNull(napi_value *result) noexcept {
@@ -4571,7 +4576,7 @@ const vm::PinnedHermesValue &NapiEnvironment::lockWeakObject(
   if (vm::JSObject *ptr = weakRoot.get(&runtime_, &runtime_.getHeap())) {
     return *phv(addGCRootStackValue(vm::HermesValue::encodeObjectValue(ptr)));
   }
-  return getPredefined(NapiPredefined::undefined);
+  return undefined();
 }
 
 //-----------------------------------------------------------------------------
@@ -4913,12 +4918,11 @@ napi_status NapiEnvironment::getTypedArrayInfo(
         : nullptr;
   }
 
-  // TODO: do not use C-cast
   if (arrayBuffer != nullptr) {
     *arrayBuffer = array->attached(&runtime_)
         ? addGCRootStackValue(
               vm::HermesValue::encodeObjectValue(array->getBuffer(&runtime_)))
-        : (napi_value)&getPredefined(NapiPredefined::undefined);
+        : napiValue(&undefined());
   }
 
   if (byteOffset != nullptr) {
@@ -4984,7 +4988,7 @@ napi_status NapiEnvironment::getDataViewInfo(
   if (arrayBuffer != nullptr) {
     *arrayBuffer = view->attached(&runtime_)
         ? addGCRootStackValue(view->getBuffer(&runtime_).getHermesValue())
-        : (napi_value)&getPredefined(NapiPredefined::undefined);
+        : napiValue(&undefined());
   }
 
   if (byteOffset != nullptr) {
