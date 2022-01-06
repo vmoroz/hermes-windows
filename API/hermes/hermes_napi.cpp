@@ -1121,8 +1121,6 @@ class NapiEnvironment final {
   vm::Handle<T> makeHandle(const vm::PinnedHermesValue *value) noexcept;
   template <class T>
   vm::Handle<T> makeHandle(vm::HermesValue value) noexcept;
-  template <class T>
-  vm::Handle<T> makeHandle(vm::Handle<T> value) noexcept;
   template <class T, class TOther>
   vm::Handle<T> makeHandle(vm::Handle<TOther> value) noexcept;
   template <class T>
@@ -3801,14 +3799,13 @@ napi_status NapiEnvironment::getArrayLength(
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope(*this);
   CHECK_ARG(value);
-  vm::Handle<vm::JSArray> arrHandle =
-      vm::Handle<vm::JSArray>::vmcast_or_null(phv(value));
-  RETURN_STATUS_IF_FALSE(arrHandle, napi_array_expected);
+  RETURN_STATUS_IF_FALSE(
+      vm::vmisa<vm::JSArray>(*phv(value)), napi_array_expected);
   napi_value res;
   CHECK_NAPI(getNamed(
-      arrHandle, vm::Predefined::getSymbolID(vm::Predefined::length), &res));
+      value, vm::Predefined::getSymbolID(vm::Predefined::length), &res));
   RETURN_STATUS_IF_FALSE(phv(res)->isNumber(), napi_number_expected);
-  return setResult(static_cast<uint32_t>(phv(res)->getDouble()), result);
+  return setResult(DoubleConversion::toUint32(phv(res)->getDouble()), result);
 }
 
 //-----------------------------------------------------------------------------
@@ -5484,11 +5481,6 @@ vm::Handle<T> NapiEnvironment::makeHandle(
 template <class T>
 vm::Handle<T> NapiEnvironment::makeHandle(vm::HermesValue value) noexcept {
   return vm::Handle<T>::vmcast(&runtime_, value);
-}
-
-template <class T>
-vm::Handle<T> NapiEnvironment::makeHandle(vm::Handle<T> value) noexcept {
-  return value;
 }
 
 template <class T, class TOther>
