@@ -1230,7 +1230,7 @@ class NapiHandleScope final {
         gcScope_(&env.runtime()) {}
 
   ~NapiHandleScope() noexcept {
-    env_.gcRootStack().resize(result_ ? savedScope_ + 1 : savedScope_);
+    env_.gcRootStack().resize(savedScope_);
   }
 
   napi_status setResult(napi_status status) noexcept {
@@ -1243,6 +1243,8 @@ class NapiHandleScope final {
         CRASH_IF_FALSE(savedScope_ < env_.gcRootStack().size());
         CRASH_IF_FALSE(phv(*result_) == &env_.gcRootStack()[savedScope_]);
       }
+      // To make sure that the return value is not removed in the destructor.
+      ++savedScope_;
     }
     return env_.runReferenceFinalizers();
   }
