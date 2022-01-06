@@ -2184,7 +2184,7 @@ class HermesPreparedJavaScript final {
 };
 
 // Conversion routines from double to int32, uin32 and int64.
-// The code is adopted from V8 source code to match the NAPI for V8 behavior.
+// The code is adapted from V8 source code to match the NAPI for V8 behavior.
 // https://github.com/v8/v8/blob/main/src/numbers/conversions-inl.h
 // https://github.com/v8/v8/blob/main/src/base/numbers/double.h
 class DoubleConversion final {
@@ -2870,7 +2870,6 @@ napi_status NapiEnvironment::createRangeError(
 
 //-----------------------------------------------------------------------------
 // Methods to get the native napi_value from Primitive type
-// [X] Matches NAPI for V8
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::typeOf(
@@ -2963,8 +2962,8 @@ napi_status NapiEnvironment::getValueStringLatin1(
     char *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  CHECK_STRING_ARG(value);
   NapiHandleScope scope(*this);
+  CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
 
@@ -2996,8 +2995,8 @@ napi_status NapiEnvironment::getValueStringUTF8(
     char *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  CHECK_STRING_ARG(value);
   NapiHandleScope scope(*this);
+  CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
 
@@ -3039,8 +3038,8 @@ napi_status NapiEnvironment::getValueStringUTF16(
     char16_t *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  CHECK_STRING_ARG(value);
   NapiHandleScope scope(*this);
+  CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
 
