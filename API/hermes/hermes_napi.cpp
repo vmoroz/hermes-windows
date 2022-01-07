@@ -58,7 +58,7 @@
 // TODO: see if finalizers can return error or exception
 
 // TODO: use modern C++ initialization syntax.
-// TODO: replace {} with ()
+// TODO: replace () initialization with {}
 
 #define NAPI_EXPERIMENTAL
 
@@ -2424,7 +2424,7 @@ NapiEnvironment::NapiEnvironment(
 
   undefined_ = runtime_.getUndefinedValue().unsafeGetPinnedHermesValue();
 
-  vm::GCScope gcScope(&runtime_);
+  vm::GCScope gcScope{&runtime_};
   auto setPredefined = [this](
                            NapiPredefined key, vm::HermesValue value) noexcept {
     predefinedValues_[static_cast<size_t>(key)] = value;
@@ -2636,14 +2636,14 @@ napi_status NapiEnvironment::getBoolean(
 //-----------------------------------------------------------------------------
 
 napi_status NapiEnvironment::createObject(napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   return scope.setResult(vm::JSObject::create(&runtime_));
 }
 
 napi_status NapiEnvironment::createArray(
     size_t length,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   return scope.setResult(
       vm::JSArray::create(&runtime_, /*capacity:*/ length, /*length:*/ length));
 }
@@ -2670,7 +2670,7 @@ napi_status NapiEnvironment::createStringLatin1(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char>::length(str);
@@ -2695,7 +2695,7 @@ napi_status NapiEnvironment::createStringUTF8(
     const char *str,
     size_t length,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char>::length(str);
@@ -2748,7 +2748,7 @@ napi_status NapiEnvironment::createStringUTF16(
     const char16_t *str,
     size_t length,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(str);
   if (length == NAPI_AUTO_LENGTH) {
     length = std::char_traits<char16_t>::length(str);
@@ -2776,7 +2776,7 @@ napi_status NapiEnvironment::getUniqueStringRef(
     napi_value strValue,
     napi_ext_ref *result) noexcept {
   NapiHandleScope handleScope(*this);
-  vm::MutableHandle<vm::SymbolID> symbolHandle(&runtime_);
+  vm::MutableHandle<vm::SymbolID> symbolHandle{&runtime_};
   CHECK_NAPI(createSymbolID(strValue, &symbolHandle));
   return StrongReference::create(
       *this,
@@ -2806,8 +2806,8 @@ napi_status NapiEnvironment::createSymbolID(
 napi_status NapiEnvironment::createSymbol(
     napi_value description,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
-  vm::MutableHandle<vm::StringPrimitive> descString(&runtime_);
+  NapiHandleScope scope{*this, result};
+  vm::MutableHandle<vm::StringPrimitive> descString{&runtime_};
   if (description != nullptr) {
     CHECK_STRING_ARG(description);
     descString = phv(description)->getString();
@@ -2826,15 +2826,15 @@ napi_status NapiEnvironment::createFunction(
     void *callbackData,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(callback);
-  vm::MutableHandle<vm::SymbolID> nameSymbolID(&runtime_);
+  vm::MutableHandle<vm::SymbolID> nameSymbolID{&runtime_};
   if (utf8Name != nullptr) {
     CHECK_NAPI(createSymbolID(utf8Name, length, &nameSymbolID));
   } else {
     nameSymbolID = getPredefined(NapiPredefined::hostFunction).getSymbol();
   }
-  vm::MutableHandle<vm::Callable> func(&runtime_);
+  vm::MutableHandle<vm::Callable> func{&runtime_};
   CHECK_NAPI(newFunction(nameSymbolID.get(), callback, callbackData, &func));
   return scope.setResult(func.getHermesValue());
 }
@@ -2864,7 +2864,7 @@ napi_status NapiEnvironment::createError(
     napi_value code,
     napi_value message,
     napi_value *result) noexcept {
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_STRING_ARG(message);
   vm::Handle<vm::JSError> errorHandle = makeHandle(vm::JSError::create(
       &runtime_, makeHandle<vm::JSObject>(&errorPrototype)));
@@ -2989,7 +2989,7 @@ napi_status NapiEnvironment::getValueStringLatin1(
     char *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
@@ -3022,7 +3022,7 @@ napi_status NapiEnvironment::getValueStringUTF8(
     char *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
@@ -3065,7 +3065,7 @@ napi_status NapiEnvironment::getValueStringUTF16(
     char16_t *buf,
     size_t bufSize,
     size_t *result) noexcept {
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_STRING_ARG(value);
   vm::StringView view = vm::StringPrimitive::createStringView(
       &runtime_, makeHandle<vm::StringPrimitive>(value));
@@ -3090,7 +3090,7 @@ napi_status NapiEnvironment::coerceToBool(
     napi_value value,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(value);
   return scope.setResult(vm::toBoolean(*phv(value)));
 }
@@ -3099,7 +3099,7 @@ napi_status NapiEnvironment::coerceToNumber(
     napi_value value,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(value);
   return scope.setResult(vm::toNumber_RJS(&runtime_, makeHandle(value)));
 }
@@ -3108,7 +3108,7 @@ napi_status NapiEnvironment::coerceToObject(
     napi_value value,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(value);
   return scope.setResult(vm::toObject(&runtime_, makeHandle(value)));
 }
@@ -3117,7 +3117,7 @@ napi_status NapiEnvironment::coerceToString(
     napi_value value,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(value);
   return scope.setResult(vm::toString_RJS(&runtime_, makeHandle(value)));
 }
@@ -3130,7 +3130,7 @@ napi_status NapiEnvironment::getPrototype(
     napi_value object,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   napi_value objValue{};
   CHECK_NAPI(coerceToObject(object, &objValue));
   return scope.setResult(vm::JSObject::getPrototypeOf(
@@ -3141,7 +3141,7 @@ napi_status NapiEnvironment::getPropertyNames(
     napi_value object,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return scope.setResult(
@@ -3155,7 +3155,7 @@ napi_status NapiEnvironment::getAllPropertyNames(
     napi_key_conversion keyConversion,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
 
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3231,12 +3231,12 @@ napi_status NapiEnvironment::getAllPropertyNames(
   // Keep the mutable variables outside of loop for efficiency
   vm::MutableHandle<vm::JSObject> currentObj(
       &runtime_, getObjectUnsafe(objValue));
-  vm::MutableHandle<> prop(&runtime_);
+  vm::MutableHandle<> prop{&runtime_};
   OptValue<uint32_t> propIndexOpt;
-  vm::MutableHandle<vm::StringPrimitive> propString(&runtime_);
+  vm::MutableHandle<vm::StringPrimitive> propString{&runtime_};
 
   while (currentObj.get()) {
-    vm::GCScope gcScope(&runtime_);
+    vm::GCScope gcScope{&runtime_};
 
     vm::CallResult<vm::Handle<vm::JSArray>> props =
         vm::JSObject::getOwnPropertyKeys(currentObj, &runtime_, ownKeyFlags);
@@ -3276,7 +3276,7 @@ napi_status NapiEnvironment::getAllPropertyNames(
 
       // Apply filter for the property descriptor flags
       if (useFilter) {
-        vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
+        vm::MutableHandle<vm::SymbolID> tmpSymbolStorage{&runtime_};
         vm::ComputedPropertyDescriptor desc;
         vm::CallResult<bool> hasDescriptorRes =
             vm::JSObject::getOwnComputedPrimitiveDescriptor(
@@ -3344,8 +3344,8 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
   CHECK_NAPI(checkHermesStatus(res));
   vm::Handle<vm::JSArray> array = *res;
   if (keyConversion == napi_key_numbers_to_strings) {
-    vm::GCScopeMarkerRAII marker(&runtime_);
-    vm::MutableHandle<> key(&runtime_);
+    vm::GCScopeMarkerRAII marker{&runtime_};
+    vm::MutableHandle<> key{&runtime_};
     for (size_t i = 0; i < length; ++i) {
       key = makeHandle(keyStorage->at(startIndex + i));
       if (key->isNumber()) {
@@ -3356,7 +3356,7 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
     }
   } else {
     vm::JSArray::setStorageEndIndex(array, &runtime_, length);
-    vm::NoAllocScope noAlloc(&runtime_);
+    vm::NoAllocScope noAlloc{&runtime_};
     vm::JSArray *arrPtr = array.get();
     for (uint32_t i = 0; i < length; ++i) {
       vm::JSArray::unsafeSetExistingElementAt(
@@ -3368,8 +3368,8 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
 
 napi_status NapiEnvironment::convertToStringKeys(
     vm::Handle<vm::JSArray> array) noexcept {
-  vm::GCScopeMarkerRAII marker(&runtime_);
-  vm::MutableHandle<> strKey(&runtime_);
+  vm::GCScopeMarkerRAII marker{&runtime_};
+  vm::MutableHandle<> strKey{&runtime_};
   size_t length = vm::JSArray::getLength(array.get(), &runtime_);
   for (size_t i = 0; i < length; ++i) {
     vm::HermesValue key = array->at(&runtime_, i);
@@ -3396,7 +3396,7 @@ napi_status NapiEnvironment::setProperty(
     napi_value key,
     napi_value value) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(key);
   CHECK_ARG(value);
   napi_value objValue;
@@ -3409,7 +3409,7 @@ napi_status NapiEnvironment::hasProperty(
     napi_value key,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(key);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3421,7 +3421,7 @@ napi_status NapiEnvironment::getProperty(
     napi_value key,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(key);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3433,7 +3433,7 @@ napi_status NapiEnvironment::deleteProperty(
     napi_value key,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(key);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3445,11 +3445,11 @@ napi_status NapiEnvironment::hasOwnProperty(
     napi_value key,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(key);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
-  vm::MutableHandle<vm::SymbolID> tmpSymbolStorage(&runtime_);
+  vm::MutableHandle<vm::SymbolID> tmpSymbolStorage{&runtime_};
   vm::ComputedPropertyDescriptor desc;
   return getOwnComputedDescriptor(
       objValue, key, tmpSymbolStorage, desc, result);
@@ -3460,7 +3460,7 @@ napi_status NapiEnvironment::setNamedProperty(
     const char *utf8Name,
     napi_value value) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(utf8Name);
   CHECK_ARG(value);
   napi_value objValue, name;
@@ -3474,7 +3474,7 @@ napi_status NapiEnvironment::hasNamedProperty(
     const char *utf8Name,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(utf8Name);
   napi_value objValue, name;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3487,7 +3487,7 @@ napi_status NapiEnvironment::getNamedProperty(
     const char *utf8Name,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(utf8Name);
   napi_value objValue, name;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -3501,7 +3501,7 @@ napi_status NapiEnvironment::setElement(
     napi_value value) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   CHECK_ARG(value);
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return putComputed(objValue, index, value);
@@ -3512,7 +3512,7 @@ napi_status NapiEnvironment::hasElement(
     uint32_t index,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return hasComputed(objValue, index, result);
@@ -3523,7 +3523,7 @@ napi_status NapiEnvironment::getElement(
     uint32_t index,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return scope.setResult(getComputed(objValue, index, result));
@@ -3534,7 +3534,7 @@ napi_status NapiEnvironment::deleteElement(
     uint32_t index,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return deleteComputed(objValue, index, result);
@@ -3545,7 +3545,7 @@ napi_status NapiEnvironment::defineProperties(
     size_t propertyCount,
     const napi_property_descriptor *properties) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_OBJECT_ARG(object);
   if (propertyCount > 0) {
     CHECK_ARG(properties);
@@ -3554,8 +3554,8 @@ napi_status NapiEnvironment::defineProperties(
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   vm::Handle<vm::JSObject> objHandle = makeHandle<vm::JSObject>(objValue);
-  vm::MutableHandle<vm::SymbolID> name(&runtime_);
-  vm::GCScopeMarkerRAII marker(&runtime_);
+  vm::MutableHandle<vm::SymbolID> name{&runtime_};
+  vm::GCScopeMarkerRAII marker{&runtime_};
   for (size_t i = 0; i < propertyCount; ++i) {
     marker.flush();
     const napi_property_descriptor *p = &properties[i];
@@ -3574,8 +3574,8 @@ napi_status NapiEnvironment::defineProperties(
     }
 
     if ((p->getter != nullptr) | (p->setter != nullptr)) {
-      vm::MutableHandle<vm::Callable> localGetter(&runtime_);
-      vm::MutableHandle<vm::Callable> localSetter(&runtime_);
+      vm::MutableHandle<vm::Callable> localGetter{&runtime_};
+      vm::MutableHandle<vm::Callable> localSetter{&runtime_};
 
       if (p->getter != nullptr) {
         CHECK_NAPI(newFunction(
@@ -3603,7 +3603,7 @@ napi_status NapiEnvironment::defineProperties(
           makeHandle(*propRes),
           vm::PropOpFlags().plusThrowOnError())));
     } else if (p->method != nullptr) {
-      vm::MutableHandle<vm::Callable> method(&runtime_);
+      vm::MutableHandle<vm::Callable> method{&runtime_};
       CHECK_NAPI(newFunction(name.get(), p->getter, p->data, &method));
       CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
           objHandle,
@@ -3648,7 +3648,7 @@ napi_status NapiEnvironment::symbolIDFromPropertyDescriptor(
 
 napi_status NapiEnvironment::objectFreeze(napi_value object) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return checkHermesStatus(
@@ -3657,7 +3657,7 @@ napi_status NapiEnvironment::objectFreeze(napi_value object) noexcept {
 
 napi_status NapiEnvironment::objectSeal(napi_value object) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   return checkHermesStatus(
@@ -3811,7 +3811,7 @@ napi_status NapiEnvironment::getArrayLength(
     napi_value value,
     uint32_t *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(value);
   RETURN_STATUS_IF_FALSE(
       vm::vmisa<vm::JSArray>(*phv(value)), napi_array_expected);
@@ -3857,7 +3857,7 @@ napi_status NapiEnvironment::callFunction(
     const napi_value *args,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
 
   CHECK_ARG(thisArg);
   CHECK_ARG(func);
@@ -3907,7 +3907,7 @@ napi_status NapiEnvironment::newInstance(
     const napi_value *args,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
 
   CHECK_ARG(constructor);
   if (argCount > 0) {
@@ -4127,7 +4127,7 @@ napi_status NapiEnvironment::wrapObject(
       nativeData,
       finalizeCallback,
       finalizeHint,
-      reinterpret_cast<FinalizingComplexReference **>(reference)));
+      reinterpret_cast<FinalizingComplexReference **>(&reference)));
   externalValue->setNativeData(reference);
   return setOptionalResult(reinterpret_cast<napi_ref>(reference), result);
 }
@@ -4201,7 +4201,7 @@ napi_status NapiEnvironment::typeTagObject(
     napi_value object,
     const napi_type_tag *typeTag) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(typeTag);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -4228,7 +4228,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
     const napi_type_tag *typeTag,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   CHECK_ARG(typeTag);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -4257,7 +4257,7 @@ napi_status NapiEnvironment::createExternal(
     void *finalizeHint,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(result);
   vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
       createExternal(nativeData, nullptr);
@@ -4304,7 +4304,7 @@ napi_status NapiEnvironment::getValueExternal(
     void **result) noexcept {
   // TODO: review and compare with V8
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   ExternalValue *externalValue = getExternalValue(*phv(value));
   RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
   return setResult(externalValue->nativeData(), result);
@@ -4396,7 +4396,7 @@ napi_status NapiEnvironment::addObjectFinalizer(
     const vm::PinnedHermesValue *value,
     Finalizer *finalizer) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   ExternalValue *externalValue = getExternalValue(*value);
   if (!externalValue) {
     CHECK_NAPI(getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
@@ -4626,7 +4626,7 @@ napi_status NapiEnvironment::throwError(
     const vm::PinnedHermesValue &prototype,
     const char *code,
     const char *message) noexcept {
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
   napi_value messageValue;
   CHECK_NAPI(createStringUTF8(message, &messageValue));
 
@@ -4717,7 +4717,7 @@ napi_status NapiEnvironment::createArrayBuffer(
     void **data,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
   CHECK_NAPI(checkHermesStatus(buffer->createDataBlock(&runtime_, byteLength)));
@@ -4734,7 +4734,7 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
     void *finalizeHint,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
   std::unique_ptr<ExternalBuffer> externalBuffer(new ExternalBuffer(
@@ -4844,7 +4844,7 @@ napi_status NapiEnvironment::createTypedArray(
     size_t byteOffset,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(arrayBuffer);
 
   RETURN_STATUS_IF_FALSE(
@@ -4969,7 +4969,7 @@ napi_status NapiEnvironment::createDataView(
     size_t byteOffset,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(arrayBuffer);
 
   vm::JSArrayBuffer *buffer =
@@ -5090,7 +5090,7 @@ napi_status NapiEnvironment::createPromise(
     napi_deferred *deferred,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(deferred);
 
   napi_value jsPromise{}, jsResolve{}, jsReject{}, jsDeferred{};
@@ -5175,7 +5175,7 @@ napi_status NapiEnvironment::createDate(
     double dateTime,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   vm::PseudoHandle<vm::JSDate> dateHandle = vm::JSDate::create(
       &runtime_, dateTime, makeHandle<vm::JSObject>(&runtime_.datePrototype));
   return scope.setResult(std::move(dateHandle));
@@ -5304,7 +5304,7 @@ napi_status NapiEnvironment::runScriptWithSourceMap(
     const char *sourceURL,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   napi_ext_prepared_script preparedScript{nullptr};
   CHECK_NAPI(prepareScriptWithSourceMap(
       std::move(script), std::move(sourceMap), sourceURL, &preparedScript));
@@ -5383,7 +5383,7 @@ napi_status NapiEnvironment::runPreparedScript(
     napi_ext_prepared_script preparedScript,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(preparedScript);
   vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
   const vm::instrumentation::RAIITimer timer{
