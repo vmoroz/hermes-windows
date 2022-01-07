@@ -3873,9 +3873,8 @@ napi_status NapiEnvironment::callFunction(
   if (argCount > 0) {
     CHECK_ARG(args);
   }
-  vm::Handle<vm::Callable> funcHandle =
-      vm::Handle<vm::Callable>::vmcast_or_null(phv(func));
-  RETURN_STATUS_IF_FALSE(funcHandle, napi_invalid_arg);
+  RETURN_STATUS_IF_FALSE(vm::vmisa<vm::Callable>(*phv(func)), napi_invalid_arg);
+  vm::Handle<vm::Callable> funcHandle = makeHandle<vm::Callable>(func);
 
   if (argCount >= std::numeric_limits<uint32_t>::max() ||
       !runtime_.checkAvailableStack(static_cast<uint32_t>(argCount))) {
@@ -3923,9 +3922,9 @@ napi_status NapiEnvironment::newInstance(
     CHECK_ARG(args);
   }
 
-  vm::Handle<vm::Callable> ctorHandle =
-      vm::Handle<vm::Callable>::vmcast_or_null(phv(constructor));
-  RETURN_STATUS_IF_FALSE(ctorHandle, napi_invalid_arg);
+  RETURN_STATUS_IF_FALSE(
+      vm::vmisa<vm::Callable>(*phv(constructor)), napi_invalid_arg);
+  vm::Handle<vm::Callable> ctorHandle = makeHandle<vm::Callable>(constructor);
 
   if (argCount >= std::numeric_limits<uint32_t>::max() ||
       !runtime_.checkAvailableStack(static_cast<uint32_t>(argCount))) {
@@ -4254,7 +4253,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
   CHECK_NAPI(
       getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
   vm::JSArrayBuffer *tagBuffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
+      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
   RETURN_FAILURE_IF_FALSE(tagBuffer != nullptr);
 
   const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
@@ -4334,7 +4333,7 @@ napi_status NapiEnvironment::getValueExternal(
 ExternalValue *NapiEnvironment::getExternalObjectValue(
     vm::HermesValue value) noexcept {
   if (vm::DecoratedObject *decoratedObj =
-          vm::vmcast_or_null<vm::DecoratedObject>(value)) {
+          vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
     vm::SmallHermesValue tag = vm::DecoratedObject::getAdditionalSlotValue(
         decoratedObj, &runtime_, kExternalTagSlot);
     if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
@@ -4791,7 +4790,7 @@ napi_status NapiEnvironment::detachArrayBuffer(
     napi_value arrayBuffer) noexcept {
   CHECK_ARG(arrayBuffer);
   vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
   buffer->detach(&runtime_.getHeap());
   return clearLastError();
@@ -4802,7 +4801,7 @@ napi_status NapiEnvironment::isDetachedArrayBuffer(
     bool *result) noexcept {
   CHECK_ARG(arrayBuffer);
   vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
   return setResult(!buffer->attached(), result);
 }
@@ -4870,7 +4869,7 @@ napi_status NapiEnvironment::createTypedArray(
   CHECK_ARG(arrayBuffer);
 
   vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer != nullptr, napi_invalid_arg);
 
   vm::MutableHandle<vm::JSTypedArrayBase> typedArray{&runtime_};
@@ -4933,7 +4932,7 @@ napi_status NapiEnvironment::getTypedArrayInfo(
   CHECK_ARG(typedArray);
 
   vm::JSTypedArrayBase *array =
-      vm::vmcast_or_null<vm::JSTypedArrayBase>(*phv(typedArray));
+      vm::dyn_vmcast_or_null<vm::JSTypedArrayBase>(*phv(typedArray));
   RETURN_STATUS_IF_FALSE(array != nullptr, napi_invalid_arg);
 
   if (type != nullptr) {
@@ -4994,7 +4993,7 @@ napi_status NapiEnvironment::createDataView(
   CHECK_ARG(arrayBuffer);
 
   vm::JSArrayBuffer *buffer =
-      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer != nullptr, napi_invalid_arg);
 
   if (byteLength + byteOffset > buffer->size()) {
@@ -5024,7 +5023,7 @@ napi_status NapiEnvironment::getDataViewInfo(
     size_t *byteOffset) noexcept {
   CHECK_ARG(dataView);
 
-  vm::JSDataView *view = vm::vmcast_or_null<vm::JSDataView>(*phv(dataView));
+  vm::JSDataView *view = vm::dyn_vmcast_or_null<vm::JSDataView>(*phv(dataView));
   RETURN_STATUS_IF_FALSE(view, napi_invalid_arg);
 
   if (byteLength != nullptr) {
@@ -5204,7 +5203,7 @@ napi_status NapiEnvironment::getDateValue(
     napi_value value,
     double *result) noexcept {
   CHECK_ARG(value);
-  vm::JSDate *date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
+  vm::JSDate *date = vm::dyn_vmcast_or_null<vm::JSDate>(*phv(value));
   RETURN_STATUS_IF_FALSE(date != nullptr, napi_date_expected);
   return setResult(date->getPrimitiveValue(), result);
 }
