@@ -762,6 +762,13 @@ class NapiEnvironment final {
       vm::MutableHandle<vm::SymbolID> &tmpSymbolStorage,
       vm::ComputedPropertyDescriptor &desc,
       bool *result) noexcept;
+  template <class TObject>
+  napi_status defineOwnProperty(
+      TObject object,
+      vm::SymbolID name,
+      vm::DefinePropertyFlags dpFlags,
+      vm::Handle<> valueOrAccessor,
+      bool *result) noexcept;
 
   //-----------------------------------------------------------------------------
   // Methods to work with Arrays
@@ -847,7 +854,7 @@ class NapiEnvironment final {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_value *result) noexcept;
-  vm::PseudoHandle<vm::DecoratedObject> createExternal(
+  vm::Handle<vm::DecoratedObject> createExternal(
       void *nativeData,
       ExternalValue **externalValue) noexcept;
   napi_status getValueExternal(napi_value value, void **result) noexcept;
@@ -3595,31 +3602,15 @@ napi_status NapiEnvironment::defineProperties(
       vm::CallResult<vm::HermesValue> propRes =
           vm::PropertyAccessor::create(&runtime_, localGetter, localSetter);
       CHECK_NAPI(checkHermesStatus(propRes));
-      CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
-          objHandle,
-          &runtime_,
-          name.get(),
-          dpFlags,
-          makeHandle(*propRes),
-          vm::PropOpFlags().plusThrowOnError())));
+      CHECK_NAPI(defineOwnProperty(
+          objHandle, *name, dpFlags, makeHandle(*propRes), nullptr));
     } else if (p->method != nullptr) {
       vm::MutableHandle<vm::Callable> method{&runtime_};
       CHECK_NAPI(newFunction(name.get(), p->getter, p->data, &method));
-      CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
-          objHandle,
-          &runtime_,
-          name.get(),
-          dpFlags,
-          method,
-          vm::PropOpFlags().plusThrowOnError())));
+      CHECK_NAPI(defineOwnProperty(objHandle, *name, dpFlags, method, nullptr));
     } else {
-      CHECK_NAPI(checkHermesStatus(vm::JSObject::defineOwnProperty(
-          objHandle,
-          &runtime_,
-          name.get(),
-          dpFlags,
-          makeHandle(p->value),
-          vm::PropOpFlags().plusThrowOnError())));
+      CHECK_NAPI(defineOwnProperty(
+          objHandle, *name, dpFlags, makeHandle(p->value), nullptr));
     }
   }
 
@@ -3795,7 +3786,24 @@ napi_status NapiEnvironment::getOwnComputedDescriptor(
       makeHandle(key),
       tmpSymbolStorage,
       desc);
-  return setResult(std::move(res), result);
+  return setOptionalResult(std::move(res), result);
+}
+
+template <class TObject>
+napi_status NapiEnvironment::defineOwnProperty(
+    TObject object,
+    vm::SymbolID name,
+    vm::DefinePropertyFlags dpFlags,
+    vm::Handle<> valueOrAccessor,
+    bool *result) noexcept {
+  vm::CallResult<bool> res = vm::JSObject::defineOwnProperty(
+      makeHandle<vm::JSObject>(object),
+      &runtime_,
+      name,
+      dpFlags,
+      valueOrAccessor,
+      vm::PropOpFlags().plusThrowOnError());
+  return setOptionalResult(std::move(res), result);
 }
 
 //-----------------------------------------------------------------------------
@@ -4202,6 +4210,7 @@ napi_status NapiEnvironment::typeTagObject(
     const napi_type_tag *typeTag) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
+
   CHECK_ARG(typeTag);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -4220,7 +4229,12 @@ napi_status NapiEnvironment::typeTagObject(
   uint8_t *dest = reinterpret_cast<uint8_t *>(tagBufferData);
   std::copy(source, source + sizeof(napi_type_tag), dest);
 
-  return putPredefined(objValue, NapiPredefined::napi_typeTag, tagBuffer);
+  return defineOwnProperty(
+      objValue,
+      getPredefined(NapiPredefined::napi_typeTag).getSymbol(),
+      vm::DefinePropertyFlags::getNewNonEnumerableFlags(),
+      makeHandle(tagBuffer),
+      nullptr);
 }
 
 napi_status NapiEnvironment::checkObjectTypeTag(
@@ -4229,6 +4243,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
+
   CHECK_ARG(typeTag);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -4258,31 +4273,31 @@ napi_status NapiEnvironment::createExternal(
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this, result};
+
   CHECK_ARG(result);
-  vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
+  vm::Handle<vm::DecoratedObject> decoratedObj =
       createExternal(nativeData, nullptr);
-  *result = addGCRootStackValue(decoratedObj.getHermesValue());
   if (finalizeCallback) {
     CHECK_NAPI(FinalizingAnonymousReference::create(
         *this,
-        phv(*result),
+        decoratedObj.unsafeGetPinnedHermesValue(),
         nativeData,
         finalizeCallback,
         finalizeHint,
         nullptr));
   }
-  return scope.setResult(clearLastError());
+  return scope.setResult(std::move(decoratedObj));
 }
 
-vm::PseudoHandle<vm::DecoratedObject> NapiEnvironment::createExternal(
+vm::Handle<vm::DecoratedObject> NapiEnvironment::createExternal(
     void *nativeData,
     ExternalValue **externalValue) noexcept {
-  vm::PseudoHandle<vm::DecoratedObject> decoratedObj =
-      vm::DecoratedObject::create(
+  vm::Handle<vm::DecoratedObject> decoratedObj =
+      makeHandle(vm::DecoratedObject::create(
           &runtime_,
-          vm::Handle<vm::JSObject>::vmcast(&runtime_.objectPrototype),
+          makeHandle<vm::JSObject>(&runtime_.objectPrototype),
           std::make_unique<ExternalValue>(*this, nativeData),
-          /*additionalSlotCount:*/ 1);
+          /*additionalSlotCount:*/ 1));
 
   // Add a special tag to differentiate from other decorated objects.
   vm::DecoratedObject::setAdditionalSlotValue(
@@ -4339,7 +4354,7 @@ napi_status NapiEnvironment::getExternalValue(
     RETURN_FAILURE_IF_FALSE(externalValue != nullptr);
   } else if (ifNotFound == IfNotFound::ThenCreate) {
     vm::Handle<vm::DecoratedObject> decoratedObj =
-        makeHandle(createExternal(nullptr, &externalValue));
+        createExternal(nullptr, &externalValue);
     CHECK_NAPI(putPredefined(
         object, NapiPredefined::napi_externalValue, decoratedObj));
   }
