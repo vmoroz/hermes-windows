@@ -833,8 +833,8 @@ class NapiEnvironment final {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_ref *result) noexcept;
-  napi_status
-  unwrapObject(napi_value object, UnwrapAction action, void **result) noexcept;
+  template <UnwrapAction action>
+  napi_status unwrapObject(napi_value object, void **result) noexcept;
   napi_status typeTagObject(
       napi_value object,
       const napi_type_tag *typeTag) noexcept;
@@ -1871,10 +1871,7 @@ class FinalizingAnonymousReference : public Reference, public Finalizer {
             nativeData, finalizeCallback, finalizeHint);
     env.addObjectFinalizer(value, ref);
     env.addFinalizingGCRoot(ref);
-    if (result) {
-      *result = ref;
-    }
-    return env.clearLastError();
+    return env.setOptionalResult(std::move(ref), result);
   }
 };
 
@@ -1926,6 +1923,7 @@ class FinalizingComplexReference : public ComplexReference, public Finalizer {
   static napi_status create(
       NapiEnvironment &env,
       uint32_t initialRefCount,
+      bool deleteSelf,
       const vm::PinnedHermesValue *value,
       void *nativeData,
       napi_finalize finalizeCallback,
@@ -1938,6 +1936,7 @@ class FinalizingComplexReference : public ComplexReference, public Finalizer {
         finalizeCallback,
         finalizeHint,
         initialRefCount,
+        deleteSelf,
         *value,
         initialRefCount == 0 ? env.createWeakRoot(getObjectUnsafe(*value))
                              : vm::WeakRoot<vm::JSObject>{});
@@ -1972,13 +1971,19 @@ class FinalizingComplexReference : public ComplexReference, public Finalizer {
   }
 
  protected:
-  using ComplexReference::ComplexReference;
+  FinalizingComplexReference(
+      uint32_t initialRefCount,
+      bool deleteSelf,
+      const vm::PinnedHermesValue &value,
+      vm::WeakRoot<vm::JSObject> weakRoot) noexcept
+      : ComplexReference{initialRefCount, value, weakRoot},
+        deleteSelf_{deleteSelf} {}
 
   bool startDeleting(NapiEnvironment &env, ReasonToDelete reason) noexcept
       override {
     if (reason == ReasonToDelete::ExternalCall &&
         LinkedList<Finalizer>::Item::isLinked()) {
-      // Let the finalizer to the environment shutdown to delete the reference.
+      // Let the finalizer or the environment shutdown to delete the reference.
       deleteSelf_ = true;
       return false;
     }
@@ -4045,20 +4050,21 @@ napi_status NapiEnvironment::defineClass(
     const napi_property_descriptor *properties,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this, result);
+  NapiHandleScope scope{*this, result};
+
   CHECK_ARG(constructor);
   if (propertyCount > 0) {
     CHECK_ARG(properties);
   }
 
-  vm::MutableHandle<vm::SymbolID> name(&runtime_);
-  vm::MutableHandle<vm::Callable> classFunc(&runtime_);
-  CHECK_NAPI(createSymbolID(utf8Name, length, &name));
-  CHECK_NAPI(newFunction(name.get(), constructor, callbackData, &classFunc));
+  vm::MutableHandle<vm::SymbolID> nameHandle{&runtime_};
+  vm::MutableHandle<vm::Callable> classHandle{&runtime_};
+  CHECK_NAPI(createSymbolID(utf8Name, length, &nameHandle));
+  CHECK_NAPI(
+      newFunction(nameHandle.get(), constructor, callbackData, &classHandle));
 
-  vm::Handle<vm::JSObject> classHandle = makeHandle<vm::JSObject>(classFunc);
-  vm::Handle<vm::JSObject> prototypeHandle =
-      makeHandle(vm::JSObject::create(&runtime_));
+  vm::Handle<vm::JSObject> prototypeHandle{
+      makeHandle(vm::JSObject::create(&runtime_))};
   vm::PropertyFlags pf{};
   pf.enumerable = 0;
   pf.writable = 1;
@@ -4096,9 +4102,9 @@ napi_status NapiEnvironment::wrapObject(
     void *finalizeHint,
     napi_ref *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
-  CHECK_OBJECT_ARG(object);
+  NapiHandleScope scope{*this};
 
+  CHECK_OBJECT_ARG(object);
   if (result != nullptr) {
     // The returned reference should be deleted via napi_delete_reference()
     // ONLY in response to the finalize callback invocation. (If it is deleted
@@ -4108,14 +4114,15 @@ napi_status NapiEnvironment::wrapObject(
   }
 
   // If we've already wrapped this object, we error out.
-  ExternalValue *externalValue{};
+  ExternalValue *externalValue;
   CHECK_NAPI(getExternalValue(object, IfNotFound::ThenCreate, &externalValue));
   RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
-  Reference *reference{};
+  Reference *reference;
   CHECK_NAPI(FinalizingComplexReference::create(
       *this,
       0,
+      /*deleteSelf*/ result == nullptr,
       phv(object),
       nativeData,
       finalizeCallback,
@@ -4132,13 +4139,15 @@ napi_status NapiEnvironment::addFinalizer(
     void *finalizeHint,
     napi_ref *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
+
   CHECK_OBJECT_ARG(object);
   CHECK_ARG(finalizeCallback);
   if (result != nullptr) {
     return FinalizingComplexReference::create(
         *this,
         0,
+        /*deleteSelf:*/ false,
         phv(object),
         nativeData,
         finalizeCallback,
@@ -4155,14 +4164,15 @@ napi_status NapiEnvironment::addFinalizer(
   }
 }
 
+template <UnwrapAction action>
 napi_status NapiEnvironment::unwrapObject(
     napi_value object,
-    UnwrapAction action,
     void **result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope(*this);
+  NapiHandleScope scope{*this};
+
   CHECK_OBJECT_ARG(object);
-  if (action == UnwrapAction::KeepWrap) {
+  if /*constexpr*/ (action == UnwrapAction::KeepWrap) {
     CHECK_ARG(result);
   }
 
@@ -4178,7 +4188,7 @@ napi_status NapiEnvironment::unwrapObject(
     *result = reference->nativeData();
   }
 
-  if (action == UnwrapAction::RemoveWrap) {
+  if /*constexpr*/ (action == UnwrapAction::RemoveWrap) {
     externalValue->setNativeData(nullptr);
     Reference::deleteReference(
         *this, reference, Reference::ReasonToDelete::ExternalCall);
@@ -6156,16 +6166,16 @@ napi_status __cdecl napi_wrap(
 }
 
 napi_status __cdecl napi_unwrap(napi_env env, napi_value obj, void **result) {
-  return CHECKED_ENV(env)->unwrapObject(
-      obj, hermes::napi::UnwrapAction::KeepWrap, result);
+  return CHECKED_ENV(env)->unwrapObject<hermes::napi::UnwrapAction::KeepWrap>(
+      obj, result);
 }
 
 napi_status __cdecl napi_remove_wrap(
     napi_env env,
     napi_value obj,
     void **result) {
-  return CHECKED_ENV(env)->unwrapObject(
-      obj, hermes::napi::UnwrapAction::RemoveWrap, result);
+  return CHECKED_ENV(env)->unwrapObject<hermes::napi::UnwrapAction::RemoveWrap>(
+      obj, result);
 }
 
 napi_status __cdecl napi_create_external(
