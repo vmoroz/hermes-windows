@@ -883,7 +883,7 @@ class NapiEnvironment final {
       Finalizer *finalizer) noexcept;
   template <class TLambda>
   void callIntoModule(TLambda &&call) noexcept;
-  napi_status callFinalizer(
+  void callFinalizer(
       napi_finalize finalizeCallback,
       void *nativeData,
       void *finalizeHint) noexcept;
@@ -1775,7 +1775,7 @@ class FinalizeCallbackHolder : public TBaseReference {
     if (finalizeCallback_) {
       napi_finalize finalizeCallback =
           std::exchange(finalizeCallback_, nullptr);
-      return env.callFinalizer(finalizeCallback, nativeData(), finalizeHint());
+      env.callFinalizer(finalizeCallback, nativeData(), finalizeHint());
     }
     return napi_ok;
   }
@@ -4420,16 +4420,12 @@ napi_status NapiEnvironment::getReferenceValue(
 napi_status NapiEnvironment::addObjectFinalizer(
     const vm::PinnedHermesValue *value,
     Finalizer *finalizer) noexcept {
-  CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope{*this};
   ExternalValue *externalValue = getExternalObjectValue(*value);
   if (!externalValue) {
     CHECK_NAPI(getExternalPropertyValue(
         value, IfNotFound::ThenCreate, &externalValue));
   }
-
   externalValue->addFinalizer(finalizer);
-
   return clearLastError();
 }
 
@@ -4445,14 +4441,13 @@ void NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
   }
 }
 
-napi_status NapiEnvironment::callFinalizer(
+void NapiEnvironment::callFinalizer(
     napi_finalize finalizeCallback,
     void *nativeData,
     void *finalizeHint) noexcept {
   callIntoModule([&](NapiEnvironment *env) {
     finalizeCallback(napiEnv(env), nativeData, finalizeHint);
   });
-  return napi_ok;
 }
 
 napi_status NapiEnvironment::runReferenceFinalizers() noexcept {
