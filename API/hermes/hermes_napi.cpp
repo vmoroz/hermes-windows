@@ -611,10 +611,10 @@ class NapiEnvironment final {
   //-----------------------------------------------------------------------------
  public:
   napi_status typeOf(napi_value value, napi_valuetype *result) noexcept;
-  napi_status getNumberValue(napi_value value, double *result) noexcept;
-  napi_status getNumberValue(napi_value value, int32_t *result) noexcept;
-  napi_status getNumberValue(napi_value value, uint32_t *result) noexcept;
-  napi_status getNumberValue(napi_value value, int64_t *result) noexcept;
+  napi_status getValueDouble(napi_value value, double *result) noexcept;
+  napi_status getValueInt32(napi_value value, int32_t *result) noexcept;
+  napi_status getValueUint32(napi_value value, uint32_t *result) noexcept;
+  napi_status getValueInt64(napi_value value, int64_t *result) noexcept;
   napi_status getBoolValue(napi_value value, bool *result) noexcept;
   napi_status getValueStringLatin1(
       napi_value value,
@@ -854,13 +854,13 @@ class NapiEnvironment final {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       napi_value *result) noexcept;
-  vm::Handle<vm::DecoratedObject> createExternal(
+  vm::Handle<vm::DecoratedObject> createExternalObject(
       void *nativeData,
       ExternalValue **externalValue) noexcept;
   napi_status getValueExternal(napi_value value, void **result) noexcept;
-  ExternalValue *getExternalValue(const vm::HermesValue &value) noexcept;
+  ExternalValue *getExternalObjectValue(vm::HermesValue value) noexcept;
   template <class TObject>
-  napi_status getExternalValue(
+  napi_status getExternalPropertyValue(
       TObject object,
       IfNotFound ifNotFound,
       ExternalValue **result) noexcept;
@@ -2922,7 +2922,7 @@ napi_status NapiEnvironment::typeOf(
   } else if (hv->isObject()) {
     if (vm::vmisa<vm::Callable>(*hv)) {
       *result = napi_function;
-    } else if (getExternalValue(*hv)) {
+    } else if (getExternalObjectValue(*hv)) {
       *result = napi_external;
     } else {
       *result = napi_object;
@@ -2943,7 +2943,7 @@ napi_status NapiEnvironment::typeOf(
   return clearLastError();
 }
 
-napi_status NapiEnvironment::getNumberValue(
+napi_status NapiEnvironment::getValueDouble(
     napi_value value,
     double *result) noexcept {
   CHECK_ARG(value);
@@ -2951,7 +2951,7 @@ napi_status NapiEnvironment::getNumberValue(
   return setResult(phv(value)->getDouble(), result);
 }
 
-napi_status NapiEnvironment::getNumberValue(
+napi_status NapiEnvironment::getValueInt32(
     napi_value value,
     int32_t *result) noexcept {
   CHECK_ARG(value);
@@ -2959,7 +2959,7 @@ napi_status NapiEnvironment::getNumberValue(
   return setResult(DoubleConversion::toInt32(phv(value)->getDouble()), result);
 }
 
-napi_status NapiEnvironment::getNumberValue(
+napi_status NapiEnvironment::getValueUint32(
     napi_value value,
     uint32_t *result) noexcept {
   CHECK_ARG(value);
@@ -2967,7 +2967,7 @@ napi_status NapiEnvironment::getNumberValue(
   return setResult(DoubleConversion::toUint32(phv(value)->getDouble()), result);
 }
 
-napi_status NapiEnvironment::getNumberValue(
+napi_status NapiEnvironment::getValueInt64(
     napi_value value,
     int64_t *result) noexcept {
   CHECK_ARG(value);
@@ -4123,7 +4123,8 @@ napi_status NapiEnvironment::wrapObject(
 
   // If we've already wrapped this object, we error out.
   ExternalValue *externalValue;
-  CHECK_NAPI(getExternalValue(object, IfNotFound::ThenCreate, &externalValue));
+  CHECK_NAPI(
+      getExternalPropertyValue(object, IfNotFound::ThenCreate, &externalValue));
   RETURN_STATUS_IF_FALSE(!externalValue->nativeData(), napi_invalid_arg);
 
   Reference *reference;
@@ -4184,10 +4185,10 @@ napi_status NapiEnvironment::unwrapObject(
     CHECK_ARG(result);
   }
 
-  ExternalValue *externalValue = getExternalValue(*phv(object));
+  ExternalValue *externalValue = getExternalObjectValue(*phv(object));
   if (!externalValue) {
-    CHECK_NAPI(
-        getExternalValue(object, IfNotFound::ThenReturnNull, &externalValue));
+    CHECK_NAPI(getExternalPropertyValue(
+        object, IfNotFound::ThenReturnNull, &externalValue));
     RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
   }
 
@@ -4276,7 +4277,7 @@ napi_status NapiEnvironment::createExternal(
 
   CHECK_ARG(result);
   vm::Handle<vm::DecoratedObject> decoratedObj =
-      createExternal(nativeData, nullptr);
+      createExternalObject(nativeData, nullptr);
   if (finalizeCallback) {
     CHECK_NAPI(FinalizingAnonymousReference::create(
         *this,
@@ -4289,7 +4290,9 @@ napi_status NapiEnvironment::createExternal(
   return scope.setResult(std::move(decoratedObj));
 }
 
-vm::Handle<vm::DecoratedObject> NapiEnvironment::createExternal(
+// Create the ExternalObject as a DecoratedObject with a special tag to
+// distinguish it from other DecoratedObject instances.
+vm::Handle<vm::DecoratedObject> NapiEnvironment::createExternalObject(
     void *nativeData,
     ExternalValue **externalValue) noexcept {
   vm::Handle<vm::DecoratedObject> decoratedObj =
@@ -4314,49 +4317,56 @@ vm::Handle<vm::DecoratedObject> NapiEnvironment::createExternal(
   return decoratedObj;
 }
 
+// Get the external value associated with the ExternalObject.
 napi_status NapiEnvironment::getValueExternal(
     napi_value value,
     void **result) noexcept {
-  // TODO: review and compare with V8
-  CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
-  ExternalValue *externalValue = getExternalValue(*phv(value));
-  RETURN_STATUS_IF_FALSE(externalValue, napi_invalid_arg);
+  CHECK_ARG(value);
+  ExternalValue *externalValue = getExternalObjectValue(*phv(value));
+  RETURN_STATUS_IF_FALSE(externalValue != nullptr, napi_invalid_arg);
   return setResult(externalValue->nativeData(), result);
 }
 
-ExternalValue *NapiEnvironment::getExternalValue(
-    const vm::HermesValue &value) noexcept {
+// Get the ExternalValue from value if it is a DecoratedObject created by the
+// createExternalObject method. Otherwise, return nullptr.
+ExternalValue *NapiEnvironment::getExternalObjectValue(
+    vm::HermesValue value) noexcept {
   if (vm::DecoratedObject *decoratedObj =
-          vm::dyn_vmcast_or_null<vm::DecoratedObject>(value)) {
+          vm::vmcast_or_null<vm::DecoratedObject>(value)) {
     vm::SmallHermesValue tag = vm::DecoratedObject::getAdditionalSlotValue(
         decoratedObj, &runtime_, kExternalTagSlot);
     if (tag.isNumber() && tag.getNumber(&runtime_) == kExternalValueTag) {
       return static_cast<ExternalValue *>(decoratedObj->getDecoration());
     }
   }
-
   return nullptr;
 }
 
-// TODO: simplify handling the external value
+// Get the ExternalValue from the object's property.
+// If it is not found and the ifNotFound parameter is IfNotFound::ThenCreate,
+// then create the property with the new ExternalValue and return it.
 template <class TObject>
-napi_status NapiEnvironment::getExternalValue(
+napi_status NapiEnvironment::getExternalPropertyValue(
     TObject object,
     IfNotFound ifNotFound,
     ExternalValue **result) noexcept {
   ExternalValue *externalValue{};
-  napi_value externalNapiValue;
+  napi_value napiExternalValue;
   napi_status status = getPredefined(
-      object, NapiPredefined::napi_externalValue, &externalNapiValue);
+      object, NapiPredefined::napi_externalValue, &napiExternalValue);
   if (status == napi_ok) {
-    externalValue = getExternalValue(*phv(externalNapiValue));
+    externalValue = getExternalObjectValue(*phv(napiExternalValue));
     RETURN_FAILURE_IF_FALSE(externalValue != nullptr);
   } else if (ifNotFound == IfNotFound::ThenCreate) {
     vm::Handle<vm::DecoratedObject> decoratedObj =
-        createExternal(nullptr, &externalValue);
-    CHECK_NAPI(putPredefined(
-        object, NapiPredefined::napi_externalValue, decoratedObj));
+        createExternalObject(nullptr, &externalValue);
+    CHECK_NAPI(defineOwnProperty(
+        object,
+        getPredefined(NapiPredefined::napi_externalValue).getSymbol(),
+        vm::DefinePropertyFlags::getNewNonEnumerableFlags(),
+        makeHandle(decoratedObj),
+        nullptr));
   }
   return setResult(std::move(externalValue), result);
 }
@@ -4412,9 +4422,10 @@ napi_status NapiEnvironment::addObjectFinalizer(
     Finalizer *finalizer) noexcept {
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
-  ExternalValue *externalValue = getExternalValue(*value);
+  ExternalValue *externalValue = getExternalObjectValue(*value);
   if (!externalValue) {
-    CHECK_NAPI(getExternalValue(value, IfNotFound::ThenCreate, &externalValue));
+    CHECK_NAPI(getExternalPropertyValue(
+        value, IfNotFound::ThenCreate, &externalValue));
   }
 
   externalValue->addFinalizer(finalizer);
@@ -5827,28 +5838,28 @@ napi_status __cdecl napi_get_value_double(
     napi_env env,
     napi_value value,
     double *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
+  return CHECKED_ENV(env)->getValueDouble(value, result);
 }
 
 napi_status __cdecl napi_get_value_int32(
     napi_env env,
     napi_value value,
     int32_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
+  return CHECKED_ENV(env)->getValueInt32(value, result);
 }
 
 napi_status __cdecl napi_get_value_uint32(
     napi_env env,
     napi_value value,
     uint32_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
+  return CHECKED_ENV(env)->getValueUint32(value, result);
 }
 
 napi_status __cdecl napi_get_value_int64(
     napi_env env,
     napi_value value,
     int64_t *result) {
-  return CHECKED_ENV(env)->getNumberValue(value, result);
+  return CHECKED_ENV(env)->getValueInt64(value, result);
 }
 
 napi_status __cdecl napi_get_value_bool(
