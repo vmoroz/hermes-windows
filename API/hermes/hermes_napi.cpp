@@ -416,10 +416,12 @@ class LinkedList final {
     }
 
     void unlink() noexcept {
-      prev_->next_ = next_;
-      next_->prev_ = prev_;
-      prev_ = nullptr;
-      next_ = nullptr;
+      if (isLinked()) {
+        prev_->next_ = next_;
+        next_->prev_ = prev_;
+        prev_ = nullptr;
+        next_ = nullptr;
+      }
     }
 
     bool isLinked() const noexcept {
@@ -5251,7 +5253,7 @@ napi_status NapiEnvironment::runScript(
           napiEnv(this),
           napi_ext_buffer{
               buffer.release(),
-              sourceSize + 1,
+              sourceSize,
               [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
                 std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
               },
