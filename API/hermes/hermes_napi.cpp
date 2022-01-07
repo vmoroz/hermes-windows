@@ -987,7 +987,7 @@ class NapiEnvironment final {
       size_t length,
       vm::JSArrayBuffer *buffer,
       size_t byteOffset,
-      vm::JSTypedArrayBase **result) noexcept;
+      vm::MutableHandle<vm::JSTypedArrayBase> *result) noexcept;
   napi_status createTypedArray(
       napi_typedarray_type type,
       size_t length,
@@ -4760,8 +4760,8 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
   NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
-  std::unique_ptr<ExternalBuffer> externalBuffer(new ExternalBuffer(
-      env, externalData, byteLength, finalizeCallback, finalizeHint));
+  std::unique_ptr<ExternalBuffer> externalBuffer{new ExternalBuffer(
+      env, externalData, byteLength, finalizeCallback, finalizeHint)};
   buffer->setExternalBuffer(&runtime_, std::move(externalBuffer));
   return scope.setResult(std::move(buffer));
 }
@@ -4803,7 +4803,7 @@ napi_status NapiEnvironment::isDetachedArrayBuffer(
   vm::JSArrayBuffer *buffer =
       vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
-  return setResult(buffer->attached(), result);
+  return setResult(!buffer->attached(), result);
 }
 
 napi_status NapiEnvironment::isTypedArray(
@@ -4829,7 +4829,7 @@ napi_status NapiEnvironment::createTypedArray(
     size_t length,
     vm::JSArrayBuffer *buffer,
     size_t byteOffset,
-    vm::JSTypedArrayBase **result) noexcept {
+    vm::MutableHandle<vm::JSTypedArrayBase> *result) noexcept {
   constexpr size_t elementSize = sizeof(TElement);
   if (elementSize > 1) {
     if (byteOffset % elementSize != 0) {
@@ -4847,16 +4847,14 @@ napi_status NapiEnvironment::createTypedArray(
         "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", "Invalid typed array length");
   }
   using TypedArray = vm::JSTypedArray<TElement, CellKind>;
-  vm::PseudoHandle<TypedArray> arrayHandle =
-      TypedArray::create(&runtime_, TypedArray::getPrototype(&runtime_));
+  *result = TypedArray::create(&runtime_, TypedArray::getPrototype(&runtime_));
   vm::JSTypedArrayBase::setBuffer(
       &runtime_,
-      arrayHandle.get(),
+      result->get(),
       buffer,
       byteOffset,
       length * elementSize,
       static_cast<uint8_t>(elementSize));
-  *result = arrayHandle.get();
   return clearLastError();
 }
 
@@ -4870,12 +4868,11 @@ napi_status NapiEnvironment::createTypedArray(
   NapiHandleScope scope{*this, result};
   CHECK_ARG(arrayBuffer);
 
-  RETURN_STATUS_IF_FALSE(
-      vm::vmisa<vm::JSArrayBuffer>(*phv(arrayBuffer)), napi_invalid_arg);
+  vm::JSArrayBuffer *buffer =
+      vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  RETURN_STATUS_IF_FALSE(buffer != nullptr, napi_invalid_arg);
 
-  vm::JSArrayBuffer *buffer = vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
-  vm::JSTypedArrayBase *typedArray{};
-
+  vm::MutableHandle<vm::JSTypedArrayBase> typedArray{&runtime_};
   switch (type) {
     case napi_int8_array:
       CHECK_NAPI(createTypedArray<int8_t, vm::CellKind::Int8ArrayKind>(
@@ -4922,7 +4919,7 @@ napi_status NapiEnvironment::createTypedArray(
           napi_invalid_arg, "Unsupported TypedArray type: ", type);
   }
 
-  return scope.setResult(vm::HermesValue::encodeObjectValue(typedArray));
+  return scope.setResult(std::move(typedArray));
 }
 
 napi_status NapiEnvironment::getTypedArrayInfo(
@@ -4936,7 +4933,7 @@ napi_status NapiEnvironment::getTypedArrayInfo(
 
   vm::JSTypedArrayBase *array =
       vm::vmcast_or_null<vm::JSTypedArrayBase>(*phv(typedArray));
-  RETURN_STATUS_IF_FALSE(array, napi_invalid_arg);
+  RETURN_STATUS_IF_FALSE(array != nullptr, napi_invalid_arg);
 
   if (type != nullptr) {
     if (vm::vmisa<vm::Int8Array>(array)) {
@@ -4997,7 +4994,7 @@ napi_status NapiEnvironment::createDataView(
 
   vm::JSArrayBuffer *buffer =
       vm::vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
-  RETURN_STATUS_IF_FALSE(buffer, napi_invalid_arg);
+  RETURN_STATUS_IF_FALSE(buffer != nullptr, napi_invalid_arg);
 
   if (byteLength + byteOffset > buffer->size()) {
     return env.throwRangeError(
@@ -5005,8 +5002,8 @@ napi_status NapiEnvironment::createDataView(
         "byte_offset + byte_length should be less than or "
         "equal to the size in bytes of the array passed in");
   }
-  vm::PseudoHandle<vm::JSDataView> viewHandle = vm::JSDataView::create(
-      &runtime_, makeHandle<vm::JSObject>(&runtime_.dataViewPrototype));
+  vm::Handle<vm::JSDataView> viewHandle = makeHandle(vm::JSDataView::create(
+      &runtime_, makeHandle<vm::JSObject>(&runtime_.dataViewPrototype)));
   viewHandle->setBuffer(&runtime_, buffer, byteOffset, byteLength);
   return scope.setResult(std::move(viewHandle));
 }
