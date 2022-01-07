@@ -66,7 +66,7 @@ void encodeUTF8(char *&dst, uint32_t cp) {
 char32_t readUTF16WithReplacements(
     const char16_t *&cur,
     const char16_t *end) noexcept {
-  char16_t c = *++cur;
+  char16_t c = *cur++;
   // ASCII fast-path.
   if (LLVM_LIKELY(c <= 0x7F)) {
     return c;
@@ -77,12 +77,12 @@ char32_t readUTF16WithReplacements(
     return UNICODE_REPLACEMENT_CHARACTER;
   } else if (isHighSurrogate(c)) {
     // Leading high surrogate. See if the next character is a low surrogate.
-    if (cur + 1 == end || !isLowSurrogate(cur[1])) {
+    if (cur == end || !isLowSurrogate(*cur)) {
       // Trailing or unpaired high surrogate.
       return UNICODE_REPLACEMENT_CHARACTER;
     } else {
       // Decode surrogate pair and increment, because we consumed two chars.
-      return decodeSurrogatePair(c, *++cur);
+      return decodeSurrogatePair(c, *cur++);
     }
   } else {
     // Not a surrogate.
