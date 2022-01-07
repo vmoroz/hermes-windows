@@ -5208,7 +5208,7 @@ napi_status NapiEnvironment::getDateValue(
     double *result) noexcept {
   CHECK_ARG(value);
   vm::JSDate *date = vm::vmcast_or_null<vm::JSDate>(*phv(value));
-  RETURN_STATUS_IF_FALSE(date, napi_date_expected);
+  RETURN_STATUS_IF_FALSE(date != nullptr, napi_date_expected);
   return setResult(date->getPrimitiveValue(), result);
 }
 
