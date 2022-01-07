@@ -4647,7 +4647,9 @@ napi_status NapiEnvironment::throwError(
     const vm::PinnedHermesValue &prototype,
     const char *code,
     const char *message) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
+
   napi_value messageValue;
   CHECK_NAPI(createStringUTF8(message, &messageValue));
 
