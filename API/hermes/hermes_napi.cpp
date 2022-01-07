@@ -1111,7 +1111,7 @@ class NapiEnvironment final {
   static bool isHermesBytecode(const uint8_t *data, size_t len) noexcept;
 
   //---------------------------------------------------------------------------
-  // Handle creation helpers
+  // Methods to create Hermes GC handles for stack-based variables.
   //
   // vm::Handle is a GC root kept on the stack.
   // The vm::Handle<> is a shortcut for vm::Handle<vm::HermesValue>.
@@ -5243,12 +5243,15 @@ napi_status NapiEnvironment::runScript(
     napi_value source,
     const char *sourceURL,
     napi_value *result) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
+  NapiHandleScope scope{*this, result};
+
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
   std::unique_ptr<char[]> buffer =
       std::unique_ptr<char[]>(new char[sourceSize + 1]);
   CHECK_NAPI(getValueStringUTF8(source, buffer.get(), sourceSize + 1, nullptr));
-  return runScriptWithSourceMap(
+  return scope.setResult(runScriptWithSourceMap(
       ExternalBuffer::make(
           napiEnv(this),
           napi_ext_buffer{
@@ -5260,7 +5263,7 @@ napi_status NapiEnvironment::runScript(
               nullptr}),
       nullptr,
       sourceURL,
-      result);
+      result));
 }
 
 napi_status NapiEnvironment::runSerializedScript(
@@ -5269,10 +5272,13 @@ napi_status NapiEnvironment::runSerializedScript(
     napi_value /*source*/,
     const char *sourceURL,
     napi_value *result) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
+  NapiHandleScope scope{*this, result};
+
   std::unique_ptr<uint8_t[]> bufferCopy =
       std::unique_ptr<uint8_t[]>(new uint8_t[bufferLength]);
   std::copy(buffer, buffer + bufferLength, bufferCopy.get());
-  return runScriptWithSourceMap(
+  return scope.setResult(runScriptWithSourceMap(
       ExternalBuffer::make(
           napiEnv(this),
           napi_ext_buffer{
@@ -5285,7 +5291,7 @@ napi_status NapiEnvironment::runSerializedScript(
               nullptr}),
       nullptr,
       sourceURL,
-      result);
+      result));
 }
 
 napi_status NapiEnvironment::serializeScript(
@@ -5293,6 +5299,9 @@ napi_status NapiEnvironment::serializeScript(
     const char *sourceURL,
     napi_ext_buffer_callback bufferCallback,
     void *bufferHint) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
+  NapiHandleScope scope{*this};
+
   size_t sourceSize{};
   CHECK_NAPI(getValueStringUTF8(source, nullptr, 0, &sourceSize));
   std::unique_ptr<char[]> buffer =
@@ -5333,6 +5342,9 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
     std::unique_ptr<hermes::Buffer> sourceMapBuf,
     const char *sourceURL,
     napi_ext_prepared_script *preparedScript) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
+  NapiHandleScope scope{*this};
+
   std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
   vm::RuntimeModuleFlags runtimeFlags{};
   runtimeFlags.persistent = true;
@@ -5342,7 +5354,7 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
   // to any error message.
   uint8_t bufPrefix[16];
   const size_t bufSize = buffer->size();
-  memcpy(bufPrefix, buffer->data(), std::min(sizeof(bufPrefix), bufSize));
+  std::memcpy(bufPrefix, buffer->data(), std::min(sizeof(bufPrefix), bufSize));
 
   // Construct the BC provider either from buffer or source.
   if (isBytecode) {
@@ -5379,13 +5391,11 @@ napi_status NapiEnvironment::prepareScriptWithSourceMap(
 #endif
   }
   if (!bcErr.first) {
-    std::string storage;
-    llvh::raw_string_ostream os(storage);
-    os << " Buffer size " << bufSize << " starts with: ";
+    StringBuilder sb(" Buffer size: ", bufSize, ", starts with: ");
     for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i) {
-      os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
+      sb.append(llvh::format_hex_no_prefix(bufPrefix[i], 2));
     }
-    return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, os.str());
+    return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, sb.str());
   }
   *preparedScript =
       reinterpret_cast<napi_ext_prepared_script>(new HermesPreparedJavaScript(
@@ -5426,6 +5436,9 @@ napi_status NapiEnvironment::serializePreparedScript(
     napi_ext_prepared_script preparedScript,
     napi_ext_buffer_callback bufferCallback,
     void *bufferHint) noexcept {
+  CHECK_NAPI(checkPendingExceptions());
+  NapiHandleScope scope{*this};
+
   CHECK_ARG(preparedScript);
   CHECK_ARG(bufferCallback);
 
@@ -5482,7 +5495,7 @@ napi_status NapiEnvironment::serializePreparedScript(
 }
 
 //---------------------------------------------------------------------------
-// Handle creation helpers
+// Methods to create Hermes GC handles for stack-based variables.
 //---------------------------------------------------------------------------
 
 vm::Handle<> NapiEnvironment::makeHandle(napi_value value) noexcept {
