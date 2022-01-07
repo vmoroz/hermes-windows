@@ -49,17 +49,6 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
-// TODO: Implement unit tests
-
-// TODO: Better native error handling
-// TODO: use extended message for errors
-
-// TODO: adjustExternalMemory
-// TODO: see if finalizers can return error or exception
-
-// TODO: use modern C++ initialization syntax.
-// TODO: replace () initialization with {}
-
 #define NAPI_EXPERIMENTAL
 
 #include "napi/hermes_napi.h"
@@ -5515,6 +5504,7 @@ vm::Handle<> NapiEnvironment::makeHandle(vm::Handle<> value) noexcept {
   return value;
 }
 
+// Useful for converting index to a name/index handle.
 vm::Handle<> NapiEnvironment::makeHandle(uint32_t value) noexcept {
   return makeHandle(vm::HermesValue::encodeDoubleValue(value));
 }
