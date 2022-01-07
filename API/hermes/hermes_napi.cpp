@@ -1388,11 +1388,17 @@ class CallbackInfo final {
       "Host Function", stats, stats.hostFunction};
 
   CallbackInfo callbackInfo{*hfc, hvArgs};
-  napi_value result = hfc->hostCallback_(
-      napiEnv(&env), reinterpret_cast<napi_callback_info>(&callbackInfo));
-  return *phv(result);
-  // TODO: handle errors
-  // TODO: Add call in module
+  napi_value result{};
+  env.callIntoModule([&](NapiEnvironment *env) {
+    result = hfc->hostCallback_(
+        napiEnv(env), reinterpret_cast<napi_callback_info>(&callbackInfo));
+  });
+
+  if (result) {
+    return *phv(result);
+  } else {
+    return env.undefined();
+  }
 }
 
 // Different types of references:
