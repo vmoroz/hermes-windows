@@ -3892,7 +3892,7 @@ napi_status NapiEnvironment::callFunction(
       *phv(thisArg)};
   if (LLVM_UNLIKELY(newFrame.overflowed())) {
     CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
-        vm::StackRuntime::StackOverflowKind::NativeStack)));
+        vm::Runtime::StackOverflowKind::NativeStack)));
   }
 
   for (uint32_t i = 0; i < argCount; ++i) {
@@ -3970,7 +3970,7 @@ napi_status NapiEnvironment::newInstance(
       thisHandle.getHermesValue()};
   if (LLVM_UNLIKELY(newFrame.overflowed())) {
     CHECK_NAPI(checkHermesStatus(runtime_.raiseStackOverflow(
-        vm::StackRuntime::StackOverflowKind::NativeStack)));
+        vm::Runtime::StackOverflowKind::NativeStack)));
   }
   for (size_t i = 0; i != argCount; ++i) {
     newFrame->getArgRef(static_cast<int32_t>(i)) = *phv(args[i]);
@@ -5449,6 +5449,10 @@ napi_status NapiEnvironment::serializePreparedScript(
     bufferCallback(
         napiEnv(this), bufferRef.data(), bufferRef.size(), bufferHint);
   } else {
+#if defined(HERMESVM_LEAN)
+    return GENERIC_FAILURE(
+        "serializePreparedScript source compilation not supported");
+#else
     std::shared_ptr<hbc::BCProviderFromSrc> bytecodeProvider =
         std::static_pointer_cast<hbc::BCProviderFromSrc>(
             hermesPreparedScript->bytecodeProvider());
@@ -5478,6 +5482,7 @@ napi_status NapiEnvironment::serializePreparedScript(
         reinterpret_cast<uint8_t *>(bytecodeVector.data()),
         bytecodeVector.size(),
         bufferHint);
+#endif
   }
 
   return clearLastError();
