@@ -518,4 +518,4 @@ std::string NapiTestErrorHandler::GetSourceCodeSliceForError(int32_t lineIndex, 
 
 using namespace napitest;
 
-//INSTANTIATE_TEST_SUITE_P(NapiEnv, NapiTest, ::testing::ValuesIn(NapiEnvFactories()));
+INSTANTIATE_TEST_CASE_P(NapiEnvs, NapiTest, ::testing::ValuesIn(NapiEnvFactories()));
