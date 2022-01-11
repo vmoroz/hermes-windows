@@ -55,3 +55,10 @@ set(LLVM_ENABLE_RTTI ON)
 
 add_hermes_unittest(NAPITests ${NAPITests} LINK_LIBS hermesNapi)
 target_link_libraries(NAPITests hermesNapi libhermes)
+
+add_custom_command(TARGET NAPITests POST_BUILD
+  DEPENDS libhermes
+  VERBATIM
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+  $<TARGET_FILE:libhermes>
+  $<TARGET_FILE_DIR:NAPITests>)
