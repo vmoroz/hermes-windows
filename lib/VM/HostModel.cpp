@@ -129,7 +129,7 @@ FinalizableNativeConstructor::create(
           functionPtr,
           finalizePtr,
           creatorFunction<JSObject>,
-          CellKind::FunctionKind);
+          CellKind::ObjectKind);
   Handle<FinalizableNativeConstructor> selfHandle =
       JSObjectInit::initToHandle(runtime, cell);
 
