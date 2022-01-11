@@ -3603,7 +3603,7 @@ napi_status NapiEnvironment::defineProperties(
           objHandle, *name, dpFlags, makeHandle(*propRes), nullptr));
     } else if (p->method != nullptr) {
       vm::MutableHandle<vm::Callable> method{&runtime_};
-      CHECK_NAPI(newFunction(name.get(), p->getter, p->data, &method));
+      CHECK_NAPI(newFunction(name.get(), p->method, p->data, &method));
       CHECK_NAPI(defineOwnProperty(objHandle, *name, dpFlags, method, nullptr));
     } else {
       CHECK_NAPI(defineOwnProperty(
@@ -6746,7 +6746,8 @@ napi_status __cdecl napi_ext_has_unhandled_promise_rejection(
     napi_env env,
     bool *result) {
   // TODO: implement
-  return napi_generic_failure;
+  *result = false;
+  return napi_ok;
 }
 
 napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(

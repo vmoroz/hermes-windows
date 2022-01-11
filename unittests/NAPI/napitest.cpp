@@ -205,7 +205,7 @@ napi_value NapiTestContext::GetModule(char const *moduleName) {
       auto nativeModuleIt = m_nativeModules.find(moduleName);
       if (nativeModuleIt != m_nativeModules.end()) {
         napi_value exports{};
-        napi_create_object(env, &exports);
+        NODE_API_CALL(env, napi_create_object(env, &exports));
         result = nativeModuleIt->second(env, exports);
       }
     }

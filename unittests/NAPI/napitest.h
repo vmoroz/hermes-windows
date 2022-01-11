@@ -22,6 +22,16 @@ extern "C" {
 #include "js-native-api/common.h"
 }
 
+// Crash if the condition is false.
+#define CRASH_IF_FALSE(condition)  \
+  do {                             \
+    if (!(condition)) {            \
+      assert(false && #condition); \
+      *((int *)nullptr) = 1;       \
+      std::terminate();            \
+    }                              \
+  } while (false)
+
 // Use this macro to handle NAPI function results in test code.
 // It throws NapiTestException that we then convert to GTest failure.
 #define THROW_IF_NOT_OK(expr)                             \
@@ -143,6 +153,20 @@ struct NapiRefDeleter {
 
 using NapiRef = std::unique_ptr<napi_ref__, NapiRefDeleter>;
 extern NapiRef MakeNapiRef(napi_env env, napi_value value);
+
+struct NapiHandleScope {
+  NapiHandleScope(napi_env env) noexcept : m_env{env} {
+    CRASH_IF_FALSE(napi_open_handle_scope(env, &m_scope) == napi_ok);
+  }
+
+  ~NapiHandleScope() noexcept {
+    CRASH_IF_FALSE(napi_close_handle_scope(m_env, m_scope) == napi_ok);
+  }
+
+ private:
+  napi_env m_env{nullptr};
+  napi_handle_scope m_scope{nullptr};
+};
 
 // The context to run a NAPI test.
 // Some tests require interaction of multiple JS environments.
