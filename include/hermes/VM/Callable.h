@@ -694,7 +694,10 @@ class NativeConstructor : public NativeFunction {
   static const CallableVTable vt;
 
   static bool classof(const GCCell *cell) {
-    return cell->getKind() == CellKind::NativeConstructorKind;
+    return kindInRange(
+        cell->getKind(),
+        CellKind::NativeConstructorKind_first,
+        CellKind::NativeConstructorKind_last);
   }
 
   /// Create an instance of NativeConstructor.
