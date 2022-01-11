@@ -35,6 +35,7 @@ HERMES_VM_GCOBJECT(BoundFunction);
 HERMES_VM_GCOBJECT(NativeFunction);
 HERMES_VM_GCOBJECT(FinalizableNativeFunction);
 HERMES_VM_GCOBJECT(NativeConstructor);
+HERMES_VM_GCOBJECT(FinalizableNativeConstructor);
 HERMES_VM_GCOBJECT(JSFunction);
 HERMES_VM_GCOBJECT(JSGeneratorFunction);
 HERMES_VM_GCOBJECT(JSAsyncFunction);

@@ -671,7 +671,7 @@ class NativeFunction : public Callable {
 
 /// A NativeFunction to be used as a constructor for native objects other than
 /// Object.
-class NativeConstructor final : public NativeFunction {
+class NativeConstructor : public NativeFunction {
  public:
   /// A CreatorFunction is responsible for creating the 'this' object that the
   /// constructor function sees.
@@ -763,6 +763,23 @@ class NativeConstructor final : public NativeFunction {
   /// Typically passed by invoking NativeConstructor::creatorFunction<T>.
   CreatorFunction *const creator_;
 
+ protected:
+  NativeConstructor(
+      Runtime *runtime,
+      const VTable *vtp,
+      Handle<JSObject> parent,
+      Handle<HiddenClass> clazz,
+      void *context,
+      NativeFunctionPtr functionPtr,
+      CreatorFunction *creator,
+      CellKind targetKind)
+      : NativeFunction(runtime, vtp, parent, clazz, context, functionPtr),
+#ifndef NDEBUG
+        targetKind_(targetKind),
+#endif
+        creator_(creator) {
+  }
+
  public:
   NativeConstructor(
       Runtime *runtime,
@@ -808,7 +825,7 @@ class NativeConstructor final : public NativeFunction {
         creator_(creator) {
   }
 
- private:
+ protected:
   /// Create a an instance of an object from \c creator_ to be passed as the
   /// 'this' argument when invoking the constructor.
   static CallResult<PseudoHandle<JSObject>> _newObjectImpl(
