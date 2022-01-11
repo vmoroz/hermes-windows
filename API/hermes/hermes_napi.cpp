@@ -74,6 +74,9 @@
 #include <algorithm>
 #include <atomic>
 
+// TODO: Add unit tests for the external JSArrayBuffer
+// TODO: Add unit tests for FinalizableNativeConstructor
+
 //=============================================================================
 // Macros
 //=============================================================================
@@ -3565,23 +3568,18 @@ napi_status NapiEnvironment::defineProperties(
     const napi_property_descriptor *p = &properties[i];
     CHECK_NAPI(symbolIDFromPropertyDescriptor(p, &name));
 
-    vm::DefinePropertyFlags dpFlags =
-        vm::DefinePropertyFlags::getDefaultNewPropertyFlags();
-    if ((p->attributes & napi_writable) == 0) {
-      dpFlags.writable = 0;
-    }
-    if ((p->attributes & napi_enumerable) == 0) {
-      dpFlags.enumerable = 0;
-    }
-    if ((p->attributes & napi_configurable) == 0) {
-      dpFlags.configurable = 0;
-    }
+    vm::DefinePropertyFlags dpFlags{};
+    dpFlags.setEnumerable = 1;
+    dpFlags.setConfigurable = 1;
+    dpFlags.enumerable = (p->attributes & napi_enumerable) == 0 ? 0 : 1;
+    dpFlags.configurable = (p->attributes & napi_configurable) == 0 ? 0 : 1;
 
-    if ((p->getter != nullptr) | (p->setter != nullptr)) {
+    if ((p->getter != nullptr) || (p->setter != nullptr)) {
       vm::MutableHandle<vm::Callable> localGetter{&runtime_};
       vm::MutableHandle<vm::Callable> localSetter{&runtime_};
 
       if (p->getter != nullptr) {
+        dpFlags.setGetter = 1;
         CHECK_NAPI(newFunction(
             vm::Predefined::getSymbolID(vm::Predefined::get),
             p->getter,
@@ -3589,9 +3587,10 @@ napi_status NapiEnvironment::defineProperties(
             &localGetter));
       }
       if (p->setter != nullptr) {
+        dpFlags.setSetter = 1;
         CHECK_NAPI(newFunction(
             vm::Predefined::getSymbolID(vm::Predefined::set),
-            p->getter,
+            p->setter,
             p->data,
             &localSetter));
       }
@@ -3601,13 +3600,19 @@ napi_status NapiEnvironment::defineProperties(
       CHECK_NAPI(checkHermesStatus(propRes));
       CHECK_NAPI(defineOwnProperty(
           objHandle, *name, dpFlags, makeHandle(*propRes), nullptr));
-    } else if (p->method != nullptr) {
-      vm::MutableHandle<vm::Callable> method{&runtime_};
-      CHECK_NAPI(newFunction(name.get(), p->method, p->data, &method));
-      CHECK_NAPI(defineOwnProperty(objHandle, *name, dpFlags, method, nullptr));
     } else {
-      CHECK_NAPI(defineOwnProperty(
-          objHandle, *name, dpFlags, makeHandle(p->value), nullptr));
+      dpFlags.setValue = 1;
+      dpFlags.setWritable = 1;
+      dpFlags.writable = (p->attributes & napi_writable) == 0 ? 0 : 1;
+      if (p->method != nullptr) {
+        vm::MutableHandle<vm::Callable> method{&runtime_};
+        CHECK_NAPI(newFunction(name.get(), p->method, p->data, &method));
+        CHECK_NAPI(
+            defineOwnProperty(objHandle, *name, dpFlags, method, nullptr));
+      } else {
+        CHECK_NAPI(defineOwnProperty(
+            objHandle, *name, dpFlags, makeHandle(p->value), nullptr));
+      }
     }
   }
 
@@ -4066,30 +4071,24 @@ napi_status NapiEnvironment::defineClass(
   }
 
   vm::MutableHandle<vm::SymbolID> nameHandle{&runtime_};
-  vm::MutableHandle<vm::Callable> classHandle{&runtime_};
   CHECK_NAPI(createSymbolID(utf8Name, length, &nameHandle));
-  CHECK_NAPI(
-      newFunction(nameHandle.get(), constructor, callbackData, &classHandle));
 
   vm::Handle<vm::JSObject> prototypeHandle{
       makeHandle(vm::JSObject::create(&runtime_))};
-  vm::PropertyFlags pf{};
-  pf.enumerable = 0;
-  pf.writable = 1;
-  pf.configurable = 0;
-  CHECK_NAPI(checkHermesStatus(vm::JSObject::defineNewOwnProperty(
-      classHandle,
-      &runtime_,
-      vm::Predefined::getSymbolID(vm::Predefined::prototype),
-      pf,
-      prototypeHandle)));
-  pf.configurable = 1;
-  CHECK_NAPI(checkHermesStatus(vm::JSObject::defineNewOwnProperty(
-      prototypeHandle,
-      &runtime_,
-      vm::Predefined::getSymbolID(vm::Predefined::constructor),
-      pf,
-      classHandle)));
+
+  std::unique_ptr<HostFunctionContext> context =
+      std::make_unique<HostFunctionContext>(*this, constructor, callbackData);
+  vm::CallResult<vm::Handle<vm::FinalizableNativeConstructor>> ctorRes =
+      vm::FinalizableNativeConstructor::create(
+          &runtime_,
+          context.release(),
+          &HostFunctionContext::func,
+          &HostFunctionContext::finalize,
+          prototypeHandle,
+          nameHandle.get(),
+          /*paramCount:*/ 0);
+  CHECK_NAPI(checkHermesStatus(ctorRes));
+  vm::Handle<vm::JSObject> classHandle = makeHandle<vm::JSObject>(*ctorRes);
 
   for (size_t i = 0; i < propertyCount; ++i) {
     const napi_property_descriptor *p = properties + i;
@@ -4355,7 +4354,8 @@ napi_status NapiEnvironment::getExternalPropertyValue(
   napi_value napiExternalValue;
   napi_status status = getPredefined(
       object, NapiPredefined::napi_externalValue, &napiExternalValue);
-  if (status == napi_ok) {
+  if (status == napi_ok &&
+      vm::vmisa<vm::DecoratedObject>(*phv(napiExternalValue))) {
     externalValue = getExternalObjectValue(*phv(napiExternalValue));
     RETURN_FAILURE_IF_FALSE(externalValue != nullptr);
   } else if (ifNotFound == IfNotFound::ThenCreate) {
