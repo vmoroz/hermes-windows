@@ -166,6 +166,10 @@
         "Argument is not a String: " #arg); \
   } while (false)
 
+#if defined(_WIN32) && !defined(NDEBUG)
+extern "C" __declspec(dllimport) void __stdcall DebugBreak();
+#endif
+
 namespace hermes {
 namespace napi {
 
@@ -2586,6 +2590,11 @@ napi_status NapiEnvironment::setLastError(
   sb.append("\nLine: ", line);
   lastErrorMessage_ = std::move(sb.str());
   lastError_ = {lastErrorMessage_.c_str(), 0, 0, status};
+
+#if defined(_WIN32) && !defined(NDEBUG)
+  DebugBreak();
+#endif
+
   return status;
 }
 
