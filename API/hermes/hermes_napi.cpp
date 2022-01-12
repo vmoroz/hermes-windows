@@ -2693,7 +2693,10 @@ napi_status NapiEnvironment::createStringLatin1(
   // Latin1 has the same codes as Unicode.
   // We just need to expand char to char16_t.
   std::u16string u16str(length, u'\0');
-  std::copy(str, str + length, &u16str[0]);
+  // Cast to unsigned to avoid signed value expansion to 16 bit.
+  const uint8_t *ustr = reinterpret_cast<const uint8_t *>(str);
+  std::copy(ustr, ustr + length, &u16str[0]);
+
   return scope.setResult(
       vm::StringPrimitive::createEfficient(&runtime_, std::move(u16str)));
 }
