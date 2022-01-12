@@ -194,7 +194,7 @@ function Invoke-Compiler-Build($SourcesPath, $buildPath, $Platform, $Configurati
     $genArgs += "-DFOLLY_SOURCE=$FOLLYDIR"
     $genArgs += "-DBOOST_SOURCE=$BOOSTDIR"
 
-    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('hermes','hermesc') $$incrementalBuild $Platform $Configuration $AppPlatform
+    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('hermes','hermesc') $incrementalBuild $Platform $Configuration $AppPlatform
     Pop-Location
 }
 
@@ -241,9 +241,9 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
     Invoke-BuildImpl $SourcesPath $buildPath $genArgs $targets $incrementalBuild $Platform $Configuration $AppPlatform
 }
 
-function Invoke-Test-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform,  $incrementalBuild) {
+function Invoke-Test-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, $Platform, $Configuration, $AppPlatform, $incrementalBuild) {
     $genArgs = @();
-    get-CommonArgs([ref]$genArgs)
+    get-CommonArgs $Platform $Configuration $AppPlatform ([ref]$genArgs)
 
     $genArgs += '-DHERMES_ENABLE_DEBUGGER=On'
 
@@ -254,7 +254,7 @@ function Invoke-Test-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath,
         $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 
-    Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, @('check-hermes')) $incrementalBuild $Platform $Configuration $AppPlatform
+    Invoke-BuildImpl $SourcesPath $buildPath $genArgs @('check-hermes') $incrementalBuild $Platform $Configuration $AppPlatform
 }
 
 function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Configuration, $AppPlatform, $RNDIR, $FOLLYDIR, $BOOSTDIR) {
@@ -293,7 +293,7 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
     
 
     if ($RunTests.IsPresent) {
-        Invoke-Test-Build($SourcesPath, $buildPath, $Platform, $Configuration, $AppPlatform);
+        Invoke-Test-Build $SourcesPath $buildPath $compilerAndToolsBuildPath $Platform $Configuration, $AppPlatform $Incremental.IsPresent
     }
     
     $finalOutputPath = "$OutputPath\lib\native\$Configuration\$Platform";
