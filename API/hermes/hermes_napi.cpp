@@ -876,7 +876,7 @@ class NapiEnvironment final {
       const vm::PinnedHermesValue *value,
       Finalizer *finalizer) noexcept;
   template <class TLambda>
-  void callIntoModule(TLambda &&call) noexcept;
+  vm::ExecutionStatus callIntoModule(TLambda &&call) noexcept;
   void callFinalizer(
       napi_finalize finalizeCallback,
       void *nativeData,
@@ -1394,10 +1394,14 @@ class CallbackInfo final {
 
   CallbackInfo callbackInfo{*hfc, hvArgs};
   napi_value result{};
-  env.callIntoModule([&](NapiEnvironment *env) {
+  vm::ExecutionStatus status = env.callIntoModule([&](NapiEnvironment *env) {
     result = hfc->hostCallback_(
         napiEnv(env), reinterpret_cast<napi_callback_info>(&callbackInfo));
   });
+
+  if (status == vm::ExecutionStatus::EXCEPTION) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
 
   if (result) {
     return *phv(result);
@@ -2521,6 +2525,9 @@ StableAddressStack<vm::PinnedHermesValue>
 napi_status NapiEnvironment::getLastErrorInfo(
     const napi_extended_error_info **result) noexcept {
   CHECK_ARG(result);
+  if (lastError_.error_code == napi_ok) {
+    lastError_ = {"", 0, 0, napi_ok};
+  }
   *result = &lastError_;
   return napi_ok;
 }
@@ -2584,9 +2591,7 @@ napi_status NapiEnvironment::setLastError(
 }
 
 napi_status NapiEnvironment::clearLastError() noexcept {
-  lastErrorMessage_.clear();
-  lastError_ = {"", 0, 0, napi_ok};
-  return napi_ok;
+  return lastError_.error_code = napi_ok;
 }
 
 napi_status NapiEnvironment::checkHermesStatus(
@@ -4433,7 +4438,7 @@ napi_status NapiEnvironment::addObjectFinalizer(
 }
 
 template <class TLambda>
-void NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
+vm::ExecutionStatus NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
   size_t openHandleScopesBefore = gcRootStackScopes_.size();
   clearLastError();
   call(this);
@@ -4442,6 +4447,8 @@ void NapiEnvironment::callIntoModule(TLambda &&call) noexcept {
     runtime_.setThrownValue(lastException_);
     lastException_ = EmptyHermesValue;
   }
+  return runtime_.getThrownValue().isEmpty() ? vm::ExecutionStatus::RETURNED
+                                             : vm::ExecutionStatus::EXCEPTION;
 }
 
 void NapiEnvironment::callFinalizer(
