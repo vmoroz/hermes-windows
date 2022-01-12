@@ -168,7 +168,6 @@
 
 namespace hermes {
 namespace napi {
-namespace {
 
 //=============================================================================
 // Forward declaration of all classes.
@@ -5685,7 +5684,6 @@ napi_status NapiEnvironment::setResultUnsafe(
   return setResultUnsafe(std::move(*value), result);
 }
 
-} // namespace
 } // namespace napi
 } // namespace hermes
 
