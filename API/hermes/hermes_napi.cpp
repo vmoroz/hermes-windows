@@ -714,7 +714,7 @@ class NapiEnvironment final {
   napi_status putPredefined(
       TObject object,
       NapiPredefined key,
-      TValue value,
+      TValue &&value,
       bool *optResult = nullptr) noexcept;
   template <class TObject>
   napi_status
@@ -729,7 +729,7 @@ class NapiEnvironment final {
   napi_status putNamed(
       TObject object,
       vm::SymbolID key,
-      TValue value,
+      TValue &&value,
       bool *optResult = nullptr) noexcept;
   template <class TObject>
   napi_status hasNamed(TObject object, vm::SymbolID key, bool *result) noexcept;
@@ -1026,8 +1026,8 @@ class NapiEnvironment final {
       napi_value *result) noexcept;
   napi_status createPromise(
       napi_value *promise,
-      napi_value *resolveFunction,
-      napi_value *rejectFunction) noexcept;
+      vm::MutableHandle<> *resolveFunction,
+      vm::MutableHandle<> *rejectFunction) noexcept;
   napi_status resolveDeferred(
       napi_deferred deferred,
       napi_value resolution) noexcept;
@@ -1037,7 +1037,7 @@ class NapiEnvironment final {
   napi_status concludeDeferred(
       napi_deferred deferred,
       NapiPredefined predefinedProperty,
-      napi_value result) noexcept;
+      napi_value resolution) noexcept;
   napi_status isPromise(napi_value value, bool *result) noexcept;
 
   //-----------------------------------------------------------------------------
@@ -3690,9 +3690,10 @@ template <class TObject, class TValue>
 napi_status NapiEnvironment::putPredefined(
     TObject object,
     NapiPredefined key,
-    TValue value,
+    TValue &&value,
     bool *optResult) noexcept {
-  return putNamed(object, getPredefinedSymbol(key), value, optResult);
+  return putNamed(
+      object, getPredefinedSymbol(key), std::forward<TValue>(value), optResult);
 }
 
 template <class TObject>
@@ -3715,13 +3716,13 @@ template <class TObject, class TValue>
 napi_status NapiEnvironment::putNamed(
     TObject object,
     vm::SymbolID name,
-    TValue value,
+    TValue &&value,
     bool *optResult) noexcept {
   vm::CallResult<bool> res = vm::JSObject::putNamed_RJS(
       makeHandle<vm::JSObject>(object),
       &runtime_,
       name,
-      makeHandle(value),
+      makeHandle(std::forward<TValue>(value)),
       vm::PropOpFlags().plusThrowOnError());
   return setOptionalResult(std::move(res), optResult);
 }
@@ -5086,8 +5087,11 @@ napi_status NapiEnvironment::createPromise(
   NapiHandleScope scope{*this, result};
   CHECK_ARG(deferred);
 
-  napi_value jsPromise, jsResolve, jsReject, jsDeferred;
+  napi_value jsPromise, jsDeferred;
+  vm::MutableHandle<> jsResolve{&runtime_};
+  vm::MutableHandle<> jsReject{&runtime_};
   CHECK_NAPI(createPromise(&jsPromise, &jsResolve, &jsReject));
+
   CHECK_NAPI(createObject(&jsDeferred));
   CHECK_NAPI(putPredefined(jsDeferred, NapiPredefined::resolve, jsResolve));
   CHECK_NAPI(putPredefined(jsDeferred, NapiPredefined::reject, jsReject));
@@ -5099,12 +5103,11 @@ napi_status NapiEnvironment::createPromise(
 
 napi_status NapiEnvironment::createPromise(
     napi_value *promise,
-    napi_value *resolveFunction,
-    napi_value *rejectFunction) noexcept {
+    vm::MutableHandle<> *resolveFunction,
+    vm::MutableHandle<> *rejectFunction) noexcept {
   napi_value global, promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(
-      getPredefined(global, NapiPredefined::Promise, &promiseConstructor));
+  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
 
   // The executor function is to be executed by the constructor during the
   // process of constructing the new Promise object. The executor is custom code
@@ -5118,14 +5121,14 @@ napi_status NapiEnvironment::createPromise(
     }
 
     vm::CallResult<vm::HermesValue> callback(const vm::NativeArgs &args) {
-      *resolve = env_->addGCRootStackValue(args.getArg(0));
-      *reject = env_->addGCRootStackValue(args.getArg(1));
+      *resolve = args.getArg(0);
+      *reject = args.getArg(1);
       return env_->undefined();
     }
 
     NapiEnvironment *env_{};
-    napi_value *resolve{};
-    napi_value *reject{};
+    vm::MutableHandle<> *resolve{};
+    vm::MutableHandle<> *reject{};
   } executorData{this, resolveFunction, rejectFunction};
 
   vm::Handle<vm::NativeFunction> executorFunction =
@@ -5154,19 +5157,19 @@ napi_status NapiEnvironment::rejectDeferred(
 napi_status NapiEnvironment::concludeDeferred(
     napi_deferred deferred,
     NapiPredefined predefinedProperty,
-    napi_value result) noexcept {
+    napi_value resolution) noexcept {
   CHECK_ARG(deferred);
-  CHECK_ARG(result);
+  CHECK_ARG(resolution);
 
   Reference *ref = asReference(deferred);
 
   const vm::PinnedHermesValue &jsDeferred = ref->value(*this);
   napi_value resolver, callResult;
   CHECK_NAPI(getPredefined(&jsDeferred, predefinedProperty, &resolver));
-  CHECK_NAPI(callFunction(nullptr, resolver, 1, &result, &callResult));
-  Reference::deleteReference(
+  CHECK_NAPI(callFunction(
+      napi_value(&undefined()), resolver, 1, &resolution, &callResult));
+  return Reference::deleteReference(
       *this, ref, Reference::ReasonToDelete::ZeroRefCount);
-  return clearLastError();
 }
 
 napi_status NapiEnvironment::isPromise(
