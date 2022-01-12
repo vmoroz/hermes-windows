@@ -2446,34 +2446,40 @@ NapiEnvironment::NapiEnvironment(
   setPredefined(
       NapiPredefined::Promise,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().registerLazyIdentifier("Promise")));
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("Promise"))));
   setPredefined(
       NapiPredefined::code,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().registerLazyIdentifier("code")));
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("code"))));
   setPredefined(
       NapiPredefined::hostFunction,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier(
-              "hostFunction")));
+              vm::createASCIIRef("hostFunction"))));
   setPredefined(
       NapiPredefined::napi_externalValue,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
-              "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975")));
+              vm::createASCIIRef(
+                  "napi.externalValue.735e14c9-354f-489b-9f27-02acbc090975"))));
   setPredefined(
       NapiPredefined::napi_typeTag,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().createNotUniquedLazySymbol(
-              "napi.typeTag.026ae0ec-b391-49da-a935-0cab733ab615")));
+              vm::createASCIIRef(
+                  "napi.typeTag.026ae0ec-b391-49da-a935-0cab733ab615"))));
   setPredefined(
       NapiPredefined::reject,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().registerLazyIdentifier("reject")));
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("reject"))));
   setPredefined(
       NapiPredefined::resolve,
       vm::HermesValue::encodeSymbolValue(
-          runtime_.getIdentifierTable().registerLazyIdentifier("resolve")));
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("resolve"))));
 }
 
 NapiEnvironment::~NapiEnvironment() {
@@ -5107,7 +5113,8 @@ napi_status NapiEnvironment::createPromise(
     vm::MutableHandle<> *rejectFunction) noexcept {
   napi_value global, promiseConstructor;
   CHECK_NAPI(getGlobal(&global));
-  CHECK_NAPI(getNamedProperty(global, "Promise", &promiseConstructor));
+  CHECK_NAPI(
+      getPredefined(global, NapiPredefined::Promise, &promiseConstructor));
 
   // The executor function is to be executed by the constructor during the
   // process of constructing the new Promise object. The executor is custom code
