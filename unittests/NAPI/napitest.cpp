@@ -236,15 +236,7 @@ NapiTestErrorHandler NapiTestContext::RunTestScript(char const *script, char con
     m_scriptModules["TestScript"] = TestScriptInfo{GetJSModuleText(script).c_str(), file, line};
 
     RunScript(GetJSModuleText(script).c_str(), "TestScript");
-    while (!m_immediateQueue.empty()) {
-      NapiRef callbackRef = std::move(m_immediateQueue.front());
-      m_immediateQueue.pop();
-      napi_value callback{}, undefined{};
-      THROW_IF_NOT_OK(napi_get_undefined(env, &undefined));
-      THROW_IF_NOT_OK(napi_get_reference_value(env, callbackRef.get(), &callback));
-      THROW_IF_NOT_OK(napi_call_function(env, undefined, callback, 0, nullptr, nullptr));
-    }
-
+    DrainTaskQueue();
     RunCallChecks();
     HandleUnhandledPromiseRejections();
     return NapiTestErrorHandler(this, std::exception_ptr(), "", file, line, 0);
@@ -293,8 +285,6 @@ void NapiTestContext::StartTest() {
   THROW_IF_NOT_OK(napi_create_function(env, "gc", NAPI_AUTO_LENGTH, gcCallback, nullptr, &gc));
   THROW_IF_NOT_OK(napi_set_named_property(env, global, "gc", gc));
 
-  // Add setImmediate()
-  napi_value setImmediate{};
   auto setImmediateCallback = [](napi_env env, napi_callback_info info) -> napi_value {
     size_t argc{1};
     napi_value immediateCallback{};
@@ -312,24 +302,83 @@ void NapiTestContext::StartTest() {
     NapiTestContext *self;
     THROW_IF_NOT_OK(napi_get_value_external(env, selfValue, (void **)&self));
 
-    self->SetImmediate(immediateCallback);
+    uint32_t taskId = self->AddTask(immediateCallback);
+
+    napi_value taskIdValue{};
+    NODE_API_CALL(env, napi_create_uint32(env, taskId, &taskIdValue));
+    return taskIdValue;
+  };
+
+  // Add setImmediate()
+  napi_value setImmediate{};
+  THROW_IF_NOT_OK(
+      napi_create_function(env, "setImmediate", NAPI_AUTO_LENGTH, setImmediateCallback, nullptr, &setImmediate));
+  THROW_IF_NOT_OK(napi_set_named_property(env, global, "setImmediate", setImmediate));
+
+  // Add setTimeout()
+  napi_value setTimeout{};
+  THROW_IF_NOT_OK(
+      napi_create_function(env, "setTimeout", NAPI_AUTO_LENGTH, setImmediateCallback, nullptr, &setTimeout));
+  THROW_IF_NOT_OK(napi_set_named_property(env, global, "setTimeout", setTimeout));
+
+  auto clearTimeoutCallback = [](napi_env env, napi_callback_info info) -> napi_value {
+    size_t argc{1};
+    napi_value taskIdValue{};
+    NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, &taskIdValue, nullptr, nullptr));
+
+    NODE_API_ASSERT(env, argc >= 1, "Wrong number of arguments. Expects at least one argument.");
+    napi_valuetype taskIdType;
+    NODE_API_CALL(env, napi_typeof(env, taskIdValue, &taskIdType));
+    NODE_API_ASSERT(env, taskIdType == napi_number, "Wrong type of argument. Expects a number.");
+    uint32_t taskId;
+    NODE_API_CALL(env, napi_get_value_uint32(env, taskIdValue, &taskId));
+
+    napi_value global{};
+    THROW_IF_NOT_OK(napi_get_global(env, &global));
+    napi_value selfValue{};
+    THROW_IF_NOT_OK(napi_get_named_property(env, global, "__NapiTestContext__", &selfValue));
+    NapiTestContext *self;
+    THROW_IF_NOT_OK(napi_get_value_external(env, selfValue, (void **)&self));
+
+    self->RemoveTask(taskId);
 
     napi_value undefined{};
     NODE_API_CALL(env, napi_get_undefined(env, &undefined));
     return undefined;
   };
 
+  // Add clearTimeout()
+  napi_value clearTimeout{};
   THROW_IF_NOT_OK(
-      napi_create_function(env, "setImmediate", NAPI_AUTO_LENGTH, setImmediateCallback, nullptr, &setImmediate));
-  THROW_IF_NOT_OK(napi_set_named_property(env, global, "setImmediate", setImmediate));
+      napi_create_function(env, "clearTimeout", NAPI_AUTO_LENGTH, clearTimeoutCallback, nullptr, &clearTimeout));
+  THROW_IF_NOT_OK(napi_set_named_property(env, global, "clearTimeout", clearTimeout));
 }
 
 void NapiTestContext::EndTest() {
   THROW_IF_NOT_OK(napi_ext_close_env_scope(env, m_envScope));
 }
 
-void NapiTestContext::SetImmediate(napi_value callback) noexcept {
-  m_immediateQueue.push(MakeNapiRef(env, callback));
+uint32_t NapiTestContext::AddTask(napi_value callback) noexcept{
+  uint32_t taskId = m_nextTaskId++;
+  m_taskQueue.emplace_back(taskId, MakeNapiRef(env, callback));
+  return taskId;
+}
+
+void NapiTestContext::RemoveTask(uint32_t taskId) noexcept{
+  m_taskQueue.remove_if([taskId](const std::pair<uint32_t, NapiRef>& entry) {
+    return entry.first == taskId;
+  });
+}
+
+void NapiTestContext::DrainTaskQueue() {
+  while (!m_taskQueue.empty()) {
+    std::pair<uint32_t, NapiRef> task = std::move(m_taskQueue.front());
+    m_taskQueue.pop_front();
+    napi_value callback{}, undefined{};
+    THROW_IF_NOT_OK(napi_get_undefined(env, &undefined));
+    THROW_IF_NOT_OK(napi_get_reference_value(env, task.second.get(), &callback));
+    THROW_IF_NOT_OK(napi_call_function(env, undefined, callback, 0, nullptr, nullptr));
+  }
 }
 
 void NapiTestContext::RunCallChecks() {

@@ -8,7 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <queue>
+#include <list>
 #include <string>
 #include <vector>
 
@@ -194,7 +194,9 @@ struct NapiTestContext {
   std::string ProcessStack(std::string const &stack, std::string const &assertMethod);
 
   // The callback function to be executed after the script completion.
-  void SetImmediate(napi_value callback) noexcept;
+  uint32_t AddTask(napi_value callback) noexcept;
+  void RemoveTask(uint32_t taskId) noexcept;
+  void DrainTaskQueue();
 
  private:
   napi_env env;
@@ -203,7 +205,8 @@ struct NapiTestContext {
   std::map<std::string, NapiRef, std::less<>> m_modules;
   std::map<std::string, TestScriptInfo, std::less<>> m_scriptModules;
   std::map<std::string, std::function<napi_value(napi_env, napi_value)>> m_nativeModules;
-  std::queue<NapiRef> m_immediateQueue;
+  std::list<std::pair<uint32_t, NapiRef>> m_taskQueue;
+  uint32_t m_nextTaskId{1};
 };
 
 // Handles the exceptions after running tests.

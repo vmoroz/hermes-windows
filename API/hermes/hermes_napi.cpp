@@ -166,6 +166,13 @@
         "Argument is not a String: " #arg); \
   } while (false)
 
+#define RAISE_ERROR_IF_FALSE(condition, message)                             \
+  do {                                                                       \
+    if (!(condition)) {                                                      \
+      return runtime->raiseTypeError(message " Condition: " u## #condition); \
+    }                                                                        \
+  } while (false)
+
 #if defined(_WIN32) && !defined(NDEBUG)
 extern "C" __declspec(dllimport) void __stdcall DebugBreak();
 #endif
@@ -225,10 +232,13 @@ enum class UnwrapAction { KeepWrap, RemoveWrap };
 // Predefined values used by NapiEnvironment.
 enum class NapiPredefined {
   Promise,
+  allRejections,
   code,
   hostFunction,
   napi_externalValue,
   napi_typeTag,
+  onHandled,
+  onUnhandled,
   reject,
   resolve,
   PredefinedCount // a special value that must be last in the enum
@@ -1039,6 +1049,18 @@ class NapiEnvironment final {
       NapiPredefined predefinedProperty,
       napi_value resolution) noexcept;
   napi_status isPromise(napi_value value, bool *result) noexcept;
+  napi_status enablePromiseRejectionTracker() noexcept;
+  static vm::CallResult<vm::HermesValue> handleRejectionNotification(
+      void *context,
+      vm::Runtime *runtime,
+      vm::NativeArgs args,
+      void (*handler)(
+          NapiEnvironment *env,
+          int32_t id,
+          vm::HermesValue error)) noexcept;
+  napi_status hasUnhandledPromiseRejection(bool *result) noexcept;
+  napi_status getAndClearLastUnhandledPromiseRejection(
+      napi_value *result) noexcept;
 
   //-----------------------------------------------------------------------------
   // Memory management
@@ -1221,6 +1243,9 @@ class NapiEnvironment final {
   vm::PinnedHermesValue lastException_{EmptyHermesValue};
   std::string lastErrorMessage_;
   napi_extended_error_info lastError_{"", 0, 0, napi_ok};
+
+  int32_t lastUnhandledRejectionId_{-1};
+  vm::PinnedHermesValue lastUnhandledRejection_{EmptyHermesValue};
 
   InstanceData *instanceData_{};
 
@@ -2390,10 +2415,11 @@ size_t copyASCIIToUTF8(
 
 NapiEnvironment::NapiEnvironment(
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    : rt_(vm::Runtime::create(runtimeConfig.rebuild()
-                                  .withRegisterStack(nullptr)
-                                  .withMaxNumRegisters(kMaxNumRegisters)
-                                  .build())),
+    : rt_(vm::Runtime::create(
+          runtimeConfig.rebuild()
+              .withRegisterStack(nullptr)
+              .withMaxNumRegisters(kMaxNumRegisters)
+              .build())),
       runtime_(*rt_),
       vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()) {
   compileFlags_.optimize = false;
@@ -2425,6 +2451,9 @@ NapiEnvironment::NapiEnvironment(
     if (!lastException_.isEmpty()) {
       acceptor.accept(lastException_);
     }
+    if (!lastUnhandledRejection_.isEmpty()) {
+      acceptor.accept(lastUnhandledRejection_);
+    }
     for (vm::PinnedHermesValue &value : predefinedValues_) {
       acceptor.accept(value);
     }
@@ -2449,6 +2478,11 @@ NapiEnvironment::NapiEnvironment(
           runtime_.getIdentifierTable().registerLazyIdentifier(
               vm::createASCIIRef("Promise"))));
   setPredefined(
+      NapiPredefined::allRejections,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("allRejections"))));
+  setPredefined(
       NapiPredefined::code,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier(
@@ -2471,6 +2505,16 @@ NapiEnvironment::NapiEnvironment(
               vm::createASCIIRef(
                   "napi.typeTag.026ae0ec-b391-49da-a935-0cab733ab615"))));
   setPredefined(
+      NapiPredefined::onHandled,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("onHandled"))));
+  setPredefined(
+      NapiPredefined::onUnhandled,
+      vm::HermesValue::encodeSymbolValue(
+          runtime_.getIdentifierTable().registerLazyIdentifier(
+              vm::createASCIIRef("onUnhandled"))));
+  setPredefined(
       NapiPredefined::reject,
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier(
@@ -2480,6 +2524,8 @@ NapiEnvironment::NapiEnvironment(
       vm::HermesValue::encodeSymbolValue(
           runtime_.getIdentifierTable().registerLazyIdentifier(
               vm::createASCIIRef("resolve"))));
+
+  CRASH_IF_FALSE(enablePromiseRejectionTracker() == napi_ok);
 }
 
 NapiEnvironment::~NapiEnvironment() {
@@ -5192,6 +5238,97 @@ napi_status NapiEnvironment::isPromise(
   return instanceOf(value, promiseConstructor, result);
 }
 
+napi_status NapiEnvironment::enablePromiseRejectionTracker() noexcept {
+  NapiHandleScope scope{*this};
+
+  vm::Handle<vm::NativeFunction> onUnhandled =
+      vm::NativeFunction::createWithoutPrototype(
+          &runtime_,
+          this,
+          [](void *context,
+             vm::Runtime *runtime,
+             vm::NativeArgs args) -> vm::CallResult<vm::HermesValue> {
+            return handleRejectionNotification(
+                context,
+                runtime,
+                args,
+                [](NapiEnvironment *env, int32_t id, vm::HermesValue error) {
+                  env->lastUnhandledRejectionId_ = id;
+                  env->lastUnhandledRejection_ = error;
+                });
+          },
+          getPredefined(NapiPredefined::onUnhandled).getSymbol(),
+          /*paramCount:*/ 2);
+  vm::Handle<vm::NativeFunction> onHandled =
+      vm::NativeFunction::createWithoutPrototype(
+          &runtime_,
+          this,
+          [](void *context,
+             vm::Runtime *runtime,
+             vm::NativeArgs args) -> vm::CallResult<vm::HermesValue> {
+            return handleRejectionNotification(
+                context,
+                runtime,
+                args,
+                [](NapiEnvironment *env, int32_t id, vm::HermesValue error) {
+                  if (env->lastUnhandledRejectionId_ == id) {
+                    env->lastUnhandledRejectionId_ = -1;
+                    env->lastUnhandledRejection_ = EmptyHermesValue;
+                  }
+                });
+          },
+          getPredefined(NapiPredefined::onHandled).getSymbol(),
+          /*paramCount:*/ 2);
+
+  napi_value options;
+  CHECK_NAPI(createObject(&options));
+  CHECK_NAPI(putPredefined(
+      options, NapiPredefined::allRejections, vm::Runtime::getBoolValue(true)));
+  CHECK_NAPI(putPredefined(options, NapiPredefined::onUnhandled, onUnhandled));
+  CHECK_NAPI(putPredefined(options, NapiPredefined::onHandled, onHandled));
+
+  vm::Handle<vm::Callable> hookFunc = vm::Handle<vm::Callable>::dyn_vmcast(
+      makeHandle(&runtime_.promiseRejectionTrackingHook_));
+  RETURN_FAILURE_IF_FALSE(hookFunc);
+  return checkHermesStatus(vm::Callable::executeCall1(
+      hookFunc, &runtime_, vm::Runtime::getUndefinedValue(), *phv(options)));
+}
+
+/*static*/ vm::CallResult<vm::HermesValue>
+NapiEnvironment::handleRejectionNotification(
+    void *context,
+    vm::Runtime *runtime,
+    vm::NativeArgs args,
+    void (*handler)(
+        NapiEnvironment *env,
+        int32_t id,
+        vm::HermesValue error)) noexcept {
+  // Args: id, error
+  RAISE_ERROR_IF_FALSE(args.getArgCount() >= 2, u"Expected two arguments.");
+  vm::HermesValue idArg = args.getArg(0);
+  RAISE_ERROR_IF_FALSE(idArg.isNumber(), "id arg must be a Number.");
+  int32_t id = DoubleConversion::toInt32(idArg.getDouble());
+
+  RAISE_ERROR_IF_FALSE(context != nullptr, u"Context must not be null.");
+  NapiEnvironment *env = reinterpret_cast<NapiEnvironment *>(context);
+
+  (*handler)(env, id, args.getArg(1));
+  return env->undefined();
+}
+
+napi_status NapiEnvironment::hasUnhandledPromiseRejection(
+    bool *result) noexcept {
+  return setResult(lastUnhandledRejectionId_ != -1, result);
+}
+
+napi_status NapiEnvironment::getAndClearLastUnhandledPromiseRejection(
+    napi_value *result) noexcept {
+  lastUnhandledRejectionId_ = -1;
+  vm::HermesValue rejection =
+      std::exchange(lastUnhandledRejection_, EmptyHermesValue);
+  return setResult(rejection, result);
+}
+
 //-----------------------------------------------------------------------------
 // Memory management
 //-----------------------------------------------------------------------------
@@ -6772,16 +6909,13 @@ napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
 napi_status __cdecl napi_ext_has_unhandled_promise_rejection(
     napi_env env,
     bool *result) {
-  // TODO: implement
-  *result = false;
-  return napi_ok;
+  return CHECKED_ENV(env)->hasUnhandledPromiseRejection(result);
 }
 
 napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(
     napi_env env,
     napi_value *result) {
-  // TODO: implement
-  return napi_generic_failure;
+  return CHECKED_ENV(env)->getAndClearLastUnhandledPromiseRejection(result);
 }
 
 napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
