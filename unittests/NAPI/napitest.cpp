@@ -101,20 +101,26 @@ NapiTestException::NapiTestException(napi_env env, napi_value error) noexcept {
 
 void NapiTestException::ApplyScriptErrorData(napi_env env, napi_value error) {
   m_errorInfo = std::make_shared<NapiErrorInfo>();
-  m_errorInfo->Name = GetPropertyString(env, error, "name");
-  m_errorInfo->Message = GetPropertyString(env, error, "message");
-  m_errorInfo->Stack = GetPropertyString(env, error, "stack");
-  if (m_errorInfo->Name == "AssertionError") {
-    m_assertionErrorInfo = std::make_shared<NapiAssertionErrorInfo>();
-    m_assertionErrorInfo->Method = GetPropertyString(env, error, "method");
-    m_assertionErrorInfo->Expected = GetPropertyString(env, error, "expected");
-    m_assertionErrorInfo->Actual = GetPropertyString(env, error, "actual");
-    m_assertionErrorInfo->SourceFile = GetPropertyString(env, error, "sourceFile");
-    m_assertionErrorInfo->SourceLine = GetPropertyInt32(env, error, "sourceLine");
-    m_assertionErrorInfo->ErrorStack = GetPropertyString(env, error, "errorStack");
-    if (m_assertionErrorInfo->ErrorStack.empty()) {
-      m_assertionErrorInfo->ErrorStack = m_errorInfo->Stack;
+  napi_valuetype errorType{};
+  napi_typeof(env, error, &errorType);
+  if (errorType == napi_object) {
+    m_errorInfo->Name = GetPropertyString(env, error, "name");
+    m_errorInfo->Message = GetPropertyString(env, error, "message");
+    m_errorInfo->Stack = GetPropertyString(env, error, "stack");
+    if (m_errorInfo->Name == "AssertionError") {
+      m_assertionErrorInfo = std::make_shared<NapiAssertionErrorInfo>();
+      m_assertionErrorInfo->Method = GetPropertyString(env, error, "method");
+      m_assertionErrorInfo->Expected = GetPropertyString(env, error, "expected");
+      m_assertionErrorInfo->Actual = GetPropertyString(env, error, "actual");
+      m_assertionErrorInfo->SourceFile = GetPropertyString(env, error, "sourceFile");
+      m_assertionErrorInfo->SourceLine = GetPropertyInt32(env, error, "sourceLine");
+      m_assertionErrorInfo->ErrorStack = GetPropertyString(env, error, "errorStack");
+      if (m_assertionErrorInfo->ErrorStack.empty()) {
+        m_assertionErrorInfo->ErrorStack = m_errorInfo->Stack;
+      }
     }
+  } else {
+    m_errorInfo->Message = CoerceToString(env, error);
   }
 }
 
@@ -125,12 +131,18 @@ void NapiTestException::ApplyScriptErrorData(napi_env env, napi_value error) {
 }
 
 /*static*/ std::string NapiTestException::GetPropertyString(napi_env env, napi_value obj, char const *name) {
-  napi_value napiValue = GetProperty(env, obj, name);
-  size_t valueSize{};
-  napi_get_value_string_utf8(env, napiValue, nullptr, 0, &valueSize);
-  std::string value(valueSize, '\0');
-  napi_get_value_string_utf8(env, napiValue, &value[0], valueSize + 1, nullptr);
-  return value;
+  bool hasProperty{};
+  napi_has_named_property(env, obj, name, &hasProperty);
+  if (hasProperty) {
+    napi_value napiValue = GetProperty(env, obj, name);
+    size_t valueSize{};
+    napi_get_value_string_utf8(env, napiValue, nullptr, 0, &valueSize);
+    std::string value(valueSize, '\0');
+    napi_get_value_string_utf8(env, napiValue, &value[0], valueSize + 1, nullptr);
+    return value;
+  } else {
+    return "";
+  }
 }
 
 /*static*/ int32_t NapiTestException::GetPropertyInt32(napi_env env, napi_value obj, char const *name) {
@@ -139,6 +151,21 @@ void NapiTestException::ApplyScriptErrorData(napi_env env, napi_value error) {
   napi_get_value_int32(env, napiValue, &value);
   return value;
 }
+
+/*static*/ std::string NapiTestException::CoerceToString(napi_env env, napi_value value) {
+  napi_value strValue;
+  napi_coerce_to_string(env, value, &strValue);
+  return ToString(env, strValue);
+}
+
+/*static*/ std::string NapiTestException::ToString(napi_env env, napi_value value) {
+  size_t valueSize{};
+  napi_get_value_string_utf8(env, value, nullptr, 0, &valueSize);
+  std::string str(valueSize, '\0');
+  napi_get_value_string_utf8(env, value, &str[0], valueSize + 1, nullptr);
+  return str;
+}
+
 
 //=============================================================================
 // NapiTest implementation

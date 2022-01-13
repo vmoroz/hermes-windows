@@ -124,12 +124,11 @@ struct NapiTestException : std::exception {
 
  private:
   void ApplyScriptErrorData(napi_env env, napi_value error);
-
   static napi_value GetProperty(napi_env env, napi_value obj, char const *name);
-
   static std::string GetPropertyString(napi_env env, napi_value obj, char const *name);
-
   static int32_t GetPropertyInt32(napi_env env, napi_value obj, char const *name);
+  static std::string CoerceToString(napi_env env, napi_value value);
+  static std::string ToString(napi_env env, napi_value value);
 
  private:
   napi_status m_errorCode{};
