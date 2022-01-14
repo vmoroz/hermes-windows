@@ -391,26 +391,28 @@ TEST_P(NapiTest, test_basics_ExternalValue5Test) {
     auto native_ptr = std::make_unique<int>(5);
     bool finalizeRan{};
 
-    napi_handle_scope scope{};
-    ASSERT_EQ(napi_ok, napi_open_handle_scope(env, &scope));
+    {
+      napi_handle_scope scope{};
+      ASSERT_EQ(napi_ok, napi_open_handle_scope(env, &scope));
 
-    napi_value external{};
-    ASSERT_EQ(
-        napi_ok,
-        napi_create_external(
-            env,
-            native_ptr.get(),
-            [](napi_env env, void *nativeData, void *finalizeHint) {
-              *static_cast<bool *>(finalizeHint) = true;
-            },
-            &finalizeRan,
-            &external));
+      napi_value external{};
+      ASSERT_EQ(
+          napi_ok,
+          napi_create_external(
+              env,
+              native_ptr.get(),
+              [](napi_env env, void *nativeData, void *finalizeHint) {
+                *static_cast<bool *>(finalizeHint) = true;
+              },
+              &finalizeRan,
+              &external));
 
-    napi_ref ref;
-    ASSERT_EQ(napi_ok, napi_create_reference(env, external, 1, &ref));
+      napi_ref ref;
+      ASSERT_EQ(napi_ok, napi_create_reference(env, external, 1, &ref));
 
-    ASSERT_FALSE(finalizeRan);
-    ASSERT_EQ(napi_ok, napi_close_handle_scope(env, scope));
+      ASSERT_FALSE(finalizeRan);
+      ASSERT_EQ(napi_ok, napi_close_handle_scope(env, scope));
+    }
     ASSERT_EQ(napi_ok, napi_ext_collect_garbage(env));
     ASSERT_FALSE(finalizeRan);
   });
@@ -559,5 +561,112 @@ TEST_P(NapiTest, test_basics_ArrayTest) {
 
     ASSERT_EQ(napi_ok, napi_typeof(env, elementValue, &elementType));
     ASSERT_EQ(elementType, napi_undefined);
+  });
+}
+
+TEST_P(NapiTest, test_basics_Finalizer) {
+  ExecuteNapi([](NapiTestContext * /*testContext*/, napi_env env) {
+    auto native_ptr = std::make_unique<int>(5);
+    bool finalizeRan{};
+    {
+      napi_handle_scope scope{};
+      ASSERT_EQ(napi_ok, napi_open_handle_scope(env, &scope));
+
+      napi_value object{};
+      ASSERT_EQ(napi_ok, napi_create_object(env, &object));
+      ASSERT_EQ(
+          napi_ok,
+          napi_add_finalizer(
+              env,
+              object,
+              native_ptr.get(),
+              [](napi_env env, void *nativeData, void *finalizeHint) {
+                *static_cast<bool *>(finalizeHint) = true;
+              },
+              &finalizeRan,
+              nullptr));
+
+      ASSERT_FALSE(finalizeRan);
+      ASSERT_EQ(napi_ok, napi_close_handle_scope(env, scope));
+    }
+    ASSERT_EQ(napi_ok, napi_ext_collect_garbage(env));
+    ASSERT_TRUE(finalizeRan);
+  });
+}
+
+TEST_P(NapiTest, test_basics_Wrap) {
+  ExecuteNapi([](NapiTestContext * /*testContext*/, napi_env env) {
+    auto native_ptr = std::make_unique<int>(5);
+    bool finalizeRan{};
+    {
+      napi_handle_scope scope{};
+      ASSERT_EQ(napi_ok, napi_open_handle_scope(env, &scope));
+
+      napi_value object{};
+      ASSERT_EQ(napi_ok, napi_create_object(env, &object));
+      ASSERT_EQ(
+          napi_ok,
+          napi_wrap(
+              env,
+              object,
+              native_ptr.get(),
+              [](napi_env env, void *nativeData, void *finalizeHint) {
+                *static_cast<bool *>(finalizeHint) = true;
+              },
+              &finalizeRan,
+              nullptr));
+
+      ASSERT_FALSE(finalizeRan);
+      ASSERT_EQ(napi_ok, napi_close_handle_scope(env, scope));
+    }
+    ASSERT_EQ(napi_ok, napi_ext_collect_garbage(env));
+    ASSERT_TRUE(finalizeRan);
+  });
+}
+
+TEST_P(NapiTest, test_basics_Wrap2) {
+  ExecuteNapi([](NapiTestContext * /*testContext*/, napi_env env) {
+    bool finalizeRan{};
+    {
+      napi_handle_scope scope{};
+      ASSERT_EQ(napi_ok, napi_open_handle_scope(env, &scope));
+
+      napi_value object{};
+      ASSERT_EQ(napi_ok, napi_create_object(env, &object));
+
+      struct MyClass {
+        MyClass(napi_env env) : env(env) {}
+        ~MyClass() {
+          napi_delete_reference(env, wrapper);
+        }
+        napi_env env{};
+        napi_ref wrapper{};
+      };
+
+      MyClass* myc = new MyClass(env);
+
+      ASSERT_EQ(
+          napi_ok,
+          napi_wrap(
+              env,
+              object,
+              myc,
+              [](napi_env env, void *nativeData, void *finalizeHint) {
+                *static_cast<bool *>(finalizeHint) = true;
+                delete reinterpret_cast<MyClass *>(nativeData);
+              },
+              &finalizeRan,
+              &myc->wrapper));
+
+      ASSERT_FALSE(finalizeRan);
+
+      // The object is kept alive by the active handle scope.
+      ASSERT_EQ(napi_ok, napi_ext_collect_garbage(env));
+      ASSERT_FALSE(finalizeRan);
+
+      ASSERT_EQ(napi_ok, napi_close_handle_scope(env, scope));
+    }
+    ASSERT_EQ(napi_ok, napi_ext_collect_garbage(env));
+    ASSERT_TRUE(finalizeRan);
   });
 }
