@@ -2679,7 +2679,7 @@ template <class T>
 napi_status NapiEnvironment::checkHermesStatus(
     const vm::CallResult<T> &callResult,
     napi_status status) noexcept {
-  return checkHermesStatus(callResult.getStatus());
+  return checkHermesStatus(callResult.getStatus(), status);
 }
 
 napi_status NapiEnvironment::checkPendingExceptions() noexcept {
@@ -4020,7 +4020,7 @@ napi_status NapiEnvironment::callFunction(
   }
   vm::CallResult<vm::PseudoHandle<>> callRes =
       vm::Callable::call(funcHandle, &runtime_);
-  CHECK_NAPI(checkHermesStatus(callRes));
+  CHECK_NAPI(checkHermesStatus(callRes, napi_pending_exception));
 
   if (result) {
     RETURN_FAILURE_IF_FALSE(!callRes->get().isEmpty());
@@ -4098,7 +4098,7 @@ napi_status NapiEnvironment::newInstance(
   // The last parameter indicates that this call should construct an object.
   vm::CallResult<vm::PseudoHandle<>> callRes =
       vm::Callable::call(ctorHandle, &runtime_);
-  CHECK_NAPI(checkHermesStatus(callRes));
+  CHECK_NAPI(checkHermesStatus(callRes, napi_pending_exception));
 
   // 13.2.2.9:
   //    If Type(result) is Object then return result
