@@ -2875,11 +2875,14 @@ napi_status NapiEnvironment::getUniqueStringRef(
     it->second->incRefCount(*this, refCount);
     *result = reinterpret_cast<napi_ext_ref>(it->second);
   } else {
-    vm::PinnedHermesValue symbolIDValue = symbolHandle->getHermesValue();
+    vm::PinnedHermesValue primitiveStrValue =
+        vm::HermesValue::encodeStringValue(
+            runtime_.getIdentifierTable().getStringPrim(
+                &runtime_, symbolHandle->get()));
     FinalizingStrongReference *ref;
     CHECK_NAPI(FinalizingStrongReference::create(
         *this,
-        &symbolIDValue,
+        &primitiveStrValue,
         reinterpret_cast<void *>(
             static_cast<size_t>(symbolHandle->get().unsafeGetRaw())),
         [](napi_env env, void *finalizeData, void *finalizeHint) {
