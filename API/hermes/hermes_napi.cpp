@@ -73,6 +73,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <unordered_map>
 
 // TODO: Add unit tests for the external JSArrayBuffer
 // TODO: Add unit tests for FinalizableNativeConstructor
@@ -1239,6 +1240,8 @@ class NapiEnvironment final {
   bool isRunningFinalizers_{};
 
   llvh::SmallVector<OrderedSet<vm::HermesValue> *, 16> orderedSets_;
+
+  std::unordered_map<vm::SymbolID::RawType, StrongReference *> uniqueStrings_;
 
   vm::PinnedHermesValue lastException_{EmptyHermesValue};
   std::string lastErrorMessage_;
@@ -2416,11 +2419,10 @@ size_t copyASCIIToUTF8(
 
 NapiEnvironment::NapiEnvironment(
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    : rt_(vm::Runtime::create(
-          runtimeConfig.rebuild()
-              .withRegisterStack(nullptr)
-              .withMaxNumRegisters(kMaxNumRegisters)
-              .build())),
+    : rt_(vm::Runtime::create(runtimeConfig.rebuild()
+                                  .withRegisterStack(nullptr)
+                                  .withMaxNumRegisters(kMaxNumRegisters)
+                                  .build())),
       runtime_(*rt_),
       vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()) {
   compileFlags_.optimize = false;
@@ -2459,6 +2461,11 @@ NapiEnvironment::NapiEnvironment(
       acceptor.accept(value);
     }
     OrderedSet<vm::HermesValue>::getGCRoots(orderedSets_, acceptor);
+    for (auto &entry : uniqueStrings_) {
+      if (vm::PinnedHermesValue *root = entry.second->getGCRoot(*this)) {
+        acceptor.accept(*root);
+      }
+    }
   });
   runtime_.addCustomWeakRootsFunction(
       [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
@@ -2642,7 +2649,7 @@ napi_status NapiEnvironment::setLastError(
   sb.append("\nFile: ", fileName);
   sb.append("\nLine: ", line);
   lastErrorMessage_ = std::move(sb.str());
-  //TODO: Find a better way to provide the extended error message
+  // TODO: Find a better way to provide the extended error message
   lastError_ = {errorMessages[status], 0, 0, status};
 
 #if defined(_WIN32) && !defined(NDEBUG)
@@ -2852,13 +2859,42 @@ napi_status NapiEnvironment::getUniqueStringRef(
 napi_status NapiEnvironment::getUniqueStringRef(
     napi_value strValue,
     napi_ext_ref *result) noexcept {
+  CHECK_STRING_ARG(strValue);
+  CHECK_ARG(result);
   NapiHandleScope handleScope(*this);
-  vm::MutableHandle<vm::SymbolID> symbolHandle{&runtime_};
-  CHECK_NAPI(createSymbolID(strValue, &symbolHandle));
-  return StrongReference::create(
-      *this,
-      symbolHandle.getHermesValue(),
-      reinterpret_cast<StrongReference **>(result));
+
+  vm::Handle<vm::StringPrimitive> strPrimitive =
+      makeHandle<vm::StringPrimitive>(strValue);
+  vm::CallResult<vm::Handle<vm::SymbolID>> symbolHandle =
+      runtime_.getIdentifierTable().getSymbolHandleFromPrimitive(
+          &runtime_, strPrimitive);
+  CHECK_NAPI(checkHermesStatus(symbolHandle));
+  auto it = uniqueStrings_.find(symbolHandle->get().unsafeGetRaw());
+  if (it != uniqueStrings_.end()) {
+    uint32_t refCount;
+    it->second->incRefCount(*this, refCount);
+    *result = reinterpret_cast<napi_ext_ref>(it->second);
+  } else {
+    vm::PinnedHermesValue symbolIDValue = symbolHandle->getHermesValue();
+    FinalizingStrongReference *ref;
+    CHECK_NAPI(FinalizingStrongReference::create(
+        *this,
+        &symbolIDValue,
+        reinterpret_cast<void *>(
+            static_cast<size_t>(symbolHandle->get().unsafeGetRaw())),
+        [](napi_env env, void *finalizeData, void *finalizeHint) {
+          vm::SymbolID::RawType symbolRawValue =
+              static_cast<vm::SymbolID::RawType>(
+                  reinterpret_cast<size_t>(finalizeData));
+          NapiEnvironment *napiEnv = reinterpret_cast<NapiEnvironment *>(env);
+          napiEnv->uniqueStrings_.erase(symbolRawValue);
+        },
+        nullptr,
+        &ref));
+    uniqueStrings_.emplace(symbolHandle->get().unsafeGetRaw(), ref);
+    *result = reinterpret_cast<napi_ext_ref>(ref);
+  }
+  return clearLastError();
 }
 
 napi_status NapiEnvironment::createSymbolID(
