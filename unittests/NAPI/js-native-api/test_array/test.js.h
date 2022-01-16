@@ -49,7 +49,8 @@ assert.strictEqual(test_array.TestHasElement(array, array.length + 1), false);
 assert(test_array.NewWithLength(0) instanceof Array);
 assert(test_array.NewWithLength(1) instanceof Array);
 // Check max allowed length for an array 2^32 -1
-assert(test_array.NewWithLength(4294967295) instanceof Array);
+// TODO: Hermes does not allow such big arrays
+// assert(test_array.NewWithLength(4294967295) instanceof Array);
 
 {
   // Verify that array elements can be deleted.
