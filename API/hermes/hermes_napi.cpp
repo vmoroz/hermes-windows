@@ -2582,7 +2582,7 @@ napi_status NapiEnvironment::getLastErrorInfo(
     const napi_extended_error_info **result) noexcept {
   CHECK_ARG(result);
   if (lastError_.error_code == napi_ok) {
-    lastError_ = {"", 0, 0, napi_ok};
+    lastError_ = {nullptr, 0, 0, napi_ok};
   }
   *result = &lastError_;
   return napi_ok;
@@ -2642,10 +2642,11 @@ napi_status NapiEnvironment::setLastError(
   sb.append("\nFile: ", fileName);
   sb.append("\nLine: ", line);
   lastErrorMessage_ = std::move(sb.str());
-  lastError_ = {lastErrorMessage_.c_str(), 0, 0, status};
+  //TODO: Find a better way to provide the extended error message
+  lastError_ = {errorMessages[status], 0, 0, status};
 
 #if defined(_WIN32) && !defined(NDEBUG)
-  DebugBreak();
+//  DebugBreak();
 #endif
 
   return status;
