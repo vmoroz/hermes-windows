@@ -622,7 +622,7 @@ class NapiEnvironment final {
   napi_status getValueInt32(napi_value value, int32_t *result) noexcept;
   napi_status getValueUint32(napi_value value, uint32_t *result) noexcept;
   napi_status getValueInt64(napi_value value, int64_t *result) noexcept;
-  napi_status getBoolValue(napi_value value, bool *result) noexcept;
+  napi_status getValueBool(napi_value value, bool *result) noexcept;
   napi_status getValueStringLatin1(
       napi_value value,
       char *buf,
@@ -3017,6 +3017,7 @@ napi_status NapiEnvironment::getValueDouble(
     napi_value value,
     double *result) noexcept {
   CHECK_ARG(value);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
   return setResult(phv(value)->getDouble(), result);
 }
@@ -3025,6 +3026,7 @@ napi_status NapiEnvironment::getValueInt32(
     napi_value value,
     int32_t *result) noexcept {
   CHECK_ARG(value);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
   return setResult(DoubleConversion::toInt32(phv(value)->getDouble()), result);
 }
@@ -3033,6 +3035,7 @@ napi_status NapiEnvironment::getValueUint32(
     napi_value value,
     uint32_t *result) noexcept {
   CHECK_ARG(value);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
   return setResult(DoubleConversion::toUint32(phv(value)->getDouble()), result);
 }
@@ -3041,14 +3044,16 @@ napi_status NapiEnvironment::getValueInt64(
     napi_value value,
     int64_t *result) noexcept {
   CHECK_ARG(value);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(phv(value)->isNumber(), napi_number_expected);
   return setResult(DoubleConversion::toInt64(phv(value)->getDouble()), result);
 }
 
-napi_status NapiEnvironment::getBoolValue(
+napi_status NapiEnvironment::getValueBool(
     napi_value value,
     bool *result) noexcept {
   CHECK_ARG(value);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(phv(value)->isBool(), napi_boolean_expected);
   return setResult(phv(value)->getBool(), result);
 }
@@ -6038,7 +6043,7 @@ napi_status __cdecl napi_get_value_bool(
     napi_env env,
     napi_value value,
     bool *result) {
-  return CHECKED_ENV(env)->getBoolValue(value, result);
+  return CHECKED_ENV(env)->getValueBool(value, result);
 }
 
 // Copies a JavaScript string into a LATIN-1 string buffer. The result is the
