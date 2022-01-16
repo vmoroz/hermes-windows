@@ -167,13 +167,26 @@ struct NapiHandleScope {
   napi_handle_scope m_scope{nullptr};
 };
 
+struct NapiEnvScope {
+  NapiEnvScope(napi_env env) noexcept : m_env{env} {
+    CRASH_IF_FALSE(napi_ext_open_env_scope(env, &m_scope) == napi_ok);
+  }
+
+  ~NapiEnvScope() noexcept {
+    CRASH_IF_FALSE(napi_ext_close_env_scope(m_env, m_scope) == napi_ok);
+  }
+
+ private:
+  napi_env m_env{};
+  napi_ext_env_scope m_scope{};
+};
+
 // The context to run a NAPI test.
 // Some tests require interaction of multiple JS environments.
 // Thus, it is more convenient to have a special NapiTestContext instead of
 // setting the environment per test.
 struct NapiTestContext {
   NapiTestContext(napi_env env);
-  ~NapiTestContext();
 
   napi_value RunScript(char const *code, char const *sourceUrl = nullptr);
   napi_value GetModule(char const *moduleName);
@@ -185,8 +198,7 @@ struct NapiTestContext {
 
   void AddNativeModule(char const *moduleName, std::function<napi_value(napi_env, napi_value)> initModule);
 
-  void StartTest();
-  void EndTest();
+  void DefineGlobalFunctions();
   void RunCallChecks();
   void HandleUnhandledPromiseRejections();
 
@@ -199,8 +211,8 @@ struct NapiTestContext {
 
  private:
   napi_env env;
-  napi_ext_env_scope m_envScope{nullptr};
-  napi_handle_scope m_handleScope;
+  NapiEnvScope m_envScope;
+  NapiHandleScope m_handleScope;
   std::map<std::string, NapiRef, std::less<>> m_modules;
   std::map<std::string, TestScriptInfo, std::less<>> m_scriptModules;
   std::map<std::string, std::function<napi_value(napi_env, napi_value)>> m_nativeModules;

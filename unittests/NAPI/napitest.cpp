@@ -192,20 +192,9 @@ NapiTestErrorHandler NapiTest::ExecuteNapi(std::function<void(NapiTestContext *,
 // NapiTestContext implementation
 //=============================================================================
 
-NapiTestContext::NapiTestContext(napi_env env) : env(env), m_scriptModules(module::GetModuleScripts()) {
-  THROW_IF_NOT_OK(napi_open_handle_scope(env, &m_handleScope));
-
-  napi_value require{}, global{};
-  THROW_IF_NOT_OK(napi_get_global(env, &global));
-  THROW_IF_NOT_OK(napi_create_function(env, "require", NAPI_AUTO_LENGTH, JSRequire, this, &require));
-  THROW_IF_NOT_OK(napi_set_named_property(env, global, "require", require));
-
-  StartTest();
-}
-
-NapiTestContext::~NapiTestContext() {
-  EndTest();
-  napi_close_handle_scope(env, m_handleScope);
+NapiTestContext::NapiTestContext(napi_env env)
+    : env(env), m_envScope(env), m_handleScope(env), m_scriptModules(module::GetModuleScripts()) {
+  DefineGlobalFunctions();
 }
 
 napi_value NapiTestContext::RunScript(char const *code, char const *sourceUrl) {
@@ -262,7 +251,11 @@ NapiTestErrorHandler NapiTestContext::RunTestScript(char const *script, char con
   try {
     m_scriptModules["TestScript"] = TestScriptInfo{GetJSModuleText(script).c_str(), file, line};
 
-    RunScript(GetJSModuleText(script).c_str(), "TestScript");
+    NapiHandleScope scope{env};
+    {
+      NapiHandleScope scope{env};
+      RunScript(GetJSModuleText(script).c_str(), "TestScript");
+    }
     DrainTaskQueue();
     RunCallChecks();
     HandleUnhandledPromiseRejections();
@@ -286,13 +279,19 @@ NapiTestErrorHandler NapiTestContext::RunTestScript(TestScriptInfo const &script
   return RunTestScript(scriptInfo.script, scriptInfo.file, scriptInfo.line);
 }
 
-void NapiTestContext::StartTest() {
-  THROW_IF_NOT_OK(napi_ext_open_env_scope(env, &m_envScope));
+void NapiTestContext::DefineGlobalFunctions() {
+  NapiHandleScope scope{env};
 
-  // Add global
   napi_value global{};
   THROW_IF_NOT_OK(napi_get_global(env, &global));
+
+  // Add global
   THROW_IF_NOT_OK(napi_set_named_property(env, global, "global", global));
+
+  // Add require
+  napi_value require{};
+  THROW_IF_NOT_OK(napi_create_function(env, "require", NAPI_AUTO_LENGTH, JSRequire, this, &require));
+  THROW_IF_NOT_OK(napi_set_named_property(env, global, "require", require));
 
   // Add __NapiTestContext__
   napi_value self{};
@@ -317,17 +316,18 @@ void NapiTestContext::StartTest() {
     napi_value immediateCallback{};
     NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, &immediateCallback, nullptr, nullptr));
 
+    //TODO: use a different macro that does not throw
     NODE_API_ASSERT(env, argc >= 1, "Wrong number of arguments. Expects at least one argument.");
     napi_valuetype immediateCallbackType;
     NODE_API_CALL(env, napi_typeof(env, immediateCallback, &immediateCallbackType));
     NODE_API_ASSERT(env, immediateCallbackType == napi_function, "Wrong type of arguments. Expects a function.");
 
     napi_value global{};
-    THROW_IF_NOT_OK(napi_get_global(env, &global));
+    NODE_API_CALL(env, napi_get_global(env, &global));
     napi_value selfValue{};
-    THROW_IF_NOT_OK(napi_get_named_property(env, global, "__NapiTestContext__", &selfValue));
+    NODE_API_CALL(env, napi_get_named_property(env, global, "__NapiTestContext__", &selfValue));
     NapiTestContext *self;
-    THROW_IF_NOT_OK(napi_get_value_external(env, selfValue, (void **)&self));
+    NODE_API_CALL(env, napi_get_value_external(env, selfValue, (void **)&self));
 
     uint32_t taskId = self->AddTask(immediateCallback);
 
@@ -361,11 +361,11 @@ void NapiTestContext::StartTest() {
     NODE_API_CALL(env, napi_get_value_uint32(env, taskIdValue, &taskId));
 
     napi_value global{};
-    THROW_IF_NOT_OK(napi_get_global(env, &global));
+    NODE_API_CALL(env, napi_get_global(env, &global));
     napi_value selfValue{};
-    THROW_IF_NOT_OK(napi_get_named_property(env, global, "__NapiTestContext__", &selfValue));
+    NODE_API_CALL(env, napi_get_named_property(env, global, "__NapiTestContext__", &selfValue));
     NapiTestContext *self;
-    THROW_IF_NOT_OK(napi_get_value_external(env, selfValue, (void **)&self));
+    NODE_API_CALL(env, napi_get_value_external(env, selfValue, (void **)&self));
 
     self->RemoveTask(taskId);
 
@@ -379,10 +379,6 @@ void NapiTestContext::StartTest() {
   THROW_IF_NOT_OK(
       napi_create_function(env, "clearTimeout", NAPI_AUTO_LENGTH, clearTimeoutCallback, nullptr, &clearTimeout));
   THROW_IF_NOT_OK(napi_set_named_property(env, global, "clearTimeout", clearTimeout));
-}
-
-void NapiTestContext::EndTest() {
-  THROW_IF_NOT_OK(napi_ext_close_env_scope(env, m_envScope));
 }
 
 uint32_t NapiTestContext::AddTask(napi_value callback) noexcept{
