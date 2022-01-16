@@ -9,6 +9,8 @@ const assert = require('assert');
 const addon = require(`./build/${common.buildType}/binding`);
 
 async function runTest() {
+  // TODO: Hermes does not GC variables assigned with null.
+  //       We had to rewrite the code below to enable GC.
   (() => {
     let obj1 = addon.createObject(10);
     let obj2 = addon.createObject(20);
