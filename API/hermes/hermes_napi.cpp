@@ -1420,6 +1420,7 @@ class CallbackInfo final {
   const vm::instrumentation::RAIITimer timer{
       "Host Function", stats, stats.hostFunction};
 
+  NapiHandleScope scope{env};
   CallbackInfo callbackInfo{*hfc, hvArgs};
   napi_value result{};
   vm::ExecutionStatus status = env.callIntoModule([&](NapiEnvironment *env) {
@@ -4593,12 +4594,12 @@ napi_status NapiEnvironment::closeHandleScope(
   RETURN_STATUS_IF_FALSE(
       !gcRootStackScopes_.empty(), napi_handle_scope_mismatch);
 
-  size_t &topScope = gcRootStackScopes_.top();
+  size_t *topScope = &gcRootStackScopes_.top();
   RETURN_STATUS_IF_FALSE(
-      reinterpret_cast<size_t *>(scope) == &topScope,
+      reinterpret_cast<size_t *>(scope) == topScope,
       napi_handle_scope_mismatch);
 
-  gcRootStack_.resize(topScope);
+  gcRootStack_.resize(*topScope);
   gcRootStackScopes_.pop();
   return clearLastError();
 }
