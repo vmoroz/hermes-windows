@@ -22,6 +22,7 @@ set(NAPITests
   test_8_passing_wrapped.cpp
   test_array.cpp
   test_assert.cpp
+  test_basics.cpp
   test_bigint.cpp
   test_constructor.cpp
   test_conversions.cpp
