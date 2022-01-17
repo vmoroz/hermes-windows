@@ -3573,10 +3573,12 @@ napi_status NapiEnvironment::hasOwnProperty(
     napi_value key,
     bool *result) noexcept {
   CHECK_NAPI(checkPendingExceptions());
-  NapiHandleScope scope{*this};
   CHECK_ARG(key);
+  CHECK_ARG(result);
   RETURN_STATUS_IF_FALSE(
       phv(key)->isString() || phv(key)->isSymbol(), napi_name_expected);
+
+  NapiHandleScope scope{*this};
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   vm::MutableHandle<vm::SymbolID> tmpSymbolStorage{&runtime_};
