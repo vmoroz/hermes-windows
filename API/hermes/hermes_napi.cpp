@@ -3451,7 +3451,7 @@ napi_status NapiEnvironment::getForInPropertyNames(
           &runtime_, makeHandle<vm::JSObject>(object), beginIndex, endIndex);
   CHECK_NAPI(checkHermesStatus(keyStorage));
   return convertKeyStorageToArray(
-      *keyStorage, 0, endIndex - beginIndex, keyConversion, result);
+      *keyStorage, beginIndex, endIndex - beginIndex, keyConversion, result);
 }
 
 napi_status NapiEnvironment::convertKeyStorageToArray(
@@ -3568,6 +3568,8 @@ napi_status NapiEnvironment::hasOwnProperty(
   CHECK_NAPI(checkPendingExceptions());
   NapiHandleScope scope{*this};
   CHECK_ARG(key);
+  RETURN_STATUS_IF_FALSE(
+      phv(key)->isString() || phv(key)->isSymbol(), napi_name_expected);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
   vm::MutableHandle<vm::SymbolID> tmpSymbolStorage{&runtime_};
@@ -3890,7 +3892,7 @@ napi_status NapiEnvironment::deleteComputed(
       makeHandle<vm::JSObject>(object),
       &runtime_,
       makeHandle(key),
-      vm::PropOpFlags().plusThrowOnError());
+      vm::PropOpFlags());
   return setOptionalResult(std::move(res), optResult);
 }
 
@@ -4368,7 +4370,9 @@ napi_status NapiEnvironment::checkObjectTypeTag(
       getPredefined(objValue, NapiPredefined::napi_typeTag, &tagBufferValue));
   vm::JSArrayBuffer *tagBuffer =
       vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(tagBufferValue));
-  RETURN_FAILURE_IF_FALSE(tagBuffer != nullptr);
+  if (tagBuffer == nullptr) {
+    return setResult(false, result);
+  }
 
   const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
   const uint8_t *tagBufferData = tagBuffer->getDataBlock();
