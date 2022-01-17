@@ -246,7 +246,7 @@ assert.strictEqual(newObject.test_string, 'test string');
   object[5] = 5;
 
   assert.deepStrictEqual(test_object.GetPropertyNames(object),
-                         ['5', 'normal', 'inherited']);
+                          ['5', 'normal', 'inherited']);
 
   assert.deepStrictEqual(test_object.GetSymbolNames(object),
                          [fooSymbol]);
@@ -288,11 +288,11 @@ assert.deepStrictEqual(test_object.TestGetProperty(), {
 
   assert.throws(() => {
     obj.w = 'd';
-  }, /Cannot add property w, object is not extensible/);
+  }, /Cannot add (new)? property '?w'?(, object is not extensible)?/);
 
   assert.throws(() => {
     delete obj.x;
-  }, /Cannot delete property 'x' of #<Object>/);
+  }, /(Cannot delete property 'x' of #<Object>)|(Property 'x' is not configurable)/);
 
   // Sealed objects allow updating existing properties,
   // so this should not throw.
@@ -308,14 +308,14 @@ assert.deepStrictEqual(test_object.TestGetProperty(), {
 
   assert.throws(() => {
     obj.x = 10;
-  }, /Cannot assign to read only property 'x' of object '#<Object>/);
+  }, /Cannot assign to read-?only property 'x'( of object '#<Object>)?/);
 
   assert.throws(() => {
     obj.w = 15;
-  }, /Cannot add property w, object is not extensible/);
+  }, /(Cannot add property w, object is not extensible)|(Cannot add new property 'w')/);
 
   assert.throws(() => {
     delete obj.x;
-  }, /Cannot delete property 'x' of #<Object>/);
+  }, /(Cannot delete property 'x' of #<Object>)|(Property 'x' is not configurable)/);
 }
 )JavaScript");

@@ -2085,7 +2085,7 @@ class OrderedSet<vm::HermesValue> final {
         [this](const vm::HermesValue &item1, const vm::HermesValue &item2) {
           return (*compare_)(item1, item2) < 0;
         });
-    if (it == items_.end() || (*compare_)(*it, value) == 0) {
+    if (it != items_.end() && (*compare_)(*it, value) == 0) {
       return false;
     }
     items_.insert(it, value);
@@ -3304,18 +3304,22 @@ napi_status NapiEnvironment::getAllPropertyNames(
   }
 
   // Flags to request own keys
-  vm::OwnKeysFlags ownKeyFlags{};
-  ownKeyFlags.setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0);
-  ownKeyFlags.setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0);
-  ownKeyFlags.plusIncludeNonEnumerable(); // for proper shadow checks
+  // Include non-enumerable for proper shadow checks.
+  vm::OwnKeysFlags ownKeyFlags =
+      vm::OwnKeysFlags()
+          .setIncludeNonSymbols((keyFilter & napi_key_skip_strings) == 0)
+          .setIncludeSymbols((keyFilter & napi_key_skip_symbols) == 0)
+          .plusIncludeNonEnumerable();
 
   // Use the simple path for own properties without extra filters.
   if ((keyMode == napi_key_own_only || !hasParent) &&
       (keyFilter & (napi_key_writable | napi_key_configurable)) == 0) {
-    ownKeyFlags.setIncludeNonEnumerable((keyFilter & napi_key_enumerable) == 0);
     vm::CallResult<vm::Handle<vm::JSArray>> ownKeysRes =
         vm::JSObject::getOwnPropertyKeys(
-            makeHandle<vm::JSObject>(objValue), &runtime_, ownKeyFlags);
+            makeHandle<vm::JSObject>(objValue),
+            &runtime_,
+            ownKeyFlags.setIncludeNonEnumerable(
+                (keyFilter & napi_key_enumerable) == 0));
     CHECK_NAPI(checkHermesStatus(ownKeysRes));
     if (keyConversion == napi_key_numbers_to_strings) {
       CHECK_NAPI(convertToStringKeys(*ownKeysRes));
@@ -3375,21 +3379,23 @@ napi_status NapiEnvironment::getAllPropertyNames(
           // See if the property name is an index
           propIndexOpt = vm::toArrayIndex(
               vm::StringPrimitive::createStringView(&runtime_, propString));
+          if (propIndexOpt) {
+            if (!shadowIndexes.insert(propIndexOpt.getValue())) {
+              continue;
+            }
+          } else {
+            if (!shadowStrings.insert(prop.getHermesValue())) {
+              continue;
+            }
+          }
         } else if (prop->isNumber()) {
           propIndexOpt = doubleToArrayIndex(prop->getNumber());
           assert(propIndexOpt && "Invalid property index");
-        } else if (prop->isSymbol()) {
-          if (!shadowSymbols.insert(prop.getHermesValue())) {
-            continue;
-          }
-        }
-
-        if (propIndexOpt) {
           if (!shadowIndexes.insert(propIndexOpt.getValue())) {
             continue;
           }
-        } else if (propString) {
-          if (!shadowStrings.insert(prop.getHermesValue())) {
+        } else if (prop->isSymbol()) {
+          if (!shadowSymbols.insert(prop.getHermesValue())) {
             continue;
           }
         }
@@ -3429,9 +3435,10 @@ napi_status NapiEnvironment::getAllPropertyNames(
     }
 
     // Continue to follow the prototype chain.
-    napi_value parent;
-    CHECK_NAPI(getPrototype(object, &parent));
-    currentObj = makeHandle<vm::JSObject>(parent);
+    vm::CallResult<vm::PseudoHandle<vm::JSObject>> parentRes =
+      vm::JSObject::getPrototypeOf(currentObj, &runtime_);
+    CHECK_NAPI(checkHermesStatus(parentRes));
+    currentObj = std::move(*parentRes);
   }
 
   return scope.setResult(
@@ -5781,7 +5788,7 @@ vm::CallResult<vm::MutableHandle<T>> NapiEnvironment::makeMutableHandle(
     return vm::ExecutionStatus::EXCEPTION;
   }
   vm::MutableHandle<T> result{&runtime_};
-  result = std::move(*callResult);
+  result = *handleResult;
   return result;
 }
 
