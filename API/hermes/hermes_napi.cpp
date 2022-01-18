@@ -77,6 +77,18 @@
 
 // TODO: Add unit tests for the external JSArrayBuffer
 // TODO: Add unit tests for FinalizableNativeConstructor
+// TODO: Allow DebugBreak in unexpected cases - add functions to indicate expected errors
+
+// Current issues with Hermes VM vs V8
+// TODO: GC does not collect object from a variable after it set to null.
+// TODO: Cannot use functions as a base class
+// TODO: NativeFunction vs NativeConstructor
+// TODO: No 'class' support
+// TODO: Different error messages
+// TODO: Arrays with 2^32-1 elements
+// TODO: BigInt support
+// TODO: How to provide detailed error messages without breaking tests?
+// TODO: Why console.log compiles in V8_JSI?
 
 //=============================================================================
 // Macros
