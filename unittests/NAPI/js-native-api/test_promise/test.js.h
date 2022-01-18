@@ -12,35 +12,35 @@ const test_promise = require(`./build/${common.buildType}/test_promise`);
 
 // A resolution
 {
-  const expected_result = 42;
+  const expected_result1 = 42;
   const promise = test_promise.createPromise();
   promise.then(
     common.mustCall(function(result) {
-      assert.strictEqual(result, expected_result);
+      assert.strictEqual(result, expected_result1);
     }),
     common.mustNotCall());
-  test_promise.concludeCurrentPromise(expected_result, true);
+  test_promise.concludeCurrentPromise(expected_result1, true);
 }
 
 // A rejection
 {
-  const expected_result = 'It\'s not you, it\'s me.';
+  const expected_result2 = 'It\'s not you, it\'s me.';
   const promise = test_promise.createPromise();
   promise.then(
     common.mustNotCall(),
     common.mustCall(function(result) {
-      assert.strictEqual(result, expected_result);
+      assert.strictEqual(result, expected_result2);
     }));
-  test_promise.concludeCurrentPromise(expected_result, false);
+  test_promise.concludeCurrentPromise(expected_result2, false);
 }
 
 // Chaining
 {
-  const expected_result = 'chained answer';
+  const expected_result3 = 'chained answer';
   const promise = test_promise.createPromise();
   promise.then(
     common.mustCall(function(result) {
-      assert.strictEqual(result, expected_result);
+      assert.strictEqual(result, expected_result3);
     }),
     common.mustNotCall());
   test_promise.concludeCurrentPromise(Promise.resolve('chained answer'), true);

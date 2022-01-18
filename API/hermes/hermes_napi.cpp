@@ -92,6 +92,7 @@
 // TODO: BigInt support
 // TODO: How to provide detailed error messages without breaking tests?
 // TODO: Why console.log compiles in V8_JSI?
+// TODO: Hermes does not capture correct variable - see test_promise
 
 //=============================================================================
 // Macros
