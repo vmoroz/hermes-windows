@@ -77,7 +77,8 @@
 
 // TODO: Add unit tests for the external JSArrayBuffer
 // TODO: Add unit tests for FinalizableNativeConstructor
-// TODO: Allow DebugBreak in unexpected cases - add functions to indicate expected errors
+// TODO: Allow DebugBreak in unexpected cases - add functions to indicate
+// expected errors
 // TODO: Create NapiEnvironment with JSI Runtime
 // TODO: Fix Inspector CMake definitions
 
@@ -3450,7 +3451,7 @@ napi_status NapiEnvironment::getAllPropertyNames(
 
     // Continue to follow the prototype chain.
     vm::CallResult<vm::PseudoHandle<vm::JSObject>> parentRes =
-      vm::JSObject::getPrototypeOf(currentObj, &runtime_);
+        vm::JSObject::getPrototypeOf(currentObj, &runtime_);
     CHECK_NAPI(checkHermesStatus(parentRes));
     currentObj = std::move(*parentRes);
   }
@@ -4131,7 +4132,8 @@ napi_status NapiEnvironment::newInstance(
   //    Return obj
   vm::HermesValue resultValue = callRes->get();
   return scope.setResult(
-      resultValue.isObject() ? resultValue : thisHandle.getHermesValue());
+      resultValue.isObject() ? std::move(resultValue)
+                             : thisHandle.getHermesValue());
 }
 
 napi_status NapiEnvironment::instanceOf(
@@ -5223,7 +5225,7 @@ napi_status NapiEnvironment::createPromise(
 
   CHECK_NAPI(StrongReference::create(
       *this, *phv(jsDeferred), reinterpret_cast<StrongReference **>(deferred)));
-  return scope.setResult(jsPromise);
+  return scope.setResult(std::move(jsPromise));
 }
 
 napi_status NapiEnvironment::createPromise(
@@ -5397,9 +5399,8 @@ napi_status NapiEnvironment::hasUnhandledPromiseRejection(
 napi_status NapiEnvironment::getAndClearLastUnhandledPromiseRejection(
     napi_value *result) noexcept {
   lastUnhandledRejectionId_ = -1;
-  vm::HermesValue rejection =
-      std::exchange(lastUnhandledRejection_, EmptyHermesValue);
-  return setResult(rejection, result);
+  return setResult(
+      std::exchange(lastUnhandledRejection_, EmptyHermesValue), result);
 }
 
 //-----------------------------------------------------------------------------
