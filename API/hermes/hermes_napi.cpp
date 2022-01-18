@@ -78,6 +78,8 @@
 // TODO: Add unit tests for the external JSArrayBuffer
 // TODO: Add unit tests for FinalizableNativeConstructor
 // TODO: Allow DebugBreak in unexpected cases - add functions to indicate expected errors
+// TODO: Create NapiEnvironment with JSI Runtime
+// TODO: Fix Inspector CMake definitions
 
 // Current issues with Hermes VM vs V8
 // TODO: GC does not collect object from a variable after it set to null.
