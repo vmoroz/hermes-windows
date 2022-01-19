@@ -112,8 +112,10 @@ runTests();
 // required to ensure delete could be called before
 // the finalizer in manual testing.
 for (let i = 0; i < 1000; i++) {
-  const wrapObject = new Object();
-  test_reference.validateDeleteBeforeFinalize(wrapObject);
+  (function() {
+    const wrapObject = new Object();
+    test_reference.validateDeleteBeforeFinalize(wrapObject);
+  })();
   global.gc();
 }
 )JavaScript");

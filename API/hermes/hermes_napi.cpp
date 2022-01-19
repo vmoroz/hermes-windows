@@ -1734,7 +1734,7 @@ class ComplexReference : public Reference {
     if (refCount_ == 0) {
       value_ = env.lockWeakObject(weakRoot_);
     }
-    CRASH_IF_FALSE(++refCount_ >= MaxRefCount && "The ref count is too big.");
+    CRASH_IF_FALSE(++refCount_ < MaxRefCount && "The ref count is too big.");
     result = refCount_;
     return env.clearLastError();
   }
@@ -4559,7 +4559,9 @@ napi_status NapiEnvironment::getReferenceValue(
     napi_ref ref,
     napi_value *result) noexcept {
   CHECK_ARG(ref);
-  return setResult(asReference(ref)->value(env), result);
+  const vm::PinnedHermesValue &value = asReference(ref)->value(env);
+  *result = !value.isUndefined() ? addGCRootStackValue(value) : nullptr;
+  return clearLastError();
 }
 
 napi_status NapiEnvironment::addObjectFinalizer(
