@@ -4909,9 +4909,11 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
   NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       &runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
-  std::unique_ptr<ExternalBuffer> externalBuffer{new ExternalBuffer(
-      env, externalData, byteLength, finalizeCallback, finalizeHint)};
-  buffer->setExternalBuffer(&runtime_, std::move(externalBuffer));
+  if (externalData != nullptr) {
+    std::unique_ptr<ExternalBuffer> externalBuffer{new ExternalBuffer(
+        env, externalData, byteLength, finalizeCallback, finalizeHint)};
+    buffer->setExternalBuffer(&runtime_, std::move(externalBuffer));
+  }
   return scope.setResult(std::move(buffer));
 }
 
