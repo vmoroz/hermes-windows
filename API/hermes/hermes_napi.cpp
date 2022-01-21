@@ -49,6 +49,7 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
+#define NAPI_VERSION 8
 #define NAPI_EXPERIMENTAL
 
 #include "napi/hermes_napi.h"
@@ -3991,11 +3992,11 @@ napi_status NapiEnvironment::strictEquals(
   CHECK_ARG(lhs);
   CHECK_ARG(rhs);
   vm::TagKind lhsTag = phv(lhs)->getTag();
-  if (lhsTag != phv(lhs)->getTag()) {
+  if (lhsTag != phv(rhs)->getTag()) {
     return setResult(false, result);
   } else if (lhsTag == vm::StrTag) {
     return setResult(
-        phv(lhs)->getString()->equals(phv(lhs)->getString()), result);
+        phv(lhs)->getString()->equals(phv(rhs)->getString()), result);
   } else if (lhsTag == vm::SymbolTag) {
     return setResult(phv(lhs)->getSymbol() == phv(rhs)->getSymbol(), result);
   } else {

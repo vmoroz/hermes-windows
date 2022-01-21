@@ -12,11 +12,39 @@ const val1 = '1';
 const val2 = 1;
 const val3 = 1;
 
-class BaseClass {
-}
+// class BaseClass {
+// }
 
-class ExtendedClass extends BaseClass {
-}
+// class ExtendedClass extends BaseClass {
+// }
+
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+var BaseClass = /** @class */ (function () {
+    function BaseClass() {
+    }
+    return BaseClass;
+}());
+var ExtendedClass = /** @class */ (function (_super) {
+    __extends(ExtendedClass, _super);
+    function ExtendedClass() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    return ExtendedClass;
+}(BaseClass));
 
 const baseObject = new BaseClass();
 const extendedObject = new ExtendedClass();
@@ -72,9 +100,10 @@ test_general.wrap(y);
 test_general.removeWrap(y);
 
 // Test napi_adjust_external_memory
-const adjustedValue = test_general.testAdjustExternalMemory();
-assert.strictEqual(typeof adjustedValue, 'number');
-assert(adjustedValue > 0);
+// TODO: Hermes does not implement that API
+// const adjustedValue = test_general.testAdjustExternalMemory();
+// assert.strictEqual(typeof adjustedValue, 'number');
+// assert(adjustedValue > 0);
 
 async function runGCTests() {
   // Ensure that garbage collecting an object with a wrapped native item results
