@@ -77,6 +77,7 @@
 
 // TODO: Add unit tests for the external JSArrayBuffer
 // TODO: Add unit tests for FinalizableNativeConstructor
+// TODO: Add unit tests for the TypedArray length and byteLength changes
 // TODO: Allow DebugBreak in unexpected cases - add functions to indicate
 // expected errors
 // TODO: Create NapiEnvironment with JSI Runtime
