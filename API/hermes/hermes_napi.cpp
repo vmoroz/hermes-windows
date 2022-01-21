@@ -4337,6 +4337,7 @@ napi_status NapiEnvironment::unwrapObject(
   }
 
   Reference *reference = asReference(externalValue->nativeData());
+  RETURN_STATUS_IF_FALSE(reference, napi_invalid_arg);
   if (result) {
     *result = reference->nativeData();
   }
