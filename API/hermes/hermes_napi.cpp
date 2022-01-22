@@ -1423,7 +1423,8 @@ class CallbackInfo final {
   }
 
   napi_value getNewTarget() noexcept {
-    return napiValue(&nativeArgs_.getNewTarget());
+    const vm::PinnedHermesValue& newTarget = nativeArgs_.getNewTarget();
+    return napiValue(newTarget.isUndefined() ? nullptr : &newTarget);
   }
 
  private:

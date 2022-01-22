@@ -59,11 +59,26 @@ static napi_value OrdinaryFunction(napi_env env, napi_callback_info info) {
 EXTERN_C_START
 napi_value Init(napi_env env, napi_value exports) {
   const napi_property_descriptor desc[] = {
-    DECLARE_NODE_API_PROPERTY("BaseClass", BaseClass),
-    DECLARE_NODE_API_PROPERTY("OrdinaryFunction", OrdinaryFunction),
-    DECLARE_NODE_API_PROPERTY("Constructor", Constructor)
+    //DECLARE_NODE_API_PROPERTY("BaseClass", BaseClass),
+    DECLARE_NODE_API_PROPERTY("OrdinaryFunction", OrdinaryFunction)//,
+    //DECLARE_NODE_API_PROPERTY("Constructor", Constructor)
   };
-  NODE_API_CALL(env, napi_define_properties(env, exports, 3, desc));
+  NODE_API_CALL(env, napi_define_properties(env, exports, 1, desc));
+
+  napi_value BaseClass_ctor;
+  NODE_API_CALL(env,
+      napi_define_class(
+          env, "BaseClass", NAPI_AUTO_LENGTH, BaseClass, NULL, 0, NULL, &BaseClass_ctor));
+  NODE_API_CALL(env,
+      napi_set_named_property(env, exports, "BaseClass", BaseClass_ctor));
+
+  napi_value Constructor_ctor;
+  NODE_API_CALL(env,
+      napi_define_class(
+          env, "Constructor", NAPI_AUTO_LENGTH, Constructor, NULL, 0, NULL, &Constructor_ctor));
+  NODE_API_CALL(env,
+      napi_set_named_property(env, exports, "Constructor", Constructor_ctor));
+
   return exports;
 }
 EXTERN_C_END
