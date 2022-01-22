@@ -1256,6 +1256,7 @@ class NapiEnvironment final {
   LinkedList<Reference> finalizingGCRoots_{};
   LinkedList<Finalizer> finalizerQueue_{};
   bool isRunningFinalizers_{};
+  bool isShuttingdown_{};
 
   llvh::SmallVector<OrderedSet<vm::HermesValue> *, 16> orderedSets_;
 
@@ -2555,6 +2556,7 @@ NapiEnvironment::NapiEnvironment(
 }
 
 NapiEnvironment::~NapiEnvironment() {
+  isShuttingdown_ = true;
   if (instanceData_) {
     instanceData_->finalize(*this);
     instanceData_ = nullptr;
@@ -4536,6 +4538,10 @@ napi_status NapiEnvironment::createReference(
 
 napi_status NapiEnvironment::deleteReference(napi_ref ref) noexcept {
   CHECK_ARG(ref);
+  if (isShuttingdown_) {
+    // During shutdown all references are going to be deleted by finalizers.
+    return clearLastError();
+  }
   return Reference::deleteReference(
       *this, asReference(ref), Reference::ReasonToDelete::ExternalCall);
 }
