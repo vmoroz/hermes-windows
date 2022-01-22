@@ -124,7 +124,7 @@ TEST_P(NapiTest, test_general_EnvCleanup) {
 
     testContext->AddNativeModule("child_process", [&](napi_env env, napi_value exports) {
       napi_value spawnSync{};
-      THROW_IF_NOT_OK(napi_create_function(env, "spawnSync", NAPI_AUTO_LENGTH, spawnSyncCallback, nullptr, &spawnSync));
+      THROW_IF_NOT_OK(napi_create_function(env, "spawnSync", NAPI_AUTO_LENGTH, spawnSyncCallback, this, &spawnSync));
       THROW_IF_NOT_OK(napi_set_named_property(env, exports, "spawnSync", spawnSync));
       return exports;
     });

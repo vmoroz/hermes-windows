@@ -4345,7 +4345,7 @@ napi_status NapiEnvironment::unwrapObject(
   if /*constexpr*/ (action == UnwrapAction::RemoveWrap) {
     externalValue->setNativeData(nullptr);
     Reference::deleteReference(
-        *this, reference, Reference::ReasonToDelete::ExternalCall);
+        *this, reference, Reference::ReasonToDelete::ZeroRefCount);
   }
 
   return clearLastError();
