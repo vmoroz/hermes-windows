@@ -1,0 +1,9 @@
+{
+  "name": "hermes-napi-test-packages",
+  "private": true,
+  "devDependencies": {
+    "@babel/cli": "^7.16.8",
+    "@babel/core": "^7.16.7",
+    "metro-react-native-babel-preset": "^0.66.2"
+  }
+}
