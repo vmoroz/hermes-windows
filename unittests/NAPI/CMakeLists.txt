@@ -6,6 +6,8 @@
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_subdirectory(js)
+
 set(NAPITests
   lib/assert_js.cpp
   lib/common_js.cpp
@@ -56,6 +58,7 @@ set(LLVM_ENABLE_RTTI ON)
 
 add_hermes_unittest(NAPITests ${NAPITests} LINK_LIBS hermesNapi)
 target_link_libraries(NAPITests hermesNapi libhermes)
+add_dependencies(NAPITests installNapiTestJsTools)
 
 add_custom_command(TARGET NAPITests POST_BUILD
   DEPENDS libhermes
