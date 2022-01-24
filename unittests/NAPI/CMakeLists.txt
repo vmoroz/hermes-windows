@@ -60,7 +60,7 @@ add_hermes_unittest(NAPITests ${NAPITests} LINK_LIBS hermesNapi)
 target_link_libraries(NAPITests hermesNapi libhermes)
 
 # transform test JS files to be Hermes-compatible
-add_dependencies(NAPITests transformJSFiles)
+add_dependencies(NAPITests transformJSFiles copyBabelFiles)
 
 # copy hermes.dll next to the NAPITests.exe
 add_custom_command(TARGET NAPITests POST_BUILD
