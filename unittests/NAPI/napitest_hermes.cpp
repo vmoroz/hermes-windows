@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 #include <gtest/gtest.h>
-#include "napitest.h"
 #include "hermes_napi.h"
+#include "napitest.h"
 
 namespace napitest {
 

@@ -643,7 +643,7 @@ TEST_P(NapiTest, test_basics_Wrap2) {
         napi_ref wrapper{};
       };
 
-      MyClass* myc = new MyClass(env);
+      MyClass *myc = new MyClass(env);
 
       ASSERT_EQ(
           napi_ok,

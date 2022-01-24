@@ -6,9 +6,9 @@
 #pragma once
 
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
-#include <list>
 #include <string>
 #include <vector>
 
@@ -46,14 +46,20 @@ extern "C" {
 // The __LINE__ points to the end of the macro call.
 // We must adjust the line number to point to the beginning of hte script.
 #define RUN_TEST_SCRIPT(script) \
-  testContext->RunTestScript(script, __FILE__, (__LINE__ - napitest::GetEndOfLineCount(script)))
+  testContext->RunTestScript(   \
+      script, __FILE__, (__LINE__ - napitest::GetEndOfLineCount(script)))
 
 // A shortcut to produce GTest error at specified location.
-#define FAIL_AT(file, line) GTEST_MESSAGE_AT_(file, line, "Fail", ::testing::TestPartResult::kFatalFailure)
+#define FAIL_AT(file, line) \
+  GTEST_MESSAGE_AT_(        \
+      file, line, "Fail", ::testing::TestPartResult::kFatalFailure)
 
 // Define operator '|' to allow "or-ing" napi_property_attributes in tests.
-constexpr napi_property_attributes operator|(napi_property_attributes left, napi_property_attributes right) {
-  return napi_property_attributes(static_cast<int>(left) | static_cast<int>(right));
+constexpr napi_property_attributes operator|(
+    napi_property_attributes left,
+    napi_property_attributes right) {
+  return napi_property_attributes(
+      static_cast<int>(left) | static_cast<int>(right));
 }
 
 // Use to override printf in tests to send output to a std::string instead of
@@ -74,7 +80,8 @@ std::vector<NapiEnvFactory> NapiEnvFactories();
 
 // The base class for unit tests that we parameterize by NapiEnvFactory.
 struct NapiTest : ::testing::TestWithParam<NapiEnvFactory> {
-  NapiTestErrorHandler ExecuteNapi(std::function<void(NapiTestContext *, napi_env)> code) noexcept;
+  NapiTestErrorHandler ExecuteNapi(
+      std::function<void(NapiTestContext *, napi_env)> code) noexcept;
 };
 
 // Properies from JavaScript Error object.
@@ -98,7 +105,10 @@ struct NapiAssertionErrorInfo {
 struct NapiTestException : std::exception {
   NapiTestException() noexcept = default;
 
-  NapiTestException(napi_env env, napi_status errorCode, char const *expr) noexcept;
+  NapiTestException(
+      napi_env env,
+      napi_status errorCode,
+      char const *expr) noexcept;
 
   NapiTestException(napi_env env, napi_value error) noexcept;
 
@@ -125,8 +135,10 @@ struct NapiTestException : std::exception {
  private:
   void ApplyScriptErrorData(napi_env env, napi_value error);
   static napi_value GetProperty(napi_env env, napi_value obj, char const *name);
-  static std::string GetPropertyString(napi_env env, napi_value obj, char const *name);
-  static int32_t GetPropertyInt32(napi_env env, napi_value obj, char const *name);
+  static std::string
+  GetPropertyString(napi_env env, napi_value obj, char const *name);
+  static int32_t
+  GetPropertyInt32(napi_env env, napi_value obj, char const *name);
   static std::string CoerceToString(napi_env env, napi_value value);
   static std::string ToString(napi_env env, napi_value value);
 
@@ -138,7 +150,8 @@ struct NapiTestException : std::exception {
   std::shared_ptr<NapiAssertionErrorInfo> m_assertionErrorInfo;
 };
 
-// Define NapiRef "smart pointer" for napi_ref as unique_ptr with a custom deleter.
+// Define NapiRef "smart pointer" for napi_ref as unique_ptr with a custom
+// deleter.
 struct NapiRefDeleter {
   NapiRefDeleter(napi_env env) noexcept : env(env) {}
 
@@ -192,17 +205,22 @@ struct NapiTestContext {
   napi_value GetModule(char const *moduleName);
   TestScriptInfo *GetTestScriptInfo(std::string const &moduleName);
 
-  NapiTestErrorHandler RunTestScript(char const *script, char const *file, int32_t line);
+  NapiTestErrorHandler
+  RunTestScript(char const *script, char const *file, int32_t line);
 
   NapiTestErrorHandler RunTestScript(TestScriptInfo const &scripInfo);
 
-  void AddNativeModule(char const *moduleName, std::function<napi_value(napi_env, napi_value)> initModule);
+  void AddNativeModule(
+      char const *moduleName,
+      std::function<napi_value(napi_env, napi_value)> initModule);
 
   void DefineGlobalFunctions();
   void RunCallChecks();
   void HandleUnhandledPromiseRejections();
 
-  std::string ProcessStack(std::string const &stack, std::string const &assertMethod);
+  std::string ProcessStack(
+      std::string const &stack,
+      std::string const &assertMethod);
 
   // The callback function to be executed after the script completion.
   uint32_t AddTask(napi_value callback) noexcept;
@@ -215,13 +233,15 @@ struct NapiTestContext {
   NapiHandleScope m_handleScope;
   std::map<std::string, NapiRef, std::less<>> m_modules;
   std::map<std::string, TestScriptInfo, std::less<>> m_scriptModules;
-  std::map<std::string, std::function<napi_value(napi_env, napi_value)>> m_nativeModules;
+  std::map<std::string, std::function<napi_value(napi_env, napi_value)>>
+      m_nativeModules;
   std::list<std::pair<uint32_t, NapiRef>> m_taskQueue;
   uint32_t m_nextTaskId{1};
 };
 
 // Handles the exceptions after running tests.
-// In case if the exception is expected, we can add a custom Throws exception handler.
+// In case if the exception is expected, we can add a custom Throws exception
+// handler.
 struct NapiTestErrorHandler {
   NapiTestErrorHandler(
       NapiTestContext *testContext,
@@ -232,8 +252,11 @@ struct NapiTestErrorHandler {
       int32_t scriptLineOffset) noexcept;
   ~NapiTestErrorHandler() noexcept;
   void Catch(std::function<void(NapiTestException const &)> &&handler) noexcept;
-  void Throws(std::function<void(NapiTestException const &)> &&handler) noexcept;
-  void Throws(char const *jsErrorName, std::function<void(NapiTestException const &)> &&handler) noexcept;
+  void Throws(
+      std::function<void(NapiTestException const &)> &&handler) noexcept;
+  void Throws(
+      char const *jsErrorName,
+      std::function<void(NapiTestException const &)> &&handler) noexcept;
 
   NapiTestErrorHandler(NapiTestErrorHandler const &) = delete;
   NapiTestErrorHandler &operator=(NapiTestErrorHandler const &) = delete;
@@ -242,7 +265,9 @@ struct NapiTestErrorHandler {
   NapiTestErrorHandler &operator=(NapiTestErrorHandler &&) = default;
 
  private:
-  std::string GetSourceCodeSliceForError(int32_t lineIndex, int32_t extraLineCount) noexcept;
+  std::string GetSourceCodeSliceForError(
+      int32_t lineIndex,
+      int32_t extraLineCount) noexcept;
 
  private:
   NapiTestContext *m_testContext;
