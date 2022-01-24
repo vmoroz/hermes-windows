@@ -99,7 +99,7 @@ add_dependencies(transformJSFiles installNapiTestJsTools)
 # copy Babel runtime support files
 add_custom_target(copyBabelFiles
   COMMAND ${CMAKE_COMMAND} -E copy_directory
-  ${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@babel/runtime/helpers
-  ${CMAKE_CURRENT_BINARY_DIR}/@babel/runtime/helpers
+    ${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@babel/runtime/helpers
+    ${CMAKE_CURRENT_BINARY_DIR}/@babel/runtime/helpers
 )
 add_dependencies(copyBabelFiles installNapiTestJsTools)
