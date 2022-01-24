@@ -58,8 +58,11 @@ set(LLVM_ENABLE_RTTI ON)
 
 add_hermes_unittest(NAPITests ${NAPITests} LINK_LIBS hermesNapi)
 target_link_libraries(NAPITests hermesNapi libhermes)
-add_dependencies(NAPITests installNapiTestJsTools)
 
+# transform test JS files to be Hermes-compatible
+add_dependencies(NAPITests transformJSFiles)
+
+# copy hermes.dll next to the NAPITests.exe
 add_custom_command(TARGET NAPITests POST_BUILD
   DEPENDS libhermes
   VERBATIM
