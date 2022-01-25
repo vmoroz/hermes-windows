@@ -49,6 +49,23 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
+// TODO: Add unit tests for the external JSArrayBuffer
+// TODO: Add unit tests for FinalizableNativeConstructor
+// TODO: Add unit tests for the TypedArray length and byteLength changes
+// TODO: Allow DebugBreak in unexpected cases - add functions to indicate
+//       expected errors
+// TODO: Create NapiEnvironment with JSI Runtime
+// TODO: Fix Inspector CMake definitions
+
+// Current issues with Hermes VM vs V8
+// TODO: Cannot use functions as a base class
+// TODO: NativeFunction vs NativeConstructor
+// TODO: Different error messages
+// TODO: Arrays with 2^32-1 elements
+// TODO: BigInt support
+// TODO: How to provide detailed error messages without breaking tests?
+// TODO: Why console.log compiles in V8_JSI?
+
 #define NAPI_VERSION 8
 #define NAPI_EXPERIMENTAL
 
@@ -75,26 +92,6 @@
 #include <algorithm>
 #include <atomic>
 #include <unordered_map>
-
-// TODO: Add unit tests for the external JSArrayBuffer
-// TODO: Add unit tests for FinalizableNativeConstructor
-// TODO: Add unit tests for the TypedArray length and byteLength changes
-// TODO: Allow DebugBreak in unexpected cases - add functions to indicate
-// expected errors
-// TODO: Create NapiEnvironment with JSI Runtime
-// TODO: Fix Inspector CMake definitions
-
-// Current issues with Hermes VM vs V8
-// TODO: GC does not collect object from a variable after it set to null.
-// TODO: Cannot use functions as a base class
-// TODO: NativeFunction vs NativeConstructor
-// TODO: No 'class' support
-// TODO: Different error messages
-// TODO: Arrays with 2^32-1 elements
-// TODO: BigInt support
-// TODO: How to provide detailed error messages without breaking tests?
-// TODO: Why console.log compiles in V8_JSI?
-// TODO: Hermes does not capture correct variable - see test_promise
 
 //=============================================================================
 // Macros
