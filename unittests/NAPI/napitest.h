@@ -16,7 +16,7 @@
 
 #define NAPI_EXPERIMENTAL
 #include "js_native_ext_api.h"
-#include "lib/modules.h"
+#include "modules.h"
 
 extern "C" {
 #include "js-native-api/common.h"
@@ -201,6 +201,9 @@ struct NapiEnvScope {
 struct NapiTestContext {
   NapiTestContext(napi_env env);
 
+  static std::map<std::string, TestScriptInfo, std::less<>>
+  GetCommonScripts() noexcept;
+
   napi_value RunScript(
       std::string const &code,
       char const *sourceUrl = nullptr);
@@ -212,8 +215,8 @@ struct NapiTestContext {
   NapiTestErrorHandler RunTestScript(TestScriptInfo const &scripInfo);
   NapiTestErrorHandler RunTestScript(std::string const &scriptFile);
 
-  std::string ReadScriptText(std::string const &scriptFile);
-  std::string ReadFileText(std::string const &fileName);
+  static std::string ReadScriptText(std::string const &scriptFile);
+  static std::string ReadFileText(std::string const &fileName);
 
   void AddNativeModule(
       char const *moduleName,

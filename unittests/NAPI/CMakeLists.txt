@@ -9,9 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(js)
 
 set(NAPITests
-  lib/assert_js.cpp
-  lib/common_js.cpp
-  lib/modules.h
+  modules.h
   napitest_hermes.cpp
   napitest.cpp
   napitest.h

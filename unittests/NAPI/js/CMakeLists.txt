@@ -6,6 +6,8 @@ set(testJSFiles
   6_object_wrap/test.js
   7_factory_wrap/test.js
   8_passing_wrapped/test.js
+  common/assert.js
+  common/common.js
   test_array/test.js
   test_bigint/test.js
   test_constructor/test.js

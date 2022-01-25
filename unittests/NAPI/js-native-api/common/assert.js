@@ -1,37 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// The JavaScript code in this file is adopted from the Node.js priject.
+// The JavaScript code in this file is adopted from the Node.js project.
 // See the src\napi\Readme.md about the Node.js copyright notice.
-
-#include "modules.h"
-
-namespace napitest {
-namespace module {
-
-DEFINE_TEST_SCRIPT(assert_js, R"JavaScript(
 
 'use strict';
 
-var __extends = (this && this.__extends) || (function () {
-  var extendStatics = function (d, b) {
-      extendStatics = Object.setPrototypeOf ||
-          ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
-          function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
-      return extendStatics(d, b);
-  };
-  return function (d, b) {
-      if (typeof b !== "function" && b !== null)
-          throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
-      extendStatics(d, b);
-      function __() { this.constructor = d; }
-      d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-  };
-})();
-
-var AssertionError = /** @class */ (function (_super) {
-  __extends(AssertionError, _super);
-  function AssertionError(options) {
+class AssertionError extends Error {
+  constructor(options) {
     const {
       message,
       actual,
@@ -39,17 +15,17 @@ var AssertionError = /** @class */ (function (_super) {
       method,
       errorStack
     } = options;
-    const _this = _super.call(this, String(message)) || this;
-    _this.name = 'AssertionError';
-    _this.method = String(method);
-    _this.actual = String(actual);
-    _this.expected = String(expected);
-    _this.errorStack = errorStack || '';
-    setAssertionSource(_this, method);
-    return _this;
+
+    super(String(message));
+
+    this.name = 'AssertionError';
+    this.method = String(method);
+    this.actual = String(actual);
+    this.expected = String(expected);
+    this.errorStack = errorStack || '';
+    setAssertionSource(this, method);
   }
-  return AssertionError;
-}(Error));
+}
 
 function setAssertionSource(error, method) {
   let result = { sourceFile: '<Unknown>', sourceLine: 0 };
@@ -375,8 +351,3 @@ function formatValue(value) {
   }
   return `<${type}> ${value}`;
 }
-
-)JavaScript");
-
-} // namespace module
-} // namespace napitest

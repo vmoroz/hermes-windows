@@ -220,8 +220,22 @@ NapiTestContext::NapiTestContext(napi_env env)
     : env(env),
       m_envScope(env),
       m_handleScope(env),
-      m_scriptModules(module::GetModuleScripts()) {
+      m_scriptModules(GetCommonScripts()) {
   DefineGlobalFunctions();
+}
+
+std::map<std::string, TestScriptInfo, std::less<>>
+NapiTestContext::GetCommonScripts() noexcept {
+  std::map<std::string, TestScriptInfo, std::less<>> moduleScripts;
+  moduleScripts.try_emplace(
+      "assert",
+      TestScriptInfo{
+          ReadScriptText("common/assert.js"), "common/assert.js", 1});
+  moduleScripts.try_emplace(
+      "../../common",
+      TestScriptInfo{
+          ReadScriptText("common/common.js"), "common/common.js", 1});
+  return moduleScripts;
 }
 
 napi_value NapiTestContext::RunScript(
@@ -333,7 +347,8 @@ void NapiTestContext::HandleUnhandledPromiseRejections() {
 
 NapiTestErrorHandler NapiTestContext::RunTestScript(
     TestScriptInfo const &scriptInfo) {
-  return RunTestScript(scriptInfo.script, scriptInfo.file, scriptInfo.line);
+  return RunTestScript(
+      scriptInfo.script.c_str(), scriptInfo.file.c_str(), scriptInfo.line);
 }
 
 NapiTestErrorHandler NapiTestContext::RunTestScript(
