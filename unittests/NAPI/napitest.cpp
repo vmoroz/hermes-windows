@@ -4,6 +4,7 @@
 #include "napitest.h"
 #include <algorithm>
 #include <cstdarg>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <regex>
@@ -38,7 +39,7 @@ static char const *ModuleSuffix = R"(
   })({exports: {}});)";
 static int32_t const ModulePrefixLineCount = GetEndOfLineCount(ModulePrefix);
 
-static std::string GetJSModuleText(const char *jsModuleCode) {
+static std::string GetJSModuleText(std::string const &jsModuleCode) {
   std::string result;
   result += ModulePrefix;
   result += jsModuleCode;
@@ -223,10 +224,12 @@ NapiTestContext::NapiTestContext(napi_env env)
   DefineGlobalFunctions();
 }
 
-napi_value NapiTestContext::RunScript(char const *code, char const *sourceUrl) {
+napi_value NapiTestContext::RunScript(
+    std::string const &code,
+    char const *sourceUrl) {
   napi_value script{}, scriptResult{};
   THROW_IF_NOT_OK(
-      napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &script));
+      napi_create_string_utf8(env, code.c_str(), code.size(), &script));
   if (sourceUrl) {
     THROW_IF_NOT_OK(napi_ext_run_script(env, script, sourceUrl, &scriptResult));
   } else {
@@ -235,23 +238,29 @@ napi_value NapiTestContext::RunScript(char const *code, char const *sourceUrl) {
   return scriptResult;
 }
 
-napi_value NapiTestContext::GetModule(char const *moduleName) {
+napi_value NapiTestContext::GetModule(std::string const &moduleName) {
   napi_value result{};
   auto moduleIt = m_modules.find(moduleName);
   if (moduleIt != m_modules.end()) {
     NODE_API_CALL(
         env, napi_get_reference_value(env, moduleIt->second.get(), &result));
   } else {
-    auto scriptIt = m_scriptModules.find(moduleName);
-    if (scriptIt != m_scriptModules.end()) {
+    if (moduleName.find("@babel") == 0) {
       result = RunScript(
-          GetJSModuleText(scriptIt->second.script).c_str(), moduleName);
+          GetJSModuleText(ReadScriptText(moduleName + ".js")),
+          (moduleName + ".js").c_str());
     } else {
-      auto nativeModuleIt = m_nativeModules.find(moduleName);
-      if (nativeModuleIt != m_nativeModules.end()) {
-        napi_value exports{};
-        NODE_API_CALL(env, napi_create_object(env, &exports));
-        result = nativeModuleIt->second(env, exports);
+      auto scriptIt = m_scriptModules.find(moduleName);
+      if (scriptIt != m_scriptModules.end()) {
+        result = RunScript(
+            GetJSModuleText(scriptIt->second.script), moduleName.c_str());
+      } else {
+        auto nativeModuleIt = m_nativeModules.find(moduleName);
+        if (nativeModuleIt != m_nativeModules.end()) {
+          napi_value exports{};
+          NODE_API_CALL(env, napi_create_object(env, &exports));
+          result = nativeModuleIt->second(env, exports);
+        }
       }
     }
 
@@ -319,6 +328,27 @@ void NapiTestContext::HandleUnhandledPromiseRejections() {
 NapiTestErrorHandler NapiTestContext::RunTestScript(
     TestScriptInfo const &scriptInfo) {
   return RunTestScript(scriptInfo.script, scriptInfo.file, scriptInfo.line);
+}
+
+NapiTestErrorHandler NapiTestContext::RunTestScript(
+    std::string const &scriptFile) {
+  return RunTestScript(
+      ReadScriptText(scriptFile).c_str(), scriptFile.c_str(), 1);
+}
+
+std::string NapiTestContext::ReadScriptText(std::string const &scriptFile) {
+  return ReadFileText(std::string("../js/") + scriptFile);
+}
+
+std::string NapiTestContext::ReadFileText(std::string const &fileName) {
+  std::string text;
+  std::ifstream fileStream(fileName);
+  if (fileStream) {
+    std::ostringstream ss;
+    ss << fileStream.rdbuf();
+    text = ss.str();
+  }
+  return text;
 }
 
 void NapiTestContext::DefineGlobalFunctions() {

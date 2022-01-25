@@ -201,14 +201,19 @@ struct NapiEnvScope {
 struct NapiTestContext {
   NapiTestContext(napi_env env);
 
-  napi_value RunScript(char const *code, char const *sourceUrl = nullptr);
-  napi_value GetModule(char const *moduleName);
+  napi_value RunScript(
+      std::string const &code,
+      char const *sourceUrl = nullptr);
+  napi_value GetModule(std::string const &moduleName);
   TestScriptInfo *GetTestScriptInfo(std::string const &moduleName);
 
   NapiTestErrorHandler
   RunTestScript(char const *script, char const *file, int32_t line);
-
   NapiTestErrorHandler RunTestScript(TestScriptInfo const &scripInfo);
+  NapiTestErrorHandler RunTestScript(std::string const &scriptFile);
+
+  std::string ReadScriptText(std::string const &scriptFile);
+  std::string ReadFileText(std::string const &fileName);
 
   void AddNativeModule(
       char const *moduleName,
