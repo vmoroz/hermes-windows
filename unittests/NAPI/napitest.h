@@ -16,7 +16,6 @@
 
 #define NAPI_EXPERIMENTAL
 #include "js_native_ext_api.h"
-#include "modules.h"
 
 extern "C" {
 #include "js-native-api/common.h"
@@ -100,6 +99,16 @@ struct NapiAssertionErrorInfo {
   int32_t SourceLine;
   std::string ErrorStack;
 };
+
+struct TestScriptInfo {
+  std::string script;
+  std::string file;
+  int32_t line;
+};
+
+inline int32_t GetEndOfLineCount(char const *script) noexcept {
+  return std::count(script, script + strlen(script), '\n');
+}
 
 // The exception used to propagate NAPI and script errors.
 struct NapiTestException : std::exception {
