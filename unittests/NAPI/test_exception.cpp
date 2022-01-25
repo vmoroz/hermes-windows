@@ -5,8 +5,6 @@
 #include "napitest.h"
 
 #define Init test_exception_init
-#include "js-native-api/test_exception/test.js.h"
-#include "js-native-api/test_exception/testFinalizerException.js.h"
 #include "js-native-api/test_exception/test_exception.c"
 
 using namespace napitest;
@@ -16,7 +14,7 @@ TEST_P(NapiTest, test_exception) {
     testContext->AddNativeModule(
         "./build/x86/test_exception",
         [](napi_env env, napi_value exports) { return Init(env, exports); });
-    testContext->RunTestScript(test_exception_test_js);
+    testContext->RunTestScript("test_exception/test.js");
   });
 }
 
@@ -38,7 +36,7 @@ TEST_P(NapiTest, test_exception_finalizer) {
           process = { argv:['', '', 'child'] };
         )");
 
-        testContext->RunTestScript(test_exception_testFinalizerException_js)
+        testContext->RunTestScript("test_exception/testFinalizerException.js")
             .Throws("Error", [&error](NapiTestException const &ex) noexcept {
               error = ex.ErrorInfo()->Message;
             });
@@ -81,6 +79,6 @@ TEST_P(NapiTest, test_exception_finalizer) {
           return exports;
         });
 
-    testContext->RunTestScript(test_exception_testFinalizerException_js);
+    testContext->RunTestScript("test_exception/testFinalizerException.js");
   });
 }

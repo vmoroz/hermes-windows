@@ -246,9 +246,15 @@ napi_value NapiTestContext::GetModule(std::string const &moduleName) {
         env, napi_get_reference_value(env, moduleIt->second.get(), &result));
   } else {
     if (moduleName.find("@babel") == 0) {
+      std::string scriptFile = moduleName + ".js";
       result = RunScript(
-          GetJSModuleText(ReadScriptText(moduleName + ".js")),
-          (moduleName + ".js").c_str());
+          GetJSModuleText(ReadScriptText(scriptFile)), scriptFile.c_str());
+    } else if (
+        moduleName.find("./") == 0 &&
+        moduleName.find(".js") != std::string::npos) {
+      std::string scriptFile = "@babel/runtime/helpers" + moduleName.substr(1);
+      result = RunScript(
+          GetJSModuleText(ReadScriptText(scriptFile)), scriptFile.c_str());
     } else {
       auto scriptIt = m_scriptModules.find(moduleName);
       if (scriptIt != m_scriptModules.end()) {
