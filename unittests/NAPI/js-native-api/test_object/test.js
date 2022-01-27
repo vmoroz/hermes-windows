@@ -285,7 +285,7 @@ assert.deepStrictEqual(test_object.TestGetProperty(), {
 
   assert.throws(() => {
     obj.w = 'd';
-  }, /Cannot add (new)? property '?w'?(, object is not extensible)?/);
+  }, /Cannot add( new)? property '?w'?(, object is not extensible)?/);
 
   assert.throws(() => {
     delete obj.x;
@@ -305,7 +305,7 @@ assert.deepStrictEqual(test_object.TestGetProperty(), {
 
   assert.throws(() => {
     obj.x = 10;
-  }, /Cannot assign to read-?only property 'x'( of object '#<Object>)?/);
+  }, /Cannot assign to read[ -]only property 'x'( of object '#<Object>)?/);
 
   assert.throws(() => {
     obj.w = 15;
