@@ -7,12 +7,12 @@
 
 namespace napitest {
 
-std::vector<NapiEnvFactory> NapiEnvFactories() {
-  return {[]() {
-    napi_env env{};
-    napi_create_hermes_env(&env);
-    return env;
-  }};
+std::vector<NapiTestData> NapiEnvFactories() {
+  return {{"../js", []() {
+             napi_env env{};
+             napi_create_hermes_env(&env);
+             return env;
+           }}};
 }
 
 } // namespace napitest
