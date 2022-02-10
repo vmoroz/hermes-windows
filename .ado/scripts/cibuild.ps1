@@ -86,6 +86,9 @@ function Get-VCVarsParam($plat = "x64", $arch = "win32") {
         $args_ = "$args_ $SDKVersion"
     }
 
+    # Spectre mitigations (for SDL)
+    $args_ = "$args_ -vcvars_spectre_libs=spectre"
+
     return $args_
 }
 
