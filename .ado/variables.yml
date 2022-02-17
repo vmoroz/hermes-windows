@@ -1,0 +1,6 @@
+variables:
+  - group: Hermes-Windows Secrets
+  - name: ArtifactServices.Symbol.AccountName
+    value: microsoft
+  - name: ArtifactServices.Symbol.PAT
+    value: $(pat-symbols-publish-microsoft)
