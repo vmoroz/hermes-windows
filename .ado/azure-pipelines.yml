@@ -7,8 +7,5 @@ pr:
 pool:
   vmImage: 'windows-latest'
 
-variables:
-  - template: variables.yml
-
 jobs:
   - template: jobs.yml

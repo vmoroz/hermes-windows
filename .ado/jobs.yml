@@ -1,57 +1,7 @@
 jobs:
-  - job: HermesBuildAll
+  - job: Build
     timeoutInMinutes: 120
-    displayName: (PR) Build the Hermes binary for supported architectures and flavors
-    strategy:
-      matrix:
-        DebugX64:
-          BuildConfiguration: debug
-          BuildPlatform: x64
-        DebugX86:
-          BuildConfiguration: debug
-          BuildPlatform: x86
-        DebugARM:
-          BuildConfiguration: debug
-          BuildPlatform: arm
-        DebugARM64:
-          BuildConfiguration: debug
-          BuildPlatform: arm64
-        ReleaseX64:
-          BuildConfiguration: release
-          BuildPlatform: x64
-        ReleaseX86:
-          BuildConfiguration: release
-          BuildPlatform: x86
-        ReleaseARM:
-          BuildConfiguration: release
-          BuildPlatform: arm
-        ReleaseARM64:
-          BuildConfiguration: release
-          BuildPlatform: arm64
-
-    steps:
-      - task: PowerShell@2
-        displayName: Run the build script
-        enabled: false
-        inputs:
-          targetType: filePath
-          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
-          arguments:
-            -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
-            -Platform:$(BuildPlatform)
-            -Configuration:$(BuildConfiguration)
-            -AppPlatform:uwp
-
-      - task: PublishBuildArtifacts@1
-        displayName: "Publish artifacts"
-        inputs:
-          artifactName: HermesArtifacts
-          pathtoPublish: $(Build.ArtifactStagingDirectory)
-
-  - job: HermesBuildForPublish
-    timeoutInMinutes: 120
-    displayName: (Publish) Build the Hermes binary for supported architectures and flavors
+    displayName: Build Hermes
     strategy:
       matrix:
         DebugX64:
@@ -92,7 +42,11 @@ jobs:
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
 
+      - script: echo TODO - Add Tests here
+        displayName: '[Test] - To be Added via bug #77'
+
       - script: mkdir $(Build.ArtifactStagingDirectory)\_manifest\$(BuildPlatform)\$(BuildFlavor)
+        displayName: 📒 Prep for Manifest
 
       - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
         displayName: 📒 Generate Manifest
@@ -114,10 +68,12 @@ jobs:
           SearchPattern: $(Build.ArtifactStagingDirectory)/**/*.pdb
           SymbolServerType: TeamServices
 
-  - job: HermesPublishNuget
+      - task: ComponentGovernanceComponentDetection@0
+
+  - job: CreateNuGet
     dependsOn:
-      - HermesBuildForPublish
-    displayName: Publish Nuget
+      - Build
+    displayName: Create Nuget packages
     steps:
       - checkout: none
 
@@ -161,6 +117,7 @@ jobs:
 
       - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
         displayName: 📒 Generate Manifest NuGet
+        condition: not(eq(variables['Build.Reason'], 'PullRequest'))
         inputs:
           BuildDropPath: $(System.DefaultWorkingDirectory)\NugetRootFinal
 
