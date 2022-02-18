@@ -46,6 +46,7 @@ jobs:
         displayName: '[Test] - To be Added via bug #77'
 
       - script: mkdir $(Build.ArtifactStagingDirectory)\_manifest\$(BuildPlatform)\$(BuildFlavor)
+        displayName: 📒 Prep for Manifest
 
       - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
         displayName: 📒 Generate Manifest
