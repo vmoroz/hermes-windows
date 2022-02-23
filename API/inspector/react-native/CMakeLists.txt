@@ -36,6 +36,10 @@ if(NOT reactnative_POPULATED)
     "${file_text}"
   )
   file(WRITE ${reactnative_SOURCE_DIR}/ReactCommon/hermes/inspector/chrome/Registration.h "${file_text}")
+
+  file(GLOB_RECURSE YARN_FILES ${reactnative_SOURCE_DIR}/yarn.lock ${reactnative_SOURCE_DIR}/**/yarn.lock)
+  message("Removing unused yarn.lock files: ${YARN_FILES}")
+  file(REMOVE ${YARN_FILES})
 endif()
 
 set(REACT_NATIVE_SOURCE ${reactnative_SOURCE_DIR} PARENT_SCOPE)
