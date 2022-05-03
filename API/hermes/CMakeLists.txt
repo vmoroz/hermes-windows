@@ -88,10 +88,10 @@ if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
 
   # Generate PDBs
   set(compile_flags "${compile_flags} /Zi")
-  if("{CMAKE_BUILD_TYPE}" MATCHES "Debug")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(link_flags "${link_flags} /DEBUG")
   else()
-    set(link_flags "${link_flags} /DEBUG /DEBUGTYPE:CV,FIXUP /OPT:REF /OPT:ICF")
+    set(link_flags "${link_flags} /DEBUG /DEBUGTYPE:CV,FIXUP /OPT:REF /OPT:ICF /INCREMENTAL:NO")
 
     if("${MSVC_C_ARCHITECTURE_ID}" MATCHES "^(X64|X86)$")
       # CETCOMPAT is not supported by ARM or ARM64

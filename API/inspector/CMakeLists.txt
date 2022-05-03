@@ -128,10 +128,10 @@ set(compile_flags "${compile_flags} /GR")
 
 # Generate PDBs
 set(compile_flags "${compile_flags} /Zi")
-if("{CMAKE_BUILD_TYPE}" MATCHES "Debug")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(link_flags "${link_flags} /DEBUG")
 else()
-  set(link_flags "${link_flags} /DEBUG /OPT:REF /OPT:ICF")
+  set(link_flags "${link_flags} /DEBUG /OPT:REF /OPT:ICF /INCREMENTAL:NO")
 endif()
 
 set_target_properties(hermesinspector PROPERTIES
