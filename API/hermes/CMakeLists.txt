@@ -89,7 +89,10 @@ if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   set(compile_flags "${compile_flags} /Zi")
 
   set(link_flags_debug "/DEBUG")
-  set(link_flags_release "/DEBUG;/DEBUGTYPE:CV$<COMMA>FIXUP;/OPT:REF;/OPT:ICF;/INCREMENTAL:NO")
+  # Use /OPT:NOICF because hermes associates function pointer with its name.
+  # The optimization that merges functions with the same body breaks that code.
+  # See getFunctionNameImpl in lib\VM\JSNativeFunctions.cpp.
+  set(link_flags_release "/DEBUG;/DEBUGTYPE:CV$<COMMA>FIXUP;/OPT:REF;/OPT:NOICF;/INCREMENTAL:NO")
   if(CMAKE_VS_PLATFORM_NAME MATCHES "^(x64|x86|Win32)$")
     # CETCOMPAT is not supported by ARM or ARM64
     list(APPEND link_flags_release "/CETCOMPAT")
