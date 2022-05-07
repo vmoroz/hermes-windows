@@ -128,15 +128,17 @@ set(compile_flags "${compile_flags} /GR")
 
 # Generate PDBs
 set(compile_flags "${compile_flags} /Zi")
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(link_flags "${link_flags} /DEBUG")
-else()
-  set(link_flags "${link_flags} /DEBUG /OPT:REF /OPT:ICF /INCREMENTAL:NO")
+
+set(link_flags_debug "/DEBUG")
+set(link_flags_release "/DEBUG;/OPT:REF;/OPT:ICF;/INCREMENTAL:NO")
+if(CMAKE_VS_PLATFORM_NAME MATCHES "^(x64|x86|Win32)$")
+  # CETCOMPAT is not supported by ARM or ARM64
+  list(APPEND link_flags_release "/CETCOMPAT")
 endif()
 
 set_target_properties(hermesinspector PROPERTIES
   COMPILE_FLAGS "${compile_flags}"
-  LINK_FLAGS "${link_flags}"
+  LINK_OPTIONS "$<IF:$<CONFIG:Debug>,${link_flags_debug},${link_flags_release}>"
   # Declare our dependency on std::make_unique
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED 17
