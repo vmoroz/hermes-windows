@@ -78,7 +78,6 @@ target_include_directories(libhermes PUBLIC ..)
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
   set(compile_flags "")
-  set(link_flags "")
 
   # Enable exeption
   set(compile_flags "${compile_flags} /EHsc")
@@ -88,25 +87,24 @@ if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
 
   # Generate PDBs
   set(compile_flags "${compile_flags} /Zi")
-  if("{CMAKE_BUILD_TYPE}" MATCHES "Debug")
-    set(link_flags "${link_flags} /DEBUG")
-  else()
-    set(link_flags "${link_flags} /DEBUG /DEBUGTYPE:CV,FIXUP /OPT:REF /OPT:ICF")
 
-    if("${MSVC_C_ARCHITECTURE_ID}" MATCHES "^(X64|X86)$")
-      # CETCOMPAT is not supported by ARM or ARM64
-      set(link_flags "${link_flags} /CETCOMPAT")
-    endif()
+  set(link_flags_debug "/DEBUG")
+  # Use /OPT:NOICF because hermes associates function pointer with its name.
+  # The optimization that merges functions with the same body breaks that code.
+  # See getFunctionNameImpl in lib\VM\JSNativeFunctions.cpp.
+  set(link_flags_release "/DEBUG;/DEBUGTYPE:CV$<COMMA>FIXUP;/OPT:REF;/OPT:NOICF;/INCREMENTAL:NO")
+  if(CMAKE_VS_PLATFORM_NAME MATCHES "^(x64|x86|Win32)$")
+    # CETCOMPAT is not supported by ARM or ARM64
+    list(APPEND link_flags_release "/CETCOMPAT")
   endif()
 endif()
 
 set_target_properties(libhermes PROPERTIES
   COMPILE_FLAGS "${compile_flags}"
-  LINK_FLAGS "${link_flags}"
+  LINK_OPTIONS "$<IF:$<CONFIG:Debug>,${link_flags_debug},${link_flags_release}>"
   # Declare our dependency on std::make_unique
   CXX_STANDARD 14
   CXX_STANDARD_REQUIRED 14
-  # Avoid becoming liblibhermes (and there's already a target called 'hermes')
   # Avoid becoming liblibhermes (and there's already a target called 'hermes')
   OUTPUT_NAME hermes
 )
