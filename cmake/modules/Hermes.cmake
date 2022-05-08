@@ -127,7 +127,7 @@ function(hermes_update_compile_flags name)
   if (update_src_props)
     foreach (fn ${sources})
       get_filename_component(suf ${fn} EXT)
-      if ("${suf}" STREQUAL ".cpp")
+      if ("${suf}" STREQUAL ".cpp" OR "${suf}" STREQUAL ".c")
         set_property(SOURCE ${fn} APPEND_STRING PROPERTY
           COMPILE_FLAGS "${flags}")
       endif ()
@@ -278,8 +278,8 @@ if (MSVC)
 
   # Security flags.
   # Note: Security warnings need to be fixed / baselined to be sdl clean - 4146, 4244 and 4267 (currently disabled)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE /guard:cf /Qspectre")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE /guard:cf /Qspectre")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE /guard:cf")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE /guard:cf")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /guard:cf /Qspectre /sdl /ZH:SHA_256")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /guard:cf /Qspectre /sdl /ZH:SHA_256")
 
