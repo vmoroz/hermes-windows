@@ -310,7 +310,7 @@ if __name__ == "__main__":
         case_folding = f.read()
 
     # The following hashes are not used in any security context. It is only used
-    # to generate a comment to track back the original files int he generated file,
+    # to generate a comment to track back the original files in the generated file,
     # collisions are acceptable and "data" is not coming from user-generated input
     print_header(
         hashlib.sha1(unicode_data).hexdigest(),  # nosec
