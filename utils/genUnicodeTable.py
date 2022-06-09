@@ -309,11 +309,15 @@ if __name__ == "__main__":
     with urllib.request.urlopen(UNICODE_CASE_FOLDING_URL) as f:
         case_folding = f.read()
 
+    # The following hashes are not used in any security context. It is only used
+    # to generate a comment to track back the original files in the generated file,
+    # collisions are acceptable and "data" is not coming from user-generated input
     print_header(
-        hashlib.sha1(unicode_data).hexdigest(),
-        hashlib.sha1(special_casing).hexdigest(),
-        hashlib.sha1(case_folding).hexdigest(),
+        hashlib.sha1(unicode_data).hexdigest(),  # nosec
+        hashlib.sha1(special_casing).hexdigest(),  # nosec
+        hashlib.sha1(case_folding).hexdigest(),  # nosec
     )
+    
     udata_lines = unicode_data.decode("utf-8").splitlines()
     special_lines = special_casing.decode("utf-8").splitlines()
     casefolding_lines = case_folding.decode("utf-8").splitlines()
