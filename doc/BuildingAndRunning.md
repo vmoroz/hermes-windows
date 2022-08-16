@@ -22,7 +22,7 @@ On Arch Linux:
 On Mac via Homebrew:
 
     brew install cmake git ninja
-    
+
 ## Building on Linux and macOS
 
 Hermes will place its build files in the current directory by default.
