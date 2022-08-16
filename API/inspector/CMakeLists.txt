@@ -139,9 +139,6 @@ endif()
 set_target_properties(hermesinspector PROPERTIES
   COMPILE_FLAGS "${compile_flags}"
   LINK_OPTIONS "$<IF:$<CONFIG:Debug>,${link_flags_debug},${link_flags_release}>"
-  # Declare our dependency on std::make_unique
-  CXX_STANDARD 17
-  CXX_STANDARD_REQUIRED 17
   OUTPUT_NAME hermesinspector
 )
 
