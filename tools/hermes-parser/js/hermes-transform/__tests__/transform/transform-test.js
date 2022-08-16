@@ -8,12 +8,14 @@
  * @format
  */
 
+import type {TransformVisitor} from '../../src/transform/transform';
+
 import {transform as transformOriginal} from '../../src/transform/transform';
 import * as t from '../../src/generated/node-types';
 // $FlowExpectedError[cannot-resolve-module]
 import prettierConfig from '../../../.prettierrc.json';
 
-function transform(code, visitors) {
+function transform(code: string, visitors: TransformVisitor) {
   return transformOriginal(code, visitors, prettierConfig);
 }
 
@@ -541,16 +543,14 @@ class Foo {
               kind: 'const',
               declarations: [
                 t.VariableDeclarator({
-                  id: context.shallowCloneNode(node.id),
+                  id: node.id,
                   init: t.ArrowFunctionExpression({
                     async: node.async,
-                    body: context.shallowCloneNode(node.body),
-                    params: context.shallowCloneArray(node.params),
-                    predicate: context.shallowCloneNode(node.predicate),
-                    returnType: context.shallowCloneNode(node.returnType),
-                    typeParameters: context.shallowCloneNode(
-                      node.typeParameters,
-                    ),
+                    body: node.body,
+                    params: node.params,
+                    predicate: node.predicate,
+                    returnType: node.returnType,
+                    typeParameters: node.typeParameters,
                   }),
                 }),
               ],
@@ -602,7 +602,7 @@ if (true) call();
           },
         })),
       ).toThrowErrorMatchingInlineSnapshot(
-        `"Expected to find the target \\"ExpressionStatement\\" on the \\"IfStatement.alternate\\", but found a different node. This likely means that you attempted to mutate around the target after it was deleted/replaced."`,
+        `"Attempted to insert before a deleted ExpressionStatement node. This likely means that you attempted to mutate around the target after it was deleted/replaced."`,
       );
     });
 
@@ -711,7 +711,7 @@ statement(); // inline comment to be duplicated
 
         const result = transform(code, context => ({
           ExpressionStatement(node) {
-            context.insertBeforeStatement(node, context.shallowCloneNode(node));
+            context.insertBeforeStatement(node, node);
           },
         }));
 
@@ -1230,5 +1230,24 @@ y; // EOL comment
 `);
       });
     });
+  });
+
+  it('should not crash on optional chaining', () => {
+    const code = `\
+x?.y;
+x?.();
+`;
+    const result = transform(code, context => ({
+      Program(node) {
+        context.addTrailingInlineComments(
+          node.body[0],
+          t.LineComment({value: 'test'}),
+        );
+      },
+    }));
+    expect(result).toBe(`\
+x?.y; //test
+x?.();
+`);
   });
 });

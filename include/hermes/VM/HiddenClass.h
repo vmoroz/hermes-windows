@@ -162,16 +162,15 @@ class TransitionMap {
         (isLarge() && large()->containsKey(key));
   }
 
-  /// Look for key and return the value as Handle<T> if found or None if not.
-  llvh::Optional<Handle<HiddenClass>> lookup(
-      Runtime &runtime,
-      const Transition &key) {
+  /// Look for a \p key and return the corresponding HiddenClass, or nullptr if
+  /// it is not found.
+  HiddenClass *lookup(Runtime &runtime, const Transition &key) {
     if (smallKey_ == key) {
       return smallValue().get(runtime);
     } else if (isLarge()) {
       return large()->lookup(runtime, key);
     } else {
-      return llvh::None;
+      return nullptr;
     }
   }
 
@@ -229,9 +228,11 @@ class TransitionMap {
     }
   }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   void snapshotAddNodes(GC &gc, HeapSnapshot &snap);
   void snapshotAddEdges(GC &gc, HeapSnapshot &snap);
   void snapshotUntrackMemory(GC &gc);
+#endif
 
  private:
   /// Clean = no transition has been inserted since construction.
@@ -562,9 +563,11 @@ class HiddenClass final : public GCCell {
   /// is assumed to be a HiddenClass.
   static size_t _mallocSizeImpl(GCCell *cell);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
   static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
   static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
  private:
   /// The symbol that was added when transitioning to this hidden class.

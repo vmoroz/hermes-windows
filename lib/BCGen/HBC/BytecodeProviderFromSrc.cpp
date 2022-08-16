@@ -54,6 +54,9 @@ BCProviderFromSrc::BCProviderFromSrc(
   stringCount_ = module_->getStringTable().size();
   stringStorage_ = module_->getStringStorage();
 
+  bigIntStorage_ = module_->getBigIntStorage();
+  bigIntTable_ = module_->getBigIntTable();
+
   regExpStorage_ = module_->getRegExpStorage();
   regExpTable_ = module_->getRegExpTable();
 
@@ -120,8 +123,6 @@ BCProviderFromSrc::createBCProviderFromSrcImpl(
     SourceErrorManager::DiagHandlerTy diagHandler,
     void *diagContext,
     const std::function<void(Module &)> &runOptimizationPasses) {
-  using llvh::Twine;
-
   assert(
       buffer->data()[buffer->size()] == 0 &&
       "The input buffer must be null terminated");

@@ -165,10 +165,7 @@ JSWeakMapImplBase::KeyIterator JSWeakMapImplBase::keys_end() {
 
 JSObject *detail::WeakRefKey::getObjectInGC(GC &gc) const {
   assert(gc.calledByGC() && "Should only be used by the GC implementation.");
-  const auto ptrOpt = ref.unsafeGetOptionalNoReadBarrier(gc.getPointerBase());
-  if (!ptrOpt)
-    return nullptr;
-  return *ptrOpt;
+  return ref.getNoBarrierUnsafe(gc.getPointerBase());
 }
 
 void JSWeakMapImplBase::_markWeakImpl(GCCell *cell, WeakRefAcceptor &acceptor) {
@@ -201,6 +198,7 @@ HeapSnapshot::NodeID JSWeakMapImplBase::getMapID(GC &gc) {
   return nativeIDList[0];
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void JSWeakMapImplBase::_snapshotAddEdgesImpl(
     GCCell *cell,
     GC &gc,
@@ -228,6 +226,7 @@ void JSWeakMapImplBase::_snapshotAddNodesImpl(
         0);
   }
 }
+#endif
 
 /// Mark weak references and remove any invalid weak refs.
 void JSWeakMapImplBase::findAndDeleteFreeSlots(Runtime &runtime) {
@@ -331,13 +330,15 @@ const ObjectVTable JSWeakMapImpl<C>::vt{
         JSWeakMapImpl::_finalizeImpl,
         JSWeakMapImpl::_markWeakImpl,
         JSWeakMapImpl::_mallocSizeImpl,
-        nullptr,
-        VTable::HeapSnapshotMetadata{
-            HeapSnapshot::NodeType::Object,
-            nullptr,
-            _snapshotAddEdgesImpl,
-            _snapshotAddNodesImpl,
-            nullptr}),
+        nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+        ,
+        VTable::HeapSnapshotMetadata {
+          HeapSnapshot::NodeType::Object, nullptr, _snapshotAddEdgesImpl,
+              _snapshotAddNodesImpl, nullptr
+        }
+#endif
+        ),
     JSWeakMapImpl::_getOwnIndexedRangeImpl,
     JSWeakMapImpl::_haveOwnIndexedImpl,
     JSWeakMapImpl::_getOwnIndexedPropertyFlagsImpl,

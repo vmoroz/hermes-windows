@@ -50,6 +50,7 @@ static void printStats(vm::Runtime &runtime, llvh::raw_ostream &os) {
 
 static vm::CallResult<vm::HermesValue>
 createHeapSnapshot(void *, vm::Runtime &runtime, vm::NativeArgs args) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   using namespace vm;
   std::string fileName;
   if (args.getArgCount() >= 1 && !args.getArg(0).isUndefined()) {
@@ -80,6 +81,10 @@ createHeapSnapshot(void *, vm::Runtime &runtime, vm::NativeArgs args) {
         "\". System error: " + llvh::StringRef(err.message()));
   }
   return HermesValue::encodeUndefinedValue();
+#else // !defined(HERMES_MEMORY_INSTRUMENTATION)
+  return runtime.raiseTypeError(
+      "Heap snapshotting requires a build with memory instrumentation");
+#endif // !defined(HERMES_MEMORY_INSTRUMENTATION)
 }
 
 static vm::CallResult<vm::HermesValue>
@@ -265,7 +270,6 @@ bool executeHBCBytecodeImpl(
     // Try to limit features that can introduce unpredictable CPU instruction
     // behavior. Date is a potential cause, but is not handled currently.
     vm::MockedEnvironment env;
-    env.mathRandomSeed = 0;
     env.stabilizeInstructionCount = true;
     runtime->setMockedEnvironment(env);
   }
@@ -281,7 +285,12 @@ bool executeHBCBytecodeImpl(
   }
 
   if (options.heapTimeline) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime->enableAllocationLocationTracker();
+#else
+    llvh::errs() << "Failed to track allocation locations; build does not"
+                    "include memory instrumentation\n";
+#endif
   }
 
   vm::GCScope scope(*runtime);

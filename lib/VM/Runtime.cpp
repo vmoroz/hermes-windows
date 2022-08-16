@@ -31,6 +31,7 @@
 #include "hermes/VM/JSLib/RuntimeCommonStorage.h"
 #include "hermes/VM/MockedEnvironment.h"
 #include "hermes/VM/Operations.h"
+#include "hermes/VM/OrderedHashMap.h"
 #include "hermes/VM/PredefinedStringIDs.h"
 #include "hermes/VM/Profiler/CodeCoverageProfiler.h"
 #include "hermes/VM/Profiler/SamplingProfiler.h"
@@ -224,11 +225,12 @@ Runtime::Runtime(
       hasES6Promise_(runtimeConfig.getES6Promise()),
       hasES6Proxy_(runtimeConfig.getES6Proxy()),
       hasIntl_(runtimeConfig.getIntl()),
+      hasArrayBuffer_(runtimeConfig.getArrayBuffer()),
+      hasMicrotaskQueue_(runtimeConfig.getMicrotaskQueue()),
       shouldRandomizeMemoryLayout_(runtimeConfig.getRandomizeMemoryLayout()),
       bytecodeWarmupPercent_(runtimeConfig.getBytecodeWarmupPercent()),
       trackIO_(runtimeConfig.getTrackIO()),
       vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()),
-      runtimeStats_(runtimeConfig.getEnableSampledStats()),
       commonStorage_(
           createRuntimeCommonStorage(runtimeConfig.getTraceEnabled())),
       stackPointer_(),
@@ -532,16 +534,20 @@ void Runtime::markRoots(
   {
     MarkRootsPhaseTimer timer(*this, RootAcceptor::Section::IdentifierTable);
     if (markLongLived) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
       // Need to add nodes before the root section, and edges during the root
       // section.
       acceptor.provideSnapshot([this](HeapSnapshot &snap) {
         identifierTable_.snapshotAddNodes(snap);
       });
+#endif
       acceptor.beginRootSection(RootAcceptor::Section::IdentifierTable);
       identifierTable_.markIdentifiers(acceptor, getHeap());
+#ifdef HERMES_MEMORY_INSTRUMENTATION
       acceptor.provideSnapshot([this](HeapSnapshot &snap) {
         identifierTable_.snapshotAddEdges(snap);
       });
+#endif
       acceptor.endRootSection();
     }
   }
@@ -1071,7 +1077,7 @@ Handle<JSObject> Runtime::runInternalBytecode() {
   auto res = runBytecode(
       std::move(bcResult.first),
       flags,
-      /*sourceURL*/ "",
+      /*sourceURL*/ "InternalBytecode.js",
       makeNullHandle<Environment>());
   // It is a fatal error for the internal bytecode to throw an exception.
   assert(
@@ -1285,7 +1291,7 @@ ExecutionStatus Runtime::raiseTypeErrorForValue(
     default:
       if (value->isNumber()) {
         char buf[hermes::NUMBER_TO_STRING_BUF_SIZE];
-        size_t len = numberToString(
+        size_t len = hermes::numberToString(
             value->getNumber(), buf, hermes::NUMBER_TO_STRING_BUF_SIZE);
         return raiseTypeError(
             msg1 + TwineChar16(llvh::StringRef{buf, len}) + msg2);
@@ -1726,6 +1732,23 @@ ExecutionStatus Runtime::drainJobs() {
   return ExecutionStatus::RETURNED;
 }
 
+ExecutionStatus Runtime::addToKeptObjects(Handle<JSObject> obj) {
+  // Lazily create the map for keptObjects_
+  if (keptObjects_.isUndefined()) {
+    auto mapRes = OrderedHashMap::create(*this);
+    if (LLVM_UNLIKELY(mapRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    keptObjects_ = mapRes->getHermesValue();
+  }
+  auto mapHandle = Handle<OrderedHashMap>::vmcast(&keptObjects_);
+  return OrderedHashMap::insert(mapHandle, *this, obj, obj);
+}
+
+void Runtime::clearKeptObjects() {
+  keptObjects_ = HermesValue::encodeUndefinedValue();
+}
+
 uint64_t Runtime::gcStableHashHermesValue(Handle<HermesValue> value) {
   switch (value->getTag()) {
     case HermesValue::Tag::Object: {
@@ -1733,6 +1756,11 @@ uint64_t Runtime::gcStableHashHermesValue(Handle<HermesValue> value) {
       // that does not change for each object.
       auto id = JSObject::getObjectID(vmcast<JSObject>(*value), *this);
       return llvh::hash_value(id);
+    }
+    case HermesValue::Tag::BigInt: {
+      // For bigints, we hash the string content.
+      auto bytes = Handle<BigIntPrimitive>::vmcast(value)->getRawDataCompact();
+      return llvh::hash_combine_range(bytes.begin(), bytes.end());
     }
     case HermesValue::Tag::Str: {
       // For strings, we hash the string content.
@@ -1778,7 +1806,7 @@ void Runtime::dumpCallFrames(llvh::raw_ostream &OS) {
     if (auto *closure = dyn_vmcast<Callable>(sf.getCalleeClosureOrCBRef())) {
       OS << cellKindStr(closure->getKind()) << " ";
     }
-    if (auto *cb = sf.getCalleeCodeBlock()) {
+    if (auto *cb = sf.getCalleeCodeBlock(*this)) {
       OS << formatSymbolID(cb->getNameMayAllocate()) << " ";
     }
     dumpStackFrame(sf, OS, next);
@@ -1900,7 +1928,7 @@ std::string Runtime::getCallStackNoAlloc(const Inst *ip) {
   std::string res;
   // Note that the order of iteration is youngest (leaf) frame to oldest.
   for (auto frame : getStackFrames()) {
-    auto codeBlock = frame->getCalleeCodeBlock();
+    auto codeBlock = frame->getCalleeCodeBlock(*this);
     if (codeBlock) {
       res += codeBlock->getNameString(*this);
       // Default to the function entrypoint, this
@@ -2036,16 +2064,16 @@ ExecutionStatus Runtime::notifyTimeout() {
   return raiseTimeoutError();
 }
 
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 
 std::pair<const CodeBlock *, const inst::Inst *>
-Runtime::getCurrentInterpreterLocation(const inst::Inst *ip) const {
+Runtime::getCurrentInterpreterLocation(const inst::Inst *ip) {
   assert(ip && "IP being null implies we're not currently in the interpreter.");
   auto callFrames = getStackFrames();
   const CodeBlock *codeBlock = nullptr;
   for (auto frameIt = callFrames.begin(); frameIt != callFrames.end();
        ++frameIt) {
-    codeBlock = frameIt->getCalleeCodeBlock();
+    codeBlock = frameIt->getCalleeCodeBlock(*this);
     if (codeBlock) {
       break;
     } else {
@@ -2118,35 +2146,7 @@ void Runtime::pushCallStackImpl(
   stackTracesTree_->pushCallStack(*this, codeBlock, ip);
 }
 
-#else // !defined(HERMES_ENABLE_ALLOCATION_LOCATION_TRACES)
-
-std::pair<const CodeBlock *, const inst::Inst *>
-Runtime::getCurrentInterpreterLocation(const inst::Inst *ip) const {
-  return {nullptr, nullptr};
-}
-
-StackTracesTreeNode *Runtime::getCurrentStackTracesTreeNode(
-    const inst::Inst *ip) {
-  return nullptr;
-}
-
-void Runtime::enableAllocationLocationTracker(
-    std::function<void(
-        uint64_t,
-        std::chrono::microseconds,
-        std::vector<GCBase::AllocationLocationTracker::HeapStatsUpdate>)>) {}
-
-void Runtime::disableAllocationLocationTracker(bool) {}
-
-void Runtime::enableSamplingHeapProfiler(size_t, int64_t) {}
-
-void Runtime::disableSamplingHeapProfiler(llvh::raw_ostream &) {}
-
-void Runtime::popCallStackImpl() {}
-
-void Runtime::pushCallStackImpl(const CodeBlock *, const inst::Inst *) {}
-
-#endif // !defined(HERMES_ENABLE_ALLOCATION_LOCATION_TRACES)
+#endif // HERMES_MEMORY_INSTRUMENTATION
 
 } // namespace vm
 } // namespace hermes

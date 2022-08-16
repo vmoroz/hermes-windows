@@ -24,6 +24,7 @@ namespace vm {
 
 namespace detail {
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void TransitionMap::snapshotAddNodes(GC &gc, HeapSnapshot &snap) {
   if (!isLarge()) {
     return;
@@ -57,6 +58,7 @@ void TransitionMap::snapshotUntrackMemory(GC &gc) {
     gc.getIDTracker().untrackNative(large());
   }
 }
+#endif
 
 void TransitionMap::insertUnsafe(
     Runtime &runtime,
@@ -82,8 +84,8 @@ void TransitionMap::uncleanMakeLarge(Runtime &runtime) {
   assert(!isLarge() && "must not yet be large");
   auto large = new WeakValueMap<Transition, HiddenClass>();
   // Move any valid entry into the allocated map.
-  if (auto handle = smallValue().get(runtime))
-    large->insertNewLocked(runtime, smallKey_, handle.getValue());
+  if (auto value = smallValue().get(runtime))
+    large->insertNewLocked(runtime, smallKey_, runtime.makeHandle(value));
   u.large_ = large;
   smallKey_.symbolID = SymbolID::deleted();
   assert(isLarge());
@@ -97,13 +99,17 @@ const VTable HiddenClass::vt{
     _finalizeImpl,
     _markWeakImpl,
     _mallocSizeImpl,
-    nullptr,
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::Object,
         HiddenClass::_snapshotNameImpl,
         HiddenClass::_snapshotAddEdgesImpl,
         HiddenClass::_snapshotAddNodesImpl,
-        nullptr}};
+        nullptr}
+#endif
+};
 
 void HiddenClassBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const HiddenClass *>(cell);
@@ -121,7 +127,9 @@ void HiddenClass::_markWeakImpl(GCCell *cell, WeakRefAcceptor &acceptor) {
 
 void HiddenClass::_finalizeImpl(GCCell *cell, GC &gc) {
   auto *self = vmcast<HiddenClass>(cell);
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   self->transitionMap_.snapshotUntrackMemory(gc);
+#endif
   self->~HiddenClass();
 }
 
@@ -130,6 +138,7 @@ size_t HiddenClass::_mallocSizeImpl(GCCell *cell) {
   return self->transitionMap_.getMemorySize();
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 std::string HiddenClass::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = vmcast<HiddenClass>(cell);
   std::string name{cell->getVT()->snapshotMetaData.defaultNameForNode(self)};
@@ -154,6 +163,7 @@ void HiddenClass::_snapshotAddNodesImpl(
   auto *const self = vmcast<HiddenClass>(cell);
   self->transitionMap_.snapshotAddNodes(gc, snap);
 }
+#endif
 
 CallResult<HermesValue> HiddenClass::createRoot(Runtime &runtime) {
   return create(
@@ -274,12 +284,12 @@ OptValue<HiddenClass::PropertyPos> HiddenClass::findProperty(
       Transition t{name, expectedFlags};
       if (self->transitionMap_.containsKey(t, runtime.getHeap())) {
         LLVM_DEBUG(
-            dbgs() << "Property " << runtime.formatSymbolID(name)
-                   << " NOT FOUND in Class:" << self->getDebugAllocationId()
-                   << " due to existing transition to Class:"
-                   << (*self->transitionMap_.lookup(runtime, t))
-                          ->getDebugAllocationId()
-                   << "\n");
+            dbgs()
+            << "Property " << runtime.formatSymbolID(name)
+            << " NOT FOUND in Class:" << self->getDebugAllocationId()
+            << " due to existing transition to Class:"
+            << self->transitionMap_.lookup(runtime, t)->getDebugAllocationId()
+            << "\n");
         return llvh::None;
       }
     }
@@ -408,17 +418,18 @@ CallResult<std::pair<Handle<HiddenClass>, SlotIndex>> HiddenClass::addProperty(
   }
 
   // Do we already have a transition for that property+flags pair?
-  auto optChildHandle =
+  auto existingChild =
       selfHandle->transitionMap_.lookup(runtime, {name, propertyFlags});
-  if (LLVM_LIKELY(optChildHandle)) {
+  if (LLVM_LIKELY(existingChild)) {
+    auto childHandle = runtime.makeHandle(existingChild);
     // If the child doesn't have a property map, but we do, update our map and
     // move it to the child.
-    if (!optChildHandle.getValue()->propertyMap_ && selfHandle->propertyMap_) {
+    if (!childHandle->propertyMap_ && selfHandle->propertyMap_) {
       LLVM_DEBUG(
           dbgs() << "Adding property " << runtime.formatSymbolID(name)
                  << " to Class:" << selfHandle->getDebugAllocationId()
                  << " transitions Map to existing Class:"
-                 << optChildHandle.getValue()->getDebugAllocationId() << "\n");
+                 << childHandle->getDebugAllocationId() << "\n");
 
       if (LLVM_UNLIKELY(
               addToPropertyMap(
@@ -430,20 +441,20 @@ CallResult<std::pair<Handle<HiddenClass>, SlotIndex>> HiddenClass::addProperty(
               ExecutionStatus::EXCEPTION)) {
         return ExecutionStatus::EXCEPTION;
       }
-      optChildHandle.getValue()->propertyMap_.set(
+      childHandle->propertyMap_.set(
           runtime, selfHandle->propertyMap_, runtime.getHeap());
     } else {
       LLVM_DEBUG(
           dbgs() << "Adding property " << runtime.formatSymbolID(name)
                  << " to Class:" << selfHandle->getDebugAllocationId()
                  << " transitions to existing Class:"
-                 << optChildHandle.getValue()->getDebugAllocationId() << "\n");
+                 << childHandle->getDebugAllocationId() << "\n");
     }
 
     // In any case, clear our own map.
     selfHandle->propertyMap_.setNull(runtime.getHeap());
 
-    return std::make_pair(*optChildHandle, selfHandle->numProperties_);
+    return std::make_pair(childHandle, selfHandle->numProperties_);
   }
 
   // Do we need to convert to dictionary?
@@ -567,33 +578,33 @@ Handle<HiddenClass> HiddenClass::updateProperty(
   transitionFlags.flagsTransition = 1;
 
   // Do we already have a transition for that property+flags pair?
-  auto optChildHandle =
+  auto existingChild =
       selfHandle->transitionMap_.lookup(runtime, {name, transitionFlags});
-  if (LLVM_LIKELY(optChildHandle)) {
+  if (LLVM_LIKELY(existingChild)) {
     // If the child doesn't have a property map, but we do, update our map and
     // move it to the child.
-    if (!optChildHandle.getValue()->propertyMap_) {
+    if (!existingChild->propertyMap_) {
       LLVM_DEBUG(
           dbgs() << "Updating property " << runtime.formatSymbolID(name)
                  << " in Class:" << selfHandle->getDebugAllocationId()
                  << " transitions Map to existing Class:"
-                 << optChildHandle.getValue()->getDebugAllocationId() << "\n");
+                 << existingChild->getDebugAllocationId() << "\n");
 
       descPair->second.flags = newFlags;
-      optChildHandle.getValue()->propertyMap_.set(
+      existingChild->propertyMap_.set(
           runtime, selfHandle->propertyMap_, runtime.getHeap());
     } else {
       LLVM_DEBUG(
           dbgs() << "Updating property " << runtime.formatSymbolID(name)
                  << " in Class:" << selfHandle->getDebugAllocationId()
                  << " transitions to existing Class:"
-                 << optChildHandle.getValue()->getDebugAllocationId() << "\n");
+                 << existingChild->getDebugAllocationId() << "\n");
     }
 
     // In any case, clear our own map.
     selfHandle->propertyMap_.setNull(runtime.getHeap());
 
-    return *optChildHandle;
+    return runtime.makeHandle(existingChild);
   }
 
   // We are updating the existing property and adding a transition to a new

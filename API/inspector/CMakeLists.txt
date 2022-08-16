@@ -110,6 +110,8 @@ set(HERMES_ENABLE_RTTI ON)
 
 add_library(hermesinspector SHARED ${inspector_sources} ${inspector_headers} ${folly_sources} ${inspector_public_headers})
 target_link_libraries(hermesinspector
+  hermesPublic
+  jsi
   libhermes
 )
 hermes_link_icu(hermesinspector)

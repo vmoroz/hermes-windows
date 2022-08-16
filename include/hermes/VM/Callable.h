@@ -312,7 +312,9 @@ class Callable : public JSObject {
   Callable(Runtime &runtime, JSObject *parent, HiddenClass *clazz)
       : JSObject(runtime, parent, clazz), environment_() {}
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
+#endif
 
   /// Create a an instance of Object to be passed as the 'this' argument when
   /// invoking the constructor.
@@ -650,7 +652,9 @@ class NativeFunction : public Callable {
         functionPtr_(functionPtr) {}
 
  protected:
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
+#endif
 
   /// Call the native function with arguments already on the stack.
   static CallResult<PseudoHandle<>> _callImpl(
@@ -830,7 +834,7 @@ class JSFunction : public Callable {
   friend void JSFunctionBuildMeta(const GCCell *cell, Metadata::Builder &mb);
 
   /// CodeBlock to execute when called.
-  CodeBlock *codeBlock_;
+  XorPtr<CodeBlock, XorPtrKeyID::JSFunctionCodeBlock> codeBlock_;
 
   static constexpr auto kHasFinalizer = HasFinalizer::No;
 
@@ -846,7 +850,7 @@ class JSFunction : public Callable {
       Handle<Environment> environment,
       CodeBlock *codeBlock)
       : Callable(runtime, *parent, *clazz, environment),
-        codeBlock_(codeBlock),
+        codeBlock_(runtime, codeBlock),
         domain_(runtime, *domain, runtime.getHeap()) {
     assert(
         !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
@@ -898,18 +902,21 @@ class JSFunction : public Callable {
   }
 
   /// \return the code block containing the function code.
-  CodeBlock *getCodeBlock() const {
-    return codeBlock_;
+  CodeBlock *getCodeBlock(Runtime &runtime) const {
+    return codeBlock_.get(runtime);
   }
 
-  RuntimeModule *getRuntimeModule() const {
-    return codeBlock_->getRuntimeModule();
+  RuntimeModule *getRuntimeModule(Runtime &runtime) const {
+    return getCodeBlock(runtime)->getRuntimeModule();
   }
 
   /// Add a source location for a function in a heap snapshot.
   /// \param snap The snapshot to add a location to.
   /// \param id The object id to annotate with the location.
-  void addLocationToSnapshot(HeapSnapshot &snap, HeapSnapshot::NodeID id) const;
+  void addLocationToSnapshot(
+      HeapSnapshot &snap,
+      HeapSnapshot::NodeID id,
+      GC &gc) const;
 
  protected:
   /// Call the JavaScript function with arguments already on the stack.
@@ -917,10 +924,12 @@ class JSFunction : public Callable {
       Handle<Callable> selfHandle,
       Runtime &runtime);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
   static void
   _snapshotAddLocationsImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
   static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 };
 
 /// A function which interprets code and returns a Async Function when called.
@@ -1157,12 +1166,12 @@ class GeneratorInnerFunction final : public JSFunction {
   /// state, and places them in an internal property.
   void saveStack(Runtime &runtime);
 
-  void setNextIP(const Inst *ip) {
-    nextIPOffset_ = getCodeBlock()->getOffsetOf(ip);
+  void setNextIP(Runtime &runtime, const Inst *ip) {
+    nextIPOffset_ = getCodeBlock(runtime)->getOffsetOf(ip);
   }
 
-  const Inst *getNextIP() const {
-    return getCodeBlock()->getOffsetPtr(nextIPOffset_);
+  const Inst *getNextIP(Runtime &runtime) const {
+    return getCodeBlock(runtime)->getOffsetPtr(nextIPOffset_);
   }
 
  public:

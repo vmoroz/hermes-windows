@@ -1909,9 +1909,6 @@ class NapiCallbackInfo final {
       reinterpret_cast<NapiHostFunctionContext *>(context);
   NapiEnvironment &env = hfc->env_;
   assert(&runtime == &env.runtime());
-  vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Host Function", stats, stats.hostFunction};
 
   NapiHandleScope scope{env};
   NapiCallbackInfo callbackInfo{*hfc, hvArgs};
@@ -4443,9 +4440,6 @@ napi_status NapiEnvironment::callFunction(
     return GENERIC_FAILURE("Unable to call function: stack overflow");
   }
 
-  vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Incoming Function", stats, stats.incomingFunction};
   vm::ScopedNativeCallFrame newFrame{
       runtime_,
       static_cast<uint32_t>(argCount),
@@ -4492,10 +4486,6 @@ napi_status NapiEnvironment::createNewInstance(
       !runtime_.checkAvailableStack(static_cast<uint32_t>(argCount))) {
     return GENERIC_FAILURE("Unable to call constructor: stack overflow");
   }
-
-  vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Incoming Function: Call As Constructor", stats, stats.incomingFunction};
 
   // We follow es5 13.2.2 [[Construct]] here. Below F == func.
   // 13.2.2.5:
@@ -5024,7 +5014,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
   }
 
   const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
-  const uint8_t *tagBufferData = tagBuffer->getDataBlock();
+  const uint8_t *tagBufferData = tagBuffer->getDataBlock(runtime_);
   return setResult(
       std::equal(
           source,
@@ -5428,7 +5418,7 @@ napi_status NapiEnvironment::createArrayBuffer(
       runtime_, makeHandle<vm::JSObject>(runtime_.arrayBufferPrototype)));
   CHECK_NAPI(checkJSErrorStatus(buffer->createDataBlock(runtime_, byteLength)));
   if (data != nullptr) {
-    *data = buffer->getDataBlock();
+    *data = buffer->getDataBlock(runtime_);
   }
   return scope.setResult(std::move(buffer));
 }
@@ -5468,7 +5458,7 @@ napi_status NapiEnvironment::getArrayBufferInfo(
 
   vm::JSArrayBuffer *buffer = vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
   if (data != nullptr) {
-    *data = buffer->attached() ? buffer->getDataBlock() : nullptr;
+    *data = buffer->attached() ? buffer->getDataBlock(runtime_) : nullptr;
   }
 
   if (byteLength != nullptr) {
@@ -5657,7 +5647,7 @@ napi_status NapiEnvironment::getTypedArrayInfo(
 
   if (data != nullptr) {
     *data = array->attached(runtime_)
-        ? array->getBuffer(runtime_)->getDataBlock() + array->getByteOffset()
+        ? array->getBuffer(runtime_)->getDataBlock(runtime_) + array->getByteOffset()
         : nullptr;
   }
 
@@ -5724,7 +5714,7 @@ napi_status NapiEnvironment::getDataViewInfo(
 
   if (data != nullptr) {
     *data = view->attached(runtime_)
-        ? view->getBuffer(runtime_)->getDataBlock() + view->byteOffset()
+        ? view->getBuffer(runtime_)->getDataBlock(runtime_) + view->byteOffset()
         : nullptr;
   }
 
@@ -6198,9 +6188,6 @@ napi_status NapiEnvironment::runScriptModel(
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this, result};
   CHECK_ARG(scriptModel);
-  vm::instrumentation::RuntimeStats &stats = runtime_.getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Evaluate JS", stats, stats.evaluateJS};
   const NapiScriptModel *hermesPrep =
       reinterpret_cast<NapiScriptModel *>(scriptModel);
   vm::CallResult<vm::HermesValue> res = runtime_.runBytecode(

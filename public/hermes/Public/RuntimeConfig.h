@@ -61,6 +61,12 @@ class PinnedHermesValue;
   /* Support for ECMA-402 Intl APIs. */                                \
   F(constexpr, bool, Intl, true)                                       \
                                                                        \
+  /* Support for ArrayBuffer, DataView and typed arrays. */            \
+  F(constexpr, bool, ArrayBuffer, true)                                \
+                                                                       \
+  /* Support for using microtasks. */                                  \
+  F(constexpr, bool, MicrotaskQueue, false)                            \
+                                                                       \
   /* Enable synth trace. */                                            \
   F(constexpr, bool, TraceEnabled, false)                              \
                                                                        \

@@ -13,14 +13,10 @@
 #include "llvh/ADT/SmallSet.h"
 #include "llvh/Support/SaveAndRestore.h"
 
-using llvh::cast;
 using llvh::cast_or_null;
 using llvh::dyn_cast;
-using llvh::dyn_cast_or_null;
 using llvh::isa;
 using llvh::SaveAndRestore;
-
-using namespace hermes::ESTree;
 
 namespace hermes {
 namespace sem {
@@ -118,6 +114,14 @@ void SemanticValidator::visit(MetaPropertyNode *metaProp) {
       // Hermes does not support local eval, so we assume that this is not
       // inside a local eval call.
       sm_.error(metaProp->getSourceRange(), "'new.target' not in a function");
+    }
+    return;
+  }
+
+  if (meta->_name->str() == "import" && property->_name->str() == "meta") {
+    if (compile_) {
+      sm_.error(
+          metaProp->getSourceRange(), "'import.meta' is currently unsupported");
     }
     return;
   }
@@ -309,13 +313,6 @@ void SemanticValidator::visit(LabeledStatementNode *labelStmt) {
   (void)deleter;
 
   visitESTreeChildren(*this, labelStmt);
-}
-
-void SemanticValidator::visit(BigIntLiteralNode *bigint) {
-  if (compile_) {
-    sm_.error(bigint->getSourceRange(), "BigInt literal is not supported");
-  }
-  visitESTreeChildren(*this, bigint);
 }
 
 /// Check RegExp syntax.

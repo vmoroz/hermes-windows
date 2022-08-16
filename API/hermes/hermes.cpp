@@ -187,28 +187,6 @@ class InstallHermesFatalErrorHandler {
 
 } // namespace
 
-// Recording timing stats for every JS<->C++ transition has some overhead, so
-// applications where such transitions are extremely frequent may want to define
-// the HERMESJSI_DISABLE_STATS_TIMER symbol to save this overhead.
-#ifdef HERMESJSI_DISABLE_STATS_TIMER
-#define STATS_TIMER(rt, desc, field)
-#else
-#define STATS_TIMER(rt, desc, field)              \
-  auto &_stats = (rt).runtime_.getRuntimeStats(); \
-  const vm::instrumentation::RAIITimer _timer{desc, _stats, _stats.field};
-#endif
-
-// Recording timing stats for every JS<->C++ transition has some overhead, so
-// applications where such transitions are extremely frequent may want to define
-// the HERMESJSI_DISABLE_STATS_TIMER symbol to save this overhead.
-#ifdef HERMESJSI_DISABLE_STATS_TIMER
-#define STATS_TIMER(rt, desc, field)
-#else
-#define STATS_TIMER(rt, desc, field)              \
-  auto &_stats = (rt).runtime_.getRuntimeStats(); \
-  const vm::instrumentation::RAIITimer _timer{desc, _stats, _stats.field};
-#endif
-
 class HermesRuntimeImpl final : public HermesRuntime,
                                 private InstallHermesFatalErrorHandler,
                                 private jsi::Instrumentation {
@@ -216,7 +194,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
   static constexpr uint32_t kSentinelNativeValue = 0x6ef71fe1;
 
   HermesRuntimeImpl(const vm::RuntimeConfig &runtimeConfig)
-      : rt_(::hermes::vm::Runtime::create(
+      : hermesValues_(runtimeConfig.getGCConfig().getOccupancyTarget()),
+        weakHermesValues_(runtimeConfig.getGCConfig().getOccupancyTarget()),
+        rt_(::hermes::vm::Runtime::create(
             runtimeConfig.rebuild()
                 .withRegisterStack(nullptr)
                 .withMaxNumRegisters(kMaxNumRegisters)
@@ -247,27 +227,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
         runtimeConfig.getAsyncBreakCheckInEval();
     runtime_.addCustomRootsFunction(
         [this](vm::GC *, vm::RootAcceptor &acceptor) {
-          for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
-            if (it->get() == 0) {
-              it = hermesValues_->erase(it);
-            } else {
-              acceptor.accept(const_cast<vm::PinnedHermesValue &>(it->phv));
-              ++it;
-            }
-          }
+          for (auto &val : hermesValues_)
+            if (val.get() > 0)
+              acceptor.accept(const_cast<vm::PinnedHermesValue &>(val.phv));
         });
     runtime_.addCustomWeakRootsFunction(
         [this](vm::GC *, vm::WeakRootAcceptor &acceptor) {
-          for (auto it = weakHermesValues_->begin();
-               it != weakHermesValues_->end();) {
-            if (it->get() == 0) {
-              it = weakHermesValues_->erase(it);
-            } else {
-              acceptor.acceptWeak(it->wr);
-              ++it;
-            }
-          }
+          for (auto &val : weakHermesValues_)
+            if (val.get() > 0)
+              acceptor.acceptWeak(val.wr);
         });
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime_.addCustomSnapshotFunction(
         [this](vm::HeapSnapshot &snap) {
           snap.beginNode();
@@ -276,7 +246,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
               "ManagedValues",
               vm::GCBase::IDTracker::reserved(
                   vm::GCBase::IDTracker::ReservedObjectID::JSIHermesValueList),
-              hermesValues_->size() * sizeof(HermesPointerValue),
+              hermesValues_.size() * sizeof(HermesPointerValue),
               0);
           snap.beginNode();
           snap.endNode(
@@ -285,7 +255,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
               vm::GCBase::IDTracker::reserved(
                   vm::GCBase::IDTracker::ReservedObjectID::
                       JSIWeakHermesValueList),
-              weakHermesValues_->size() * sizeof(WeakRefPointerValue),
+              weakHermesValues_.size() * sizeof(WeakRefPointerValue),
               0);
         },
         [](vm::HeapSnapshot &snap) {
@@ -301,10 +271,11 @@ class HermesRuntimeImpl final : public HermesRuntime,
                   vm::GCBase::IDTracker::ReservedObjectID::
                       JSIWeakHermesValueList));
         });
+#endif // HERMES_MEMORY_INSTRUMENTATION
   }
 
  public:
-  ~HermesRuntimeImpl() {
+  ~HermesRuntimeImpl() override {
 #ifdef HERMES_ENABLE_DEBUGGER
     // Deallocate the debugger so it frees any HermesPointerValues it may hold.
     // This must be done before we check hermesValues_ below.
@@ -332,12 +303,25 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
 
     void inc() {
+      // It is always safe to use relaxed operations for incrementing the
+      // reference count, because the only operation that may occur concurrently
+      // with it is decrementing the reference count, and we do not need to
+      // enforce any ordering between the two.
       auto oldCount = refCount.fetch_add(1, std::memory_order_relaxed);
+      assert(oldCount && "Cannot resurrect a pointer");
       assert(oldCount + 1 != 0 && "Ref count overflow");
       (void)oldCount;
     }
 
     void dec() {
+      // It is safe to use relaxed operations here because decrementing the
+      // reference count is the only access that may be performed without proper
+      // synchronisation. As a result, the only ordering we need to enforce when
+      // decrementing is that the vtable pointer used to call \c invalidate is
+      // loaded from before the decrement, in case the decrement ends up causing
+      // this value to be freed. We get this ordering from the fact that the
+      // vtable read and the reference count update form a load-store control
+      // dependency, which preserves their ordering on any reasonable hardware.
       auto oldCount = refCount.fetch_sub(1, std::memory_order_relaxed);
       assert(oldCount > 0 && "Ref count underflow");
       (void)oldCount;
@@ -391,13 +375,11 @@ class HermesRuntimeImpl final : public HermesRuntime,
   T add(::hermes::vm::HermesValue hv) {
     static_assert(
         std::is_base_of<jsi::Pointer, T>::value, "this type cannot be added");
-    hermesValues_->emplace_front(hv);
-    return make<T>(&(hermesValues_->front()));
+    return make<T>(&hermesValues_.add(hv));
   }
 
   jsi::WeakObject addWeak(::hermes::vm::WeakRoot<vm::JSObject> wr) {
-    weakHermesValues_->emplace_front(wr);
-    return make<jsi::WeakObject>(&(weakHermesValues_->front()));
+    return make<jsi::WeakObject>(&weakHermesValues_.add(wr));
   }
 
   // overriden from jsi::Instrumentation
@@ -493,39 +475,75 @@ class HermesRuntimeImpl final : public HermesRuntime,
           uint64_t,
           std::chrono::microseconds,
           std::vector<HeapStatsUpdate>)> fragmentCallback) override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime_.enableAllocationLocationTracker(std::move(fragmentCallback));
+#else
+    throw std::logic_error(
+        "Cannot track heap object stack traces if Hermes isn't "
+        "built with memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
   void stopTrackingHeapObjectStackTraces() override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime_.disableAllocationLocationTracker();
+#else
+    throw std::logic_error(
+        "Cannot track heap object stack traces if Hermes isn't "
+        "built with memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
   void startHeapSampling(size_t samplingInterval) override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime_.enableSamplingHeapProfiler(samplingInterval);
+#else
+    throw std::logic_error(
+        "Cannot perform heap sampling if Hermes isn't built with "
+        "memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
   void stopHeapSampling(std::ostream &os) override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     llvh::raw_os_ostream ros(os);
     runtime_.disableSamplingHeapProfiler(ros);
+#else
+    throw std::logic_error(
+        "Cannot perform heap sampling if Hermes isn't built with "
+        " memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
   void createSnapshotToFile(const std::string &path) override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     std::error_code code;
     llvh::raw_fd_ostream os(path, code, llvh::sys::fs::FileAccess::FA_Write);
     if (code) {
       throw std::system_error(code);
     }
     runtime_.getHeap().createSnapshot(os);
+#else
+    throw std::logic_error(
+        "Cannot create heap snapshots if Hermes isn't built with "
+        "memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
   void createSnapshotToStream(std::ostream &os) override {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     llvh::raw_os_ostream ros(os);
     runtime_.getHeap().createSnapshot(ros);
+#else
+    throw std::logic_error(
+        "Cannot create heap snapshots if Hermes isn't built with "
+        "memory instrumentation.");
+#endif
   }
 
   // Overridden from jsi::Instrumentation
@@ -620,7 +638,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return vm::HermesValue::encodeBoolValue(value.getBool());
     } else if (value.isNumber()) {
       return vm::HermesValue::encodeUntrustedDoubleValue(value.getNumber());
-    } else if (value.isSymbol() || value.isString() || value.isObject()) {
+    } else if (
+        value.isSymbol() || value.isBigInt() || value.isString() ||
+        value.isObject()) {
       return phv(value);
     } else {
       llvm_unreachable("unknown value kind");
@@ -637,7 +657,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
     } else if (value.isNumber()) {
       return runtime_.makeHandle(
           vm::HermesValue::encodeUntrustedDoubleValue(value.getNumber()));
-    } else if (value.isSymbol() || value.isString() || value.isObject()) {
+    } else if (
+        value.isSymbol() || value.isBigInt() || value.isString() ||
+        value.isObject()) {
       return vm::Handle<vm::HermesValue>(&phv(value));
     } else {
       llvm_unreachable("unknown value kind");
@@ -655,6 +677,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return hv.getDouble();
     } else if (hv.isSymbol()) {
       return add<jsi::Symbol>(hv);
+    } else if (hv.isBigInt()) {
+      return add<jsi::BigInt>(hv);
     } else if (hv.isString()) {
       return add<jsi::String>(hv);
     } else if (hv.isObject()) {
@@ -688,6 +712,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::Instrumentation &instrumentation() override;
 
   PointerValue *cloneSymbol(const Runtime::PointerValue *pv) override;
+  PointerValue *cloneBigInt(const Runtime::PointerValue *pv) override;
   PointerValue *cloneString(const Runtime::PointerValue *pv) override;
   PointerValue *cloneObject(const Runtime::PointerValue *pv) override;
   PointerValue *clonePropNameID(const Runtime::PointerValue *pv) override;
@@ -760,6 +785,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       size_t count) override;
 
   bool strictEquals(const jsi::Symbol &a, const jsi::Symbol &b) const override;
+  bool strictEquals(const jsi::BigInt &a, const jsi::BigInt &b) const override;
   bool strictEquals(const jsi::String &a, const jsi::String &b) const override;
   bool strictEquals(const jsi::Object &a, const jsi::Object &b) const override;
 
@@ -782,7 +808,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
         : rt_(rt), ho_(ho) {}
 
     vm::CallResult<vm::HermesValue> get(vm::SymbolID id) override {
-      STATS_TIMER(rt_, "HostObject.get", hostFunction);
       jsi::PropNameID sym =
           rt_.add<jsi::PropNameID>(vm::HermesValue::encodeSymbolValue(id));
       jsi::Value ret;
@@ -816,7 +841,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
 
     vm::CallResult<bool> set(vm::SymbolID id, vm::HermesValue value) override {
-      STATS_TIMER(rt_, "HostObject.set", hostFunction);
       jsi::PropNameID sym =
           rt_.add<jsi::PropNameID>(vm::HermesValue::encodeSymbolValue(id));
       try {
@@ -848,7 +872,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
 
     vm::CallResult<vm::Handle<vm::JSArray>> getHostPropertyNames() override {
-      STATS_TIMER(rt_, "HostObject.getHostPropertyNames", hostFunction);
       try {
         auto names = ho_->getPropertyNames(rt_);
 
@@ -898,7 +921,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
       HFContext *hfc = reinterpret_cast<HFContext *>(context);
       HermesRuntimeImpl &rt = hfc->hermesRuntimeImpl;
       assert(&runtime == &rt.runtime_);
-      STATS_TIMER(rt, "Host Function", hostFunction);
 
       llvh::SmallVector<jsi::Value, 8> apiArgs;
       for (vm::HermesValue hv : hvArgs) {
@@ -942,7 +964,51 @@ class HermesRuntimeImpl final : public HermesRuntime,
   };
 
   template <typename T>
-  struct ManagedValues {
+  class ManagedValues {
+   public:
+    using iterator = typename std::list<T>::iterator;
+
+    template <typename... Args>
+    T &add(Args &&...args) {
+      // If the size has hit the target size, collect unused values.
+      if (LLVM_UNLIKELY(size() >= targetSize_))
+        collect();
+      values_.emplace_front(std::forward<Args>(args)...);
+      return values_.front();
+    }
+
+    iterator begin() {
+      return values_.begin();
+    }
+    iterator end() {
+      return values_.end();
+    }
+    iterator erase(iterator it) {
+      return values_.erase(it);
+    }
+    iterator eraseIfExpired(iterator it) {
+      auto next = std::next(it);
+      if (it->get() == 0) {
+        // TSAN will complain here because the value is being freed without any
+        // explicit synchronisation with a background thread that may have just
+        // updated the reference count (and read the vtable in the process).
+        // However, this can be safely ignored because the check above creates a
+        // load-store control dependency, and the free below therefore cannot be
+        // reordered before the check on the reference count.
+        TsanIgnoreWritesBegin();
+        values_.erase(it);
+        TsanIgnoreWritesEnd();
+      }
+      return next;
+    }
+
+    size_t size() const {
+      return values_.size();
+    }
+
+    explicit ManagedValues(double occupancyRatio)
+        : occupancyRatio_{occupancyRatio} {}
+
 #ifdef ASSERT_ON_DANGLING_VM_REFS
     // If we have active HermesValuePointers when deconstructing, these will
     // now be dangling. We deliberately allocate and immediately leak heap
@@ -952,32 +1018,26 @@ class HermesRuntimeImpl final : public HermesRuntime,
     // deferring the assert it's a bit easier to see what's holding the pointers
     // for too long.
     ~ManagedValues() {
-      bool anyDangling = false;
-      for (auto it = values.begin(); it != values.end();) {
-        if (it->get() == 0) {
-          it = values.erase(it);
-        } else {
-          anyDangling = true;
-          it->markDangling();
-          ++it;
-        }
-      }
-      if (anyDangling) {
+      collect();
+      if (!values_.empty()) {
+        for (auto &val : values_)
+          val.markDangling();
         // This is the deliberate memory leak described above.
-        new std::list<T>(std::move(values));
+        new std::list<T>(std::move(values_));
       }
     }
 #endif
 
-    std::list<T> *operator->() {
-      return &values;
+   private:
+    void collect() {
+      for (auto it = values_.begin(), e = values_.end(); it != e;)
+        it = eraseIfExpired(it);
+      targetSize_ = size() / occupancyRatio_;
     }
 
-    const std::list<T> *operator->() const {
-      return &values;
-    }
-
-    std::list<T> values;
+    double occupancyRatio_;
+    size_t targetSize_ = 0;
+    std::list<T> values_;
   };
 
   std::string getCallStackNoAlloc() {
@@ -1315,7 +1375,7 @@ jsi::Value HermesRuntime::evaluateJavaScriptWithSourceMap(
 }
 
 size_t HermesRuntime::rootsListLength() const {
-  return impl(this)->hermesValues_->size();
+  return impl(this)->hermesValues_.size();
 }
 
 namespace {
@@ -1440,7 +1500,6 @@ jsi::Value HermesRuntimeImpl::evaluatePreparedJavaScript(
     assert(
         dynamic_cast<const HermesPreparedJavaScript *>(js.get()) &&
         "js must be an instance of HermesPreparedJavaScript");
-    STATS_TIMER(*this, "Evaluate JS", evaluateJS);
     const auto *hermesPrep =
         static_cast<const HermesPreparedJavaScript *>(js.get());
     vm::GCScope gcScope(runtime_);
@@ -1461,11 +1520,12 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
 }
 
 bool HermesRuntimeImpl::drainMicrotasks(int maxMicrotasksHint) {
-  if (runtime_.useJobQueue()) {
+  if (runtime_.hasMicrotaskQueue()) {
     checkStatus(runtime_.drainJobs());
   }
   // \c drainJobs is currently an unbounded execution, hence no exceptions
   // implies drained until TODO(T89426441): \c maxMicrotasksHint is supported
+  runtime_.clearKeptObjects();
   return true;
 }
 
@@ -1495,6 +1555,11 @@ jsi::Instrumentation &HermesRuntimeImpl::instrumentation() {
 }
 
 jsi::Runtime::PointerValue *HermesRuntimeImpl::cloneSymbol(
+    const Runtime::PointerValue *pv) {
+  return clone(pv);
+}
+
+jsi::Runtime::PointerValue *HermesRuntimeImpl::cloneBigInt(
     const Runtime::PointerValue *pv) {
   return clone(pv);
 }
@@ -1848,7 +1913,7 @@ size_t HermesRuntimeImpl::size(const jsi::ArrayBuffer &arr) {
 }
 
 uint8_t *HermesRuntimeImpl::data(const jsi::ArrayBuffer &arr) {
-  return vm::vmcast<vm::JSArrayBuffer>(phv(arr))->getDataBlock();
+  return vm::vmcast<vm::JSArrayBuffer>(phv(arr))->getDataBlock(runtime_);
 }
 
 jsi::Value HermesRuntimeImpl::getValueAtIndex(const jsi::Array &arr, size_t i) {
@@ -1953,7 +2018,6 @@ jsi::Value HermesRuntimeImpl::call(
           "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     }
 
-    STATS_TIMER(*this, "Incoming Function", incomingFunction);
     vm::ScopedNativeCallFrame newFrame{
         runtime_,
         static_cast<uint32_t>(count),
@@ -1991,9 +2055,6 @@ jsi::Value HermesRuntimeImpl::callAsConstructor(
       throw jsi::JSINativeException(
           "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     }
-
-    STATS_TIMER(
-        *this, "Incoming Function: Call As Constructor", incomingFunction);
 
     // We follow es5 13.2.2 [[Construct]] here. Below F == func.
     // 13.2.2.5:
@@ -2053,6 +2114,14 @@ bool HermesRuntimeImpl::strictEquals(const jsi::Symbol &a, const jsi::Symbol &b)
   return phv(a).getSymbol() == phv(b).getSymbol();
 }
 
+bool HermesRuntimeImpl::strictEquals(const jsi::BigInt &a, const jsi::BigInt &b)
+    const {
+  throw jsi::JSError(
+      *const_cast<HermesRuntimeImpl *>(this),
+      "unimplemented: "
+      "HermesRuntime::strictEquals(const BigInt &, const BigInt &)");
+}
+
 bool HermesRuntimeImpl::strictEquals(const jsi::String &a, const jsi::String &b)
     const {
   return phv(a).getString()->equals(phv(b).getString());
@@ -2076,9 +2145,8 @@ bool HermesRuntimeImpl::instanceOf(
 }
 
 jsi::Runtime::ScopeState *HermesRuntimeImpl::pushScope() {
-  hermesValues_->emplace_front(
-      vm::HermesValue::encodeNativeUInt32(kSentinelNativeValue));
-  return reinterpret_cast<ScopeState *>(&hermesValues_->front());
+  return reinterpret_cast<ScopeState *>(&hermesValues_.add(
+      vm::HermesValue::encodeNativeUInt32(kSentinelNativeValue)));
 }
 
 void HermesRuntimeImpl::popScope(ScopeState *prv) {
@@ -2086,11 +2154,11 @@ void HermesRuntimeImpl::popScope(ScopeState *prv) {
   assert(sentinel->phv.isNativeValue());
   assert(sentinel->phv.getNativeUInt32() == kSentinelNativeValue);
 
-  for (auto it = hermesValues_->begin(); it != hermesValues_->end();) {
+  for (auto it = hermesValues_.begin(); it != hermesValues_.end();) {
     auto &value = *it;
 
     if (&value == sentinel) {
-      hermesValues_->erase(it);
+      hermesValues_.erase(it);
       return;
     }
 
@@ -2100,11 +2168,7 @@ void HermesRuntimeImpl::popScope(ScopeState *prv) {
       std::terminate();
     }
 
-    if (value.get() == 0) {
-      it = hermesValues_->erase(it);
-    } else {
-      ++it;
-    }
+    it = hermesValues_.eraseIfExpired(it);
   }
 
   // We did not find a sentinel value.

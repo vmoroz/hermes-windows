@@ -7,7 +7,7 @@
 
 #include "hermes/VM/StackTracesTree-NoRuntime.h"
 
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/StackFrame-inline.h"
@@ -109,7 +109,7 @@ void StackTracesTree::syncWithRuntimeStack(Runtime &runtime) {
     // the interpreter.
     StackFramePtr prev = cf.getPreviousFrame();
     if (prev != framesEnd) {
-      if (CodeBlock *parentCB = prev.getCalleeCodeBlock()) {
+      if (CodeBlock *parentCB = prev.getCalleeCodeBlock(runtime)) {
         assert(
             (!savedCodeBlock || savedCodeBlock == parentCB) &&
             "If savedCodeBlock is non-null, it should match the parent's "
@@ -123,7 +123,7 @@ void StackTracesTree::syncWithRuntimeStack(Runtime &runtime) {
       // sense laying around. But that matches the behavior of enabling from the
       // beginning. When a fix for the non-synced version is found, remove this
       // branch as well.
-      savedCodeBlock = cf.getCalleeCodeBlock();
+      savedCodeBlock = cf.getCalleeCodeBlock(runtime);
       savedIP = savedCodeBlock->getOffsetPtr(0);
     }
     stack.emplace_back(savedCodeBlock, savedIP);
@@ -258,4 +258,4 @@ StackTracesTreeNode *StackTracesTree::getStackTrace(
 } // namespace vm
 } // namespace hermes
 
-#endif // HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#endif // HERMES_MEMORY_INSTRUMENTATION

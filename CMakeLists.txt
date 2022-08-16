@@ -78,8 +78,8 @@ if(NOT DEFINED HERMES_RELEASE_VERSION)
   set(HERMES_RELEASE_VERSION ${PROJECT_VERSION})
 endif()
 
-include(FindPythonInterp)
-if (NOT PYTHONINTERP_FOUND)
+find_package(Python COMPONENTS Interpreter)
+if (NOT Python_Interpreter_FOUND)
   message(FATAL_ERROR "Unable to find Python interpreter, required for builds and testing.
 Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
 endif()
@@ -215,6 +215,9 @@ set(HERMES_UNICODE_LITE OFF CACHE BOOL
 
 set(HERMES_ENABLE_DEBUGGER ON CACHE BOOL
   "Build with debugger support")
+
+set(HERMES_MEMORY_INSTRUMENTATION ${HERMES_ENABLE_DEBUGGER} CACHE BOOL
+  "Build with memory instrumentation support")
 
 set(HERMES_ENABLE_IR_INSTRUMENTATION OFF CACHE BOOL
     "Build IR instrumentation support")
@@ -595,6 +598,10 @@ endif()
 
 if (HERMES_ENABLE_DEBUGGER)
   add_definitions(-DHERMES_ENABLE_DEBUGGER)
+endif()
+
+if (HERMES_MEMORY_INSTRUMENTATION)
+  add_definitions(-DHERMES_MEMORY_INSTRUMENTATION)
 endif()
 
 if (HERMES_MSVC_CHECKED_ITERATORS)

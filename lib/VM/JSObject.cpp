@@ -28,13 +28,16 @@ const ObjectVTable JSObject::vt{
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        VTable::HeapSnapshotMetadata{
-            HeapSnapshot::NodeType::Object,
-            JSObject::_snapshotNameImpl,
-            JSObject::_snapshotAddEdgesImpl,
-            nullptr,
-            JSObject::_snapshotAddLocationsImpl}),
+        nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+        ,
+        VTable::HeapSnapshotMetadata {
+          HeapSnapshot::NodeType::Object, JSObject::_snapshotNameImpl,
+              JSObject::_snapshotAddEdgesImpl, nullptr,
+              JSObject::_snapshotAddLocationsImpl
+        }
+#endif
+        ),
     JSObject::_getOwnIndexedRangeImpl,
     JSObject::_haveOwnIndexedImpl,
     JSObject::_getOwnIndexedPropertyFlagsImpl,
@@ -355,7 +358,7 @@ CallResult<Handle<JSArray>> JSObject::getOwnPropertyKeys(
 
   // Estimate the capacity of the output array.  This estimate is only
   // reasonable for the non-symbol case.
-  uint32_t capacity = okFlags.getIncludeNonSymbols()
+  const uint32_t capacity = okFlags.getIncludeNonSymbols()
       ? (selfHandle->clazz_.getNonNull(runtime)->getNumProperties() +
          range.second - range.first)
       : 0;
@@ -401,7 +404,6 @@ CallResult<Handle<JSArray>> JSObject::getOwnPropertyKeys(
       if ((hostObjectSymbolCount = (**hostSymbolsRes)->getEndIndex()) != 0) {
         Handle<JSArray> hostSymbols = *hostSymbolsRes;
         hostObjectSymbols = std::move(hostSymbols);
-        capacity += hostObjectSymbolCount;
       }
     }
 
@@ -1096,8 +1098,8 @@ CallResult<PseudoHandle<>> JSObject::getComputedWithReceiver_RJS(
   if (selfHandle->flags_.fastIndexProperties) {
     if (auto arrayIndex = toArrayIndexFastPath(*nameValHandle)) {
       // Do we have this value present in our array storage? If so, return it.
-      PseudoHandle<> ourValue = createPseudoHandle(
-          getOwnIndexed(selfHandle.get(), runtime, *arrayIndex));
+      PseudoHandle<> ourValue =
+          createPseudoHandle(getOwnIndexed(selfHandle, runtime, *arrayIndex));
       if (LLVM_LIKELY(!ourValue->isEmpty()))
         return ourValue;
     }
@@ -2115,6 +2117,7 @@ CallResult<bool> JSObject::defineOwnComputedPrimitive(
   // If not storing a property with an array index name, or if we don't have
   // indexed storage, just pass to the named routine.
   if (!arrayIndex) {
+    // TODO(T125334872): properly handle the case when self is a TypedArray.
     LAZY_TO_IDENTIFIER(runtime, nameValHandle, id);
     return defineOwnPropertyInternal(
         selfHandle, runtime, id, dpFlags, valueOrAccessor, opFlags);
@@ -2148,14 +2151,14 @@ CallResult<bool> JSObject::defineOwnComputedPrimitive(
       getOwnIndexedPropertyFlags(selfHandle.get(), runtime, *arrayIndex);
   if (indexedPropPresent) {
     // The current value of the property.
-    HermesValue curValueOrAccessor =
-        getOwnIndexed(selfHandle.get(), runtime, *arrayIndex);
+    Handle<> curValueOrAccessor =
+        runtime.makeHandle(getOwnIndexed(selfHandle, runtime, *arrayIndex));
 
     auto updateStatus = checkPropertyUpdate(
         runtime,
         *indexedPropPresent,
         dpFlags,
-        curValueOrAccessor,
+        *curValueOrAccessor,
         valueOrAccessor,
         opFlags);
     if (updateStatus == ExecutionStatus::EXCEPTION)
@@ -2195,7 +2198,7 @@ CallResult<bool> JSObject::defineOwnComputedPrimitive(
     if (dpFlags.setValue || dpFlags.isAccessor()) {
       value = valueOrAccessor.get();
     } else {
-      value = curValueOrAccessor;
+      value = *curValueOrAccessor;
     }
 
     // Update dpFlags to match the existing property flags.
@@ -2289,6 +2292,7 @@ CallResult<bool> JSObject::defineOwnComputedPrimitive(
     return true;
 
   // We are adding a new property with an index-like name.
+  // TODO(T125334872): properly handle the case when self is a TypedArray.
   LAZY_TO_IDENTIFIER(runtime, nameValHandle, id);
   return addOwnProperty(
       selfHandle, runtime, id, dpFlags, valueOrAccessor, opFlags);
@@ -2308,6 +2312,7 @@ CallResult<bool> JSObject::defineOwnComputed(
       selfHandle, runtime, *converted, dpFlags, valueOrAccessor, opFlags);
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 std::string JSObject::getHeuristicTypeName(GC &gc) {
   PointerBase &base = gc.getPointerBase();
   if (auto constructorVal = tryGetNamedNoAlloc(
@@ -2471,11 +2476,12 @@ void JSObject::_snapshotAddLocationsImpl(
     if (constructorVal->isObject()) {
       if (auto *constructor =
               dyn_vmcast<JSFunction>(constructorVal->getObject(base))) {
-        constructor->addLocationToSnapshot(snap, gc.getObjectID(self));
+        constructor->addLocationToSnapshot(snap, gc.getObjectID(self), gc);
       }
     }
   }
 }
+#endif
 
 std::pair<uint32_t, uint32_t> JSObject::_getOwnIndexedRangeImpl(
     JSObject *self,
@@ -2494,7 +2500,8 @@ OptValue<PropertyFlags> JSObject::_getOwnIndexedPropertyFlagsImpl(
   return llvh::None;
 }
 
-HermesValue JSObject::_getOwnIndexedImpl(JSObject *, Runtime &, uint32_t) {
+HermesValue
+JSObject::_getOwnIndexedImpl(PseudoHandle<JSObject>, Runtime &, uint32_t) {
   return HermesValue::encodeEmptyValue();
 }
 
