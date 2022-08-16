@@ -27,6 +27,7 @@ On Windows:
 
     You will need to install Visual Studios with following Spectre-migrated libraries
     You can find these in the Visual Studio Installer under Individual components
+    > MSVC v142 - VS 2019 C++ ARM64 Spectre-migrated libs (Latest)
     > MSVC v142 - VS 2019 C++ x64/x86 Spectre-migrated libs (Latest)
     > C++ ATL for latest v142 build tools with Spectre Mitigations (ARM64)
     > C++ ATL for latest v142 build tools with Spectre Mitigations (x68 & x64)
