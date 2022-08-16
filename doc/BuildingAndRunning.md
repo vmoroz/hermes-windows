@@ -23,15 +23,6 @@ On Mac via Homebrew:
 
     brew install cmake git ninja
     
-On Windows:
-
-    You will need to install Visual Studios with following Spectre-migrated libraries
-    You can find these in the Visual Studio Installer under Individual components
-    > MSVC v142 - VS 2019 C++ ARM64 Spectre-migrated libs (Latest)
-    > MSVC v142 - VS 2019 C++ x64/x86 Spectre-migrated libs (Latest)
-    > C++ ATL for latest v142 build tools with Spectre Mitigations (ARM64)
-    > C++ ATL for latest v142 build tools with Spectre Mitigations (x68 & x64)
-
 ## Building on Linux and macOS
 
 Hermes will place its build files in the current directory by default.
@@ -62,11 +53,6 @@ The above instructions create an unoptimized debug build. The `--distribute` fla
     cd build_release && ninja
 
 ## Building on Windows
-
-You should be able to build hermes by running the following script from the base of the repository.
-Note: There may be errors shown on the script but hermes is built if you can find the executable in build/bin/hermes/Debug/hermes.exe
-    
-    .ado\scripts\cibuild.ps1
 
 The Windows build depends on which particular combination of GitBash/Cygwin/WSL and Visual Studio is used.
 
@@ -123,3 +109,21 @@ In addition to `hermes`, the following tools will be built:
 - `hbcdump`: Hermes bytecode disassembler
 - `hermesc`: Standalone Hermes compiler. This can compile JavaScript to Hermes bytecode, but does not support executing it.
 - `hvm`: Standalone Hermes VM. This can execute Hermes bytecode, but does not support compiling it.
+
+## Building on Windows (hermes-windows repository)
+
+### Dependencies
+
+    You will need to install Visual Studios with following Spectre-migrated libraries
+    You can find these in the Visual Studio Installer under Individual components
+    > MSVC v142 - VS 2019 C++ ARM64 Spectre-migrated libs (Latest)
+    > MSVC v142 - VS 2019 C++ x64/x86 Spectre-migrated libs (Latest)
+    > C++ ATL for latest v142 build tools with Spectre Mitigations (ARM64)
+    > C++ ATL for latest v142 build tools with Spectre Mitigations (x68 & x64)
+    
+### Building
+
+You should be able to build hermes by running the following script from the base of the repository.
+Note: There may be errors shown on the script but hermes is built if you can find the executable in build/bin/hermes/Debug/hermes.exe
+    
+    .ado\scripts\cibuild.ps1
