@@ -108,7 +108,7 @@ In addition to `hermes`, the following tools will be built:
 
 ### Dependencies
 
-    You will need to install Visual Studios with following Spectre-migrated libraries
+    You will need to install Visual Studio with following Spectre-migrated libraries
     You can find these in the Visual Studio Installer under Individual components
     > MSVC v142 - VS 2019 C++ ARM64 Spectre-migrated libs (Latest)
     > MSVC v142 - VS 2019 C++ x64/x86 Spectre-migrated libs (Latest)
