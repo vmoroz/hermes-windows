@@ -4,6 +4,7 @@ trigger: none
 pr:
   - main
   - temp/v0.11
+  - rnw/0.70-stable
 
 pool:
   vmImage: 'windows-latest'
