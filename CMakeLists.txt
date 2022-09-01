@@ -62,7 +62,7 @@ endif()
 # - npm/package.json
 # - hermes-engine.podspec
 project(Hermes
-        VERSION 0.71.0.20220831
+        VERSION 0.71.0.20220901
         LANGUAGES C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
@@ -604,6 +604,13 @@ endif()
 
 if (HERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB)
   add_definitions(-DUSE_PLATFORM_UNICODE_WINGLOB)
+endif()
+
+# Disables the GCC 64-to-32 bit truncation diagnostic if the compiler supports
+# -Wshorten-64-to-32.
+check_cxx_compiler_flag("-Wshorten-64-to-32" CXX_SUPPORTS_SHORTEN_64_TO_32)
+if (${CXX_SUPPORTS_SHORTEN_64_TO_32})
+  add_definitions(-DHERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32)
 endif()
 
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++17")

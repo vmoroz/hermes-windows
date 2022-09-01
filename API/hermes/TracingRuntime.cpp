@@ -31,140 +31,67 @@ TracingRuntime::TracingRuntime(
       numPreambleRecords_(0) {}
 
 void TracingRuntime::replaceNondeterministicFuncs() {
-  insertHostForwarder({"Math", "random"});
-  setupDate();
-  setUpWeakRef();
-
-  numPreambleRecords_ = trace_.records().size();
-}
-
-void TracingRuntime::insertHostForwarder(
-    const std::vector<const char *> &propertyPath) {
-  auto lenProp = walkPropertyPath(*runtime_, propertyPath)
-                     .getProperty(*runtime_, "length")
-                     .asNumber();
-  jsi::Function *funcPtr = saveFunction(propertyPath);
-
-  jsi::Function funcReplacement = jsi::Function::createFromHostFunction(
+  // We trace non-deterministic functions by replacing them to call through a
+  // HostFunction instead. The call from the HostFunction to the original
+  // non-deterministic function is intentionally not traced. So the call and
+  // response get recorded as just a call to a HostFunction.
+  // This is a helper function to implement the above, it calls a given function
+  // without tracing, and returns the result.
+  jsi::Function callUntraced = jsi::Function::createFromHostFunction(
       *this,
-      jsi::PropNameID::forAscii(*this, propertyPath.back()),
-      lenProp,
-      [this, funcPtr](
+      jsi::PropNameID::forAscii(*this, "callUntraced"),
+      1,
+      [this](
           Runtime &rt,
           const jsi::Value &thisVal,
           const jsi::Value *args,
           size_t count) {
-        return thisVal.isObject()
-            ? funcPtr->callWithThis(
-                  *runtime_, thisVal.asObject(*runtime_), args, count)
-            : funcPtr->call(*runtime_, args, count);
-      });
-
-  walkPropertyPath(*this, propertyPath, 1)
-      .setProperty(*this, propertyPath.back(), funcReplacement);
-}
-
-void TracingRuntime::setUpWeakRef() {
-  // WeakRef is not always defined.
-  if (runtime_->global().getProperty(*runtime_, "WeakRef").isUndefined())
-    return;
-  // The constructor, though deterministic, needs to be replaced as well. This
-  // is because the object that is returned from deref needs to have appeared in
-  // the synth trace before deref is called. Therefore, we simply insert a
-  // 'no-op' with the object as the parameter, so that the object returned from
-  // deref shows up in the trace.
-  jsi::Function nativeNoOp = jsi::Function::createFromHostFunction(
-      *this,
-      jsi::PropNameID::forAscii(*this, "WeakRef"),
-      0,
-      [](Runtime &rt,
-         const jsi::Value &thisVal,
-         const jsi::Value *args,
-         size_t count) { return jsi::Value::undefined(); });
-  auto code = R"(
-(function(nativeNoOp){
-  var WeakRefReal = WeakRef;
-  function WeakRefJSReplacement(arg){
-    if (new.target){
-      nativeNoOp(arg);
-      return new WeakRefReal(arg);
-    }
-    return WeakRefReal(arg);
-  }
-  WeakRefJSReplacement.prototype = WeakRefReal.prototype;
-  globalThis.WeakRef = WeakRefJSReplacement;
-});
-)";
-  global()
-      .getPropertyAsFunction(*this, "eval")
-      .call(*this, code)
-      .asObject(*this)
-      .asFunction(*this)
-      .call(*this, {std::move(nativeNoOp)});
-  insertHostForwarder({"WeakRef", "prototype", "deref"});
-}
-
-void TracingRuntime::setupDate() {
-  auto lenProp = walkPropertyPath(*runtime_, {"Date"})
-                     .getProperty(*runtime_, "length")
-                     .asNumber();
-  jsi::Function *origDateFunc = saveFunction({"Date"});
-
-  // We can't effectively trace objects, so we instead trace the value of
-  // Date.now(), and use that to deterministically reconstruct the Date object
-  // during replay.
-  jsi::Function nativeDateNow = jsi::Function::createFromHostFunction(
-      *this,
-      jsi::PropNameID::forAscii(*this, "Date"),
-      lenProp,
-      [this, origDateFunc](
-          Runtime &rt,
-          const jsi::Value &thisVal,
-          const jsi::Value *args,
-          size_t count) {
-        return origDateFunc->getPropertyAsFunction(*runtime_, "now")
-            .call(*runtime_);
-      });
-
-  jsi::Function nativeDateFunc = jsi::Function::createFromHostFunction(
-      *this,
-      jsi::PropNameID::forAscii(*this, "Date"),
-      lenProp,
-      [this, origDateFunc](
-          Runtime &rt,
-          const jsi::Value &thisVal,
-          const jsi::Value *args,
-          size_t count) {
-        auto ret = origDateFunc->call(*runtime_, args, count);
-        std::string retStr = ret.asString(*runtime_).utf8(*runtime_);
-        // If we just returned the string directly from the above call, the
-        // trace would not be valid because we would be using a string that has
-        // never been defined before. Therefore, we must copy the string in the
-        // tracing runtime to get this string to show up and be defined in the
-        // trace.
-        return jsi::String::createFromAscii(*this, retStr);
+        auto fun = args[0].getObject(*runtime_).getFunction(*runtime_);
+        return fun.call(*runtime_);
       });
 
   auto code = R"(
-(function(nativeDateNow, nativeDateFunc){
-  var DateReal = Date;
-  function DateJSReplacement(...args){
-    if (new.target){
-      if (arguments.length == 0){
-        return new DateReal(nativeDateNow());
-      } else {
-        // calling new Date with arguments is deterministic
-        return new DateReal(...args);
+(function(callUntraced){
+  var mathRandomReal = Math.random;
+  Math.random = function random() { return callUntraced(mathRandomReal); };
+
+  if(globalThis.WeakRef){
+    var WeakRefReal = globalThis.WeakRef;
+    function WeakRef(arg){
+      if (new.target){
+        // Make a dummy call so the arg is traced. This allows us to return it
+        // from calls to deref later.
+        callUntraced(() => {}, arg);
+        return new WeakRefReal(arg);
       }
-    } else {
-      return nativeDateFunc(...args);
+      return WeakRefReal(arg);
     }
+    WeakRef.prototype = WeakRefReal.prototype;
+    var derefReal = WeakRefReal.prototype.deref;
+    WeakRef.prototype.deref = function deref() { return callUntraced(derefReal.bind(this)); };
+    globalThis.WeakRef = WeakRef;
+  }
+
+  var DateReal = globalThis.Date;
+  var dateNowReal = DateReal.now;
+  var nativeDateNow = function now() { return callUntraced(dateNowReal); };
+  function Date(...args){
+    // Convert non-deterministic calls like `Date()` and `new Date()` into the
+    // deterministic form `new Date(Date.now())`, so they can be traced.
+    if(!new.target){
+      return new DateReal(nativeDateNow()).toString();
+    }
+    if (arguments.length == 0){
+      return new DateReal(nativeDateNow());
+    }
+    return new DateReal(...args);
   }
   // Cannot use Object.assign because Date methods are not enumerable
   for (p of Object.getOwnPropertyNames(DateReal)){
-    DateJSReplacement[p] = DateReal[p];
+    Date[p] = DateReal[p];
   }
-  globalThis.Date = DateJSReplacement;
+  Date.now = nativeDateNow;
+  globalThis.Date = Date;
 });
 )";
   global()
@@ -172,31 +99,9 @@ void TracingRuntime::setupDate() {
       .call(*this, code)
       .asObject(*this)
       .asFunction(*this)
-      .call(*this, {std::move(nativeDateNow), std::move(nativeDateFunc)});
-  insertHostForwarder({"Date", "now"});
-}
+      .call(*this, {std::move(callUntraced)});
 
-jsi::Function *TracingRuntime::saveFunction(
-    const std::vector<const char *> &propertyPath) {
-  jsi::Function origFunc =
-      walkPropertyPath(*runtime_, propertyPath).asFunction(*runtime_);
-  savedFunctions.push_back(std::move(origFunc));
-  return &savedFunctions.back();
-}
-
-jsi::Object TracingRuntime::walkPropertyPath(
-    jsi::Runtime &runtime,
-    const std::vector<const char *> &propertyPath,
-    size_t skipLastAmt) {
-  assert(
-      skipLastAmt <= propertyPath.size() &&
-      "skipLastAmt cannot be larger than length of property path");
-  jsi::Object obj = runtime.global();
-  for (auto e = propertyPath.begin(); e != propertyPath.end() - skipLastAmt;
-       e++) {
-    obj = obj.getPropertyAsObject(runtime, *e);
-  }
-  return obj;
+  numPreambleRecords_ = trace_.records().size();
 }
 
 jsi::Value TracingRuntime::evaluateJavaScript(
