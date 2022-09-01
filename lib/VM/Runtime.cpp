@@ -56,7 +56,8 @@
 #endif
 
 #include <future>
-
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
 namespace hermes {
 namespace vm {
 
@@ -566,8 +567,14 @@ void Runtime::markRoots(
     acceptor.endRootSection();
   }
 
-  // Mark the alternative roots during the normal mark roots call.
-  markRootsForCompleteMarking(acceptor);
+  {
+    MarkRootsPhaseTimer timer(*this, RootAcceptor::Section::SamplingProfiler);
+    acceptor.beginRootSection(RootAcceptor::Section::SamplingProfiler);
+    if (samplingProfiler) {
+      samplingProfiler->markRoots(acceptor);
+    }
+    acceptor.endRootSection();
+  }
 
   {
     MarkRootsPhaseTimer timer(
@@ -624,7 +631,7 @@ void Runtime::markRootsForCompleteMarking(
   MarkRootsPhaseTimer timer(*this, RootAcceptor::Section::SamplingProfiler);
   acceptor.beginRootSection(RootAcceptor::Section::SamplingProfiler);
   if (samplingProfiler) {
-    samplingProfiler->markRoots(acceptor);
+    samplingProfiler->markRootsForCompleteMarking(acceptor);
   }
   acceptor.endRootSection();
 }

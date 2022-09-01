@@ -9,6 +9,7 @@
 /// \file
 /// ES6 24.1 ArrayBuffer
 //===----------------------------------------------------------------------===//
+
 #include "JSLibInternal.h"
 
 #include "hermes/VM/JSArrayBuffer.h"
@@ -16,7 +17,8 @@
 #include "hermes/VM/JSTypedArray.h"
 #include "hermes/VM/Operations.h"
 #include "hermes/VM/StringPrimitive.h"
-
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
 namespace hermes {
 namespace vm {
 
@@ -104,7 +106,7 @@ arrayBufferConstructor(void *, Runtime &runtime, NativeArgs args) {
     // this platform's size type can hold
     return runtime.raiseRangeError("Too large of a byteLength requested");
   }
-  if (self->createDataBlock(runtime, byteLength) ==
+  if (JSArrayBuffer::createDataBlock(runtime, self, byteLength) ==
       ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -190,7 +192,7 @@ arrayBufferPrototypeSlice(void *, Runtime &runtime, NativeArgs args) {
   auto newBuf = runtime.makeHandle(JSArrayBuffer::create(
       runtime, Handle<JSObject>::vmcast(&runtime.arrayBufferPrototype)));
 
-  if (newBuf->createDataBlock(runtime, newLen_int) ==
+  if (JSArrayBuffer::createDataBlock(runtime, newBuf, newLen_int) ==
       ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
