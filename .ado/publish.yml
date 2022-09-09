@@ -23,6 +23,7 @@ jobs:
   - job: Setup
     steps:
       - script: node .ado/scripts/setVersionNumber.js
+        displayName: Set proper version number
 
   - template: jobs.yml
     parameters:

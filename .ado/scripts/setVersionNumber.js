@@ -11,7 +11,7 @@ const env = process.env;
 function main() {
 
     if (env["Build_Reason"] === "PullRequest") {
-        throw new Error("Build script is intended for CI pipeline and should not be used for pull requests.");
+        fatalError("Build script is intended for CI pipeline and should not be used for pull requests.");
     }
 
     const {semVersion, fileVersion} = computeVersion();
@@ -31,7 +31,7 @@ function computeVersion() {
         // $TODO: VMoroz: Add logic for expected versions in release branches.
 
         default:
-            throw new Error(`Build script does not support source branch '${sourceBranch}'.`)
+            fatalError(`Build script does not support source branch '${sourceBranch}'.`)
     }
     
 }
@@ -40,7 +40,7 @@ function computeMainVersion() {
     const buildNumber = env["Build_BuildNumber"];
     const buildNumberParts = buildNumber.split("-");
     if (buildNumberParts.length !== 2 && buildNumberParts[0] !== "Unversioned") {
-        throw new Error(`Unexpected build number format encountered: ${buildNumber}`)
+        fatalError(`Unexpected build number format encountered: ${buildNumber}`)
     }
     const sequenceNumber = buildNumberParts[1];
 
@@ -63,6 +63,11 @@ function computeMainVersion() {
 
 function pad(value) {
     return value < 10 ? `0${value}` : value.toString()
+}
+
+function fatalError(message) {
+    console.log(`##[error]${message}`);
+    process.exit(1);
 }
 
 main();
