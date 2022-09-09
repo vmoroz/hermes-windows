@@ -17,6 +17,7 @@ function main() {
     const {semVersion, fileVersion} = computeVersion();
     console.log(`Semantic Version: ${semVersion}`);
     console.log(`Windows File Version: ${fileVersion}`);
+    
     // Update the build number so the pipelines so we can easily correlate builds and releases.
     console.log(`##vso[build.updatebuildnumber]${semVersion} -- ${fileVersion}`);
 }
@@ -25,6 +26,7 @@ function computeVersion() {
     // Compute base version;
     const sourceBranch = env["Build_SourceBranch"];
     switch (sourceBranch) {
+        case "refs/heads/testing/dannyvv/Version": // $TODO(vmorozov): Remove this for production :)
         case "refs/heads/main":
             return computeMainVersion();
 
