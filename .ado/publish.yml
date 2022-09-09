@@ -1,4 +1,7 @@
-name: 0.0.$(Date:yyMM.d)$(Rev:rrr)
+# This rev-count is used in the Setup job as a monotonic increasing number
+# Be carefull if you edit the name as it can accidentally reset the count
+# see: https://docs.microsoft.com/en-us/azure/devops/pipelines/process/run-number?view=azure-devops&tabs=yaml#tokens
+name: Unversioned-$(Rev:r)
 
 pr: none
 trigger:
@@ -17,4 +20,10 @@ variables:
     value: production,externalfacing
 
 jobs:
+  - job: Setup
+    steps:
+      - script: node .ado/scripts/setVersionNumber.js
+
   - template: jobs.yml
+    parameters:
+      dependsOnSetup: true

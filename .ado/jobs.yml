@@ -1,7 +1,15 @@
+parameters:
+  - name: dependsOnSetup
+    type: boolean
+    default : false
+
 jobs:
   - job: Build
     timeoutInMinutes: 120
     displayName: Build Hermes
+    dependsOn: 
+      - ${{ if parameters.dependsOnSetup }}:
+        - Setup
     strategy:
       matrix:
         DebugX64:
