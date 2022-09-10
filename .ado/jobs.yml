@@ -33,15 +33,7 @@ jobs:
     variables:
       semanticVersion: $[ dependencies.Setup.outputs['setVersions.semanticVersion'] ]
       fileVersion: $[ dependencies.Setup.outputs['setVersions.fileVersion'] ]
-      testMissingForPr: $[ dependencies.Setup.outputs['setVersions.testMissingForPr'] ]
     steps:
-      - script: |
-          echo -------------------
-          echo %semanticVersion%
-          echo %fileVersion%
-          echo %testMissingForPr%
-          echo -------------------
-          exit /b 1
       - task: PowerShell@2
         displayName: Run the build script for publish
         inputs:
