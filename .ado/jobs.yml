@@ -30,8 +30,17 @@ jobs:
         ReleaseARM64:
           BuildConfiguration: release
           BuildPlatform: arm64
-
+    variables:
+      semanticVersion: $[ dependencies.Setup.outputs['Setup.setVersions.semanticVersion'] ]
+      fileVersion: $[ dependencies.Setup.outputs['Setup.setVersions.fileVersion'] ]
+      testMissingForPr: $[ dependencies.Setup.outputs['Setup.setVersions.testMissingForPr'] ]
     steps:
+      - script: |
+          echo -------------------
+          echo %semanticVersion%
+          echo %fileVersion%
+          echo %testMissingForPr%
+          echo -------------------
       - task: PowerShell@2
         displayName: Run the build script for publish
         inputs:

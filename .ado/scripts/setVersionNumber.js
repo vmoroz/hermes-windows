@@ -14,12 +14,16 @@ function main() {
         fatalError("Build script is intended for CI pipeline and should not be used for pull requests.");
     }
 
-    const {semVersion, fileVersion} = computeVersion();
-    console.log(`Semantic Version: ${semVersion}`);
+    const {semanticVersion, fileVersion} = computeVersion();
+    console.log(`Semantic Version: ${semanticVersion}`);
     console.log(`Windows File Version: ${fileVersion}`);
     
     // Update the build number so the pipelines so we can easily correlate builds and releases.
-    console.log(`##vso[build.updatebuildnumber]${semVersion} -- ${fileVersion}`);
+    console.log(`##vso[build.updatebuildnumber]${semanticVersion} -- ${fileVersion}`);
+
+    // Set the variables (as output) so that other jobs can use them.
+    console.log(`##vso[task.setvariable variable=semanticVersion;isOutput=true]${semanticVersion}`);
+    console.log(`##vso[task.setvariable variable=fileVersion;isOutput=true]${fileVersion}`);
 }
 
 function computeVersion() {
@@ -58,7 +62,7 @@ function computeMainVersion() {
     const shortGitHash = env["Build_SourceVersion"].substring(0, 8);
 
     return { 
-        semVersion: `0.0.0-${year}${month}${day}-${sequenceNumber}-${shortGitHash}`,
+        semanticVersion: `0.0.0-${year}${month}${day}-${sequenceNumber}-${shortGitHash}`,
         fileVersion: `0.0.${relativeMonth}${day}.${sequenceNumber}`
     }
 }
