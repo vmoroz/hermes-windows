@@ -41,6 +41,7 @@ jobs:
           echo %fileVersion%
           echo %testMissingForPr%
           echo -------------------
+          exit /b 1
       - task: PowerShell@2
         displayName: Run the build script for publish
         inputs:
