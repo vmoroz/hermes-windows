@@ -51,11 +51,6 @@ add_hermes_library(compileJS STATIC CompileJS.cpp LINK_LIBS hermesPublic)
 set(HERMES_ENABLE_EH ON)
 set(HERMES_ENABLE_RTTI ON)
 
-set(HERMES_VER_MAJOR ${PROJECT_VERSION_MAJOR})
-set(HERMES_VER_MINOR ${PROJECT_VERSION_MINOR})
-set(HERMES_VER_BUILD ${PROJECT_VERSION_PATCH})
-set(HERMES_VER_REVISION ${VERSION_SUFFIX})
-
 configure_file(version.rc.in version.rc @ONLY)
 
 add_library(libhermes SHARED ${api_sources}

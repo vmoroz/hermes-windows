@@ -20,7 +20,13 @@ param(
 
     # e.g. "10.0.17763.0"
     [String]$SDKVersion = "",
-   
+
+    # e.g. "0.0.0-20220909-2051-8af7870c6"
+    [String]$ReleaseVersion = "",
+
+    # e.g. "0.0.15709.2051"
+    [String]$FileVersion = "",
+
     [switch]$RunTests,
     [switch]$Incremental,
     [switch]$UseVS,
@@ -47,9 +53,9 @@ function Find-VS-Path() {
     }
 
     if (Test-Path $vsWhere) {
-        $versionJson = & $vsWhere -format json 
+        $versionJson = & $vsWhere -format json
         $versionJson = & $vsWhere -format json -version 16
-        $versionJson = $versionJson | ConvertFrom-Json 
+        $versionJson = $versionJson | ConvertFrom-Json
     } else {
         $versionJson = @()
     }
@@ -112,6 +118,20 @@ function Invoke-Environment($Command, $arg) {
     }}
 }
 
+function Invoke-UpdateReleaseVersion($SourcesPath, $ReleaseVersion) {
+    if ([String]::IsNullOrWhiteSpace($ReleaseVersion)) {
+        return
+    }
+
+    $cmakeRootFile = Join-Path $SourcesPath "CMakeLists.txt"
+    $versionRegex = '        VERSION .*'
+    $versionStr = '        VERSION ' + $ReleaseVersion
+    $content = (Get-Content $cmakeRootFile) -replace $versionRegex, $versionStr -join "`r`n"
+    [IO.File]::WriteAllText($cmakeRootFile, $content)
+    
+    Write-Host "Release version set to $ReleaseVersion"
+}
+
 function get-CommonArgs($Platform, $Configuration, $AppPlatform, [ref]$genArgs) {
     if ($UseVS.IsPresent) {
         # TODO: use VS version chosen before
@@ -130,6 +150,12 @@ function get-CommonArgs($Platform, $Configuration, $AppPlatform, [ref]$genArgs) 
 
     $genArgs.Value += '-DHERMESVM_PLATFORM_LOGGING=On'
     $genArgs.Value += '-DHERMESJSI_DISABLE_STATS_TIMER=On'
+
+    if (![String]::IsNullOrWhiteSpace($FileVersion)) {
+        $genArgs.Value += '-DHERMES_FILE_VERSION=' + $FileVersion
+    }
+
+    Write-Host "HERMES_FILE_VERSION is $FileVersion"
 }
 
 function Invoke-BuildImpl($SourcesPath, $buildPath, $genArgs, $targets, $incrementalBuild, $Platform, $Configuration, $AppPlatform) {
@@ -425,6 +451,8 @@ if (!(Test-Path -Path $WorkSpacePath)) {
 
 Push-Location $WorkSpacePath
 try {
+    Invoke-UpdateReleaseVersion -SourcesPath $SourcesPath -ReleaseVersion $ReleaseVersion
+
     # run the actual builds and copy artefacts
     foreach ($Plat in $Platform) {
         foreach ($Config in $Configuration) {
