@@ -123,12 +123,18 @@ function Invoke-UpdateReleaseVersion($SourcesPath, $ReleaseVersion) {
         return
     }
 
-    $cmakeRootFile = Join-Path $SourcesPath "CMakeLists.txt"
-    $versionRegex = '        VERSION .*'
-    $versionStr = '        VERSION ' + $ReleaseVersion
-    $content = (Get-Content $cmakeRootFile) -replace $versionRegex, $versionStr -join "`r`n"
-    [IO.File]::WriteAllText($cmakeRootFile, $content)
-    
+    $filePath1 = Join-Path $SourcesPath "CMakeLists.txt"
+    $versionRegex1 = '        VERSION .*'
+    $versionStr1 = '        VERSION ' + $ReleaseVersion
+    $content1 = (Get-Content $filePath1) -replace $versionRegex1, $versionStr1 -join "`r`n"
+    [IO.File]::WriteAllText($filePath1, $content1)
+
+    $filePath2 = Join-Path (Join-Path $SourcesPath "npm") "package.json"
+    $versionRegex2 = '"version": ".*",'
+    $versionStr2 = '"version": "' + $ReleaseVersion + '",'
+    $content2 = (Get-Content $filePath2) -replace $versionRegex2, $versionStr2 -join "`r`n"
+    [IO.File]::WriteAllText($filePath2, $content2)
+
     Write-Host "Release version set to $ReleaseVersion"
 }
 
