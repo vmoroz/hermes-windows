@@ -58,7 +58,7 @@ function computeMainVersion() {
     // Match office version logic:
     const relativeMonth = 100 + (year - 2018) * 12 + monthNumber;
 
-    const shortGitHash = env["Build_SourceVersion"].substring(0, 8);
+    const shortGitHash = env["Build_SourceVersion"].substring(0, 9);
 
     return { 
         semanticVersion: `0.0.0-${year}${month}${day}-${sequenceNumber}-${shortGitHash}`,
