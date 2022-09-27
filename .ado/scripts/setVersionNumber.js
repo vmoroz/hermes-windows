@@ -30,7 +30,7 @@ function computeVersion() {
     // Compute base version;
     const sourceBranch = env["Build_SourceBranch"];
     switch (sourceBranch) {
-        case "refs/heads/testing/vmoroz/Version": // $TODO(vmoroz): Remove this for production :)
+        case "refs/heads/testing/vmorozov/Version": // $TODO(vmoroz): Remove this for production :)
         case "refs/heads/main":
             return computeMainVersion();
 
