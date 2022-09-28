@@ -118,14 +118,14 @@ function Invoke-Environment($Command, $arg) {
     }}
 }
 
-function Invoke-UpdateReleaseVersion($SourcesPath, $ReleaseVersion) {
+function Invoke-UpdateReleaseVersion($SourcesPath, $ReleaseVersion, $FileVersion) {
     if ([String]::IsNullOrWhiteSpace($ReleaseVersion)) {
         return
     }
 
     $filePath1 = Join-Path $SourcesPath "CMakeLists.txt"
     $versionRegex1 = '        VERSION .*'
-    $versionStr1 = '        VERSION ' + $ReleaseVersion
+    $versionStr1 = '        VERSION ' + $FileVersion
     $content1 = (Get-Content $filePath1) -replace $versionRegex1, $versionStr1 -join "`r`n"
     [IO.File]::WriteAllText($filePath1, $content1)
 
@@ -457,7 +457,7 @@ if (!(Test-Path -Path $WorkSpacePath)) {
 
 Push-Location $WorkSpacePath
 try {
-    Invoke-UpdateReleaseVersion -SourcesPath $SourcesPath -ReleaseVersion $ReleaseVersion
+    Invoke-UpdateReleaseVersion -SourcesPath $SourcesPath -ReleaseVersion $ReleaseVersion -FileVersion $FileVersion
 
     # run the actual builds and copy artefacts
     foreach ($Plat in $Platform) {
