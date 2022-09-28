@@ -18,8 +18,10 @@ function main() {
     console.log(`Semantic Version: ${semanticVersion}`);
     console.log(`Windows File Version: ${fileVersion}`);
 
-    // Update the build number so the pipelines so we can easily correlate builds and releases.
-    console.log(`##vso[build.updatebuildnumber]${fileVersion} -- ${semanticVersion}`);
+    if (!fileVersion.startsWith(semanticVersion)) {
+      // Update the pipeline build number to correlate it with the semantic version.
+      console.log(`##vso[build.updatebuildnumber]${fileVersion} -- ${semanticVersion}`);
+    }
 
     // Set the variables (as output) so that other jobs can use them.
     console.log(`##vso[task.setvariable variable=semanticVersion;isOutput=true]${semanticVersion}`);
@@ -29,17 +31,24 @@ function main() {
 function computeVersion() {
     // Compute base version;
     const sourceBranch = env["Build_SourceBranch"];
-    switch (sourceBranch) {
-        case "refs/heads/testing/vmorozov/Version": // $TODO(vmoroz): Remove this for production :)
-        case "refs/heads/main":
-            return computeMainVersion();
-
-        // $TODO: VMoroz: Add logic for expected versions in release branches.
-
-        default:
-            fatalError(`Build script does not support source branch '${sourceBranch}'.`)
+    if (sourceBranch === "refs/heads/main") {
+      return computeMainVersion();
     }
-    
+    if (sourceBranch.startsWith("refs/heads/rnw/0.")) {
+      return computeReleaseVersion();
+    }
+
+    // $TODO(vmoroz): Remove this for production
+    // ---> start temporary code
+    if (sourceBranch === "refs/heads/testing/vmorozov/Version") {
+      return computeMainVersion();
+    }
+    if (sourceBranch === "refs/heads/testing/vmorozov/ReleaseVersion") {
+      return computeReleaseVersion();
+    }
+    // <--- end temporary code
+
+    fatalError(`Build script does not support source branch '${sourceBranch}'.`)
 }
 
 function computeMainVersion() {
@@ -51,7 +60,7 @@ function computeMainVersion() {
         || buildNumberParts[2].length !== 4
         || buildNumberParts[3].length < 4
         || buildNumberParts[3].length > 5) {
-        fatalError(`Unexpected build number format encountered: ${buildNumber}`)
+        fatalError(`Unexpected pre-release build number format encountered: ${buildNumber}`)
     }
 
     const shortGitHash = env["Build_SourceVersion"].substring(0, 8);
@@ -59,6 +68,19 @@ function computeMainVersion() {
     return {
         semanticVersion: `0.0.0-${buildNumberParts[2]}.${buildNumberParts[3]}-${shortGitHash}`,
         fileVersion: buildNumber
+    }
+}
+
+function computeReleaseVersion() {
+    const buildNumber = env["Build_BuildNumber"];
+    const buildNumberParts = buildNumber.split(".");
+    if (buildNumberParts.length !== 3) {
+        fatalError(`Unexpected release build number format encountered: ${buildNumber}`)
+    }
+
+    return {
+        semanticVersion: buildNumber,
+        fileVersion: buildNumber + '.0'
     }
 }
 

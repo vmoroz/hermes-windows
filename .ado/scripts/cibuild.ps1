@@ -21,10 +21,10 @@ param(
     # e.g. "10.0.17763.0"
     [String]$SDKVersion = "",
 
-    # e.g. "0.0.0-2209.28001-8af7870c"
+    # e.g. "0.0.0-2209.28001-8af7870c" for pre-release or "0.70.2" for release
     [String]$ReleaseVersion = "",
 
-    # e.g. "0.0.2209.28001"
+    # e.g. "0.0.2209.28001" for pre-release or "0.70.2.0" for release
     [String]$FileVersion = "",
 
     [switch]$RunTests,
@@ -123,9 +123,14 @@ function Invoke-UpdateReleaseVersion($SourcesPath, $ReleaseVersion, $FileVersion
         return
     }
 
+    $ProductReleaseVersion = $ReleaseVersion
+    if ($ReleaseVersion.StartsWith("0.0.0")) {
+        $ProductReleaseVersion = "0.0.0"
+    }
+
     $filePath1 = Join-Path $SourcesPath "CMakeLists.txt"
     $versionRegex1 = '        VERSION .*'
-    $versionStr1 = '        VERSION ' + $FileVersion
+    $versionStr1 = '        VERSION ' + $ProductReleaseVersion
     $content1 = (Get-Content $filePath1) -replace $versionRegex1, $versionStr1 -join "`r`n"
     [IO.File]::WriteAllText($filePath1, $content1)
 
