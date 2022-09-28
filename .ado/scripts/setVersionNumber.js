@@ -54,11 +54,10 @@ function computeMainVersion() {
         fatalError(`Unexpected build number format encountered: ${buildNumber}`)
     }
 
-    const dayAndSequenceNumber = buildNumberParts[3] === 4 ? '0' + buildNumberParts[3] : buildNumberParts[3];
     const shortGitHash = env["Build_SourceVersion"].substring(0, 8);
 
     return {
-        semanticVersion: `0.0.0-${buildNumberParts[2]}${dayAndSequenceNumber}-${shortGitHash}`,
+        semanticVersion: `0.0.0-${buildNumberParts[2]}.${buildNumberParts[3]}-${shortGitHash}`,
         fileVersion: buildNumber
     }
 }
