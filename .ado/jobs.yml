@@ -45,6 +45,8 @@ jobs:
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
             -AppPlatform:uwp
+            -ReleaseVersion:$(semanticVersion)
+            -FileVersion:$(fileVersion)
 
       - script: echo TODO - Add Tests here
         displayName: '[Test] - To be Added via bug #77'
