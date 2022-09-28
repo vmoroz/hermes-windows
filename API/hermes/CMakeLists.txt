@@ -51,10 +51,12 @@ add_hermes_library(compileJS STATIC CompileJS.cpp LINK_LIBS hermesPublic)
 set(HERMES_ENABLE_EH ON)
 set(HERMES_ENABLE_RTTI ON)
 
-configure_file(version.rc.in version.rc @ONLY)
+add_library(libhermes SHARED ${api_sources})
 
-add_library(libhermes SHARED ${api_sources}
-  ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+if (WIN32)
+  configure_file(version.rc.in version.rc @ONLY)
+  target_sources(libhermes PRIVATE  ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+endif()
 
 # This is configured using a cmake flag instead of a separate target, because
 # we need the output to be named "libhermes.so".
