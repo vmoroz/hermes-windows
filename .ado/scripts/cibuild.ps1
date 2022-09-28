@@ -21,10 +21,10 @@ param(
     # e.g. "10.0.17763.0"
     [String]$SDKVersion = "",
 
-    # e.g. "0.0.0-20220909-2051-8af7870c6"
+    # e.g. "0.0.0-2209.28001-8af7870c"
     [String]$ReleaseVersion = "",
 
-    # e.g. "0.0.15709.2051"
+    # e.g. "0.0.2209.28001"
     [String]$FileVersion = "",
 
     [switch]$RunTests,
