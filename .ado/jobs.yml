@@ -31,8 +31,16 @@ jobs:
           BuildConfiguration: release
           BuildPlatform: arm64
     variables:
-      semanticVersion: $[ dependencies.Setup.outputs['setVersions.semanticVersion'] ]
-      fileVersion: $[ dependencies.Setup.outputs['setVersions.fileVersion'] ]
+      - name: semanticVersion
+        ${{ if parameters.dependsOnSetup }}
+          value: $[ dependencies.Setup.outputs['setVersions.semanticVersion'] ]
+        ${{ else }}
+          value: '0.12.0'
+      - name: fileVersion
+        ${{ if parameters.dependsOnSetup }}
+          value: $[ dependencies.Setup.outputs['setVersions.fileVersion'] ]
+        ${{ else }}
+          value: '0.12.0.0'
     steps:
       - task: PowerShell@2
         displayName: Run the build script for publish
