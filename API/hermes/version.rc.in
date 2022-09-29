@@ -20,7 +20,6 @@ BEGIN
             VALUE "FileDescription", "Hermes JavaScript Engine Library"
             VALUE "FileVersion", "@HERMES_FILE_VERSION@"
             VALUE "InternalName", "hermes.dll"
-            VALUE "LegalCopyright", "Copyright (c) Meta Platforms, Inc. and affiliates."
             VALUE "OriginalFilename", "hermes.dll"
             VALUE "ProductName", "Hermes JavaScript Engine"
             VALUE "ProductVersion", "@HERMES_RELEASE_VERSION@"
