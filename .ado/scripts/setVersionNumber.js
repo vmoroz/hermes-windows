@@ -38,16 +38,6 @@ function computeVersion() {
       return computeReleaseVersion();
     }
 
-    // $TODO(vmoroz): Remove this for production
-    // ---> start temporary code
-    if (sourceBranch === "refs/heads/testing/vmorozov/Version") {
-      return computeMainVersion();
-    }
-    if (sourceBranch === "refs/heads/testing/vmorozov/ReleaseVersion") {
-      return computeReleaseVersion();
-    }
-    // <--- end temporary code
-
     fatalError(`Build script does not support source branch '${sourceBranch}'.`)
 }
 
