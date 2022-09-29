@@ -34,20 +34,32 @@ jobs:
       semanticVersion: $[ dependencies.Setup.outputs['setVersions.semanticVersion'] ]
       fileVersion: $[ dependencies.Setup.outputs['setVersions.fileVersion'] ]
     steps:
-      - task: PowerShell@2
-        displayName: Run the build script for publish
-        inputs:
-          targetType: filePath
-          filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
-          arguments:
-            -SourcesPath:$(Build.SourcesDirectory)
-            -OutputPath:$(Build.ArtifactStagingDirectory)
-            -Platform:$(BuildPlatform)
-            -Configuration:$(BuildConfiguration)
-            -AppPlatform:uwp
-            - ${{ if parameters.dependsOnSetup }}:
+      - ${{ if parameters.dependsOnSetup }}:
+        - task: PowerShell@2
+          displayName: Run the build script for publish
+          inputs:
+            targetType: filePath
+            filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
+            arguments:
+              -SourcesPath:$(Build.SourcesDirectory)
+              -OutputPath:$(Build.ArtifactStagingDirectory)
+              -Platform:$(BuildPlatform)
+              -Configuration:$(BuildConfiguration)
+              -AppPlatform:uwp
               -ReleaseVersion:$(semanticVersion)
               -FileVersion:$(fileVersion)
+      - ${{ else }}:
+        - task: PowerShell@2
+          displayName: Run the build script for publish
+          inputs:
+            targetType: filePath
+            filePath: $(Build.SourcesDirectory)\.ado\scripts\cibuild.ps1
+            arguments:
+              -SourcesPath:$(Build.SourcesDirectory)
+              -OutputPath:$(Build.ArtifactStagingDirectory)
+              -Platform:$(BuildPlatform)
+              -Configuration:$(BuildConfiguration)
+              -AppPlatform:uwp
 
       - script: echo TODO - Add Tests here
         displayName: '[Test] - To be Added via bug #77'
