@@ -242,7 +242,9 @@ class SamplingProfiler {
 
     /// Main routine to take a sample of runtime stack.
     /// \return false for failure which timer loop thread should stop.
-    bool sampleStack();
+    bool sampleStacks();
+    /// Sample stack for a profiler.
+    bool sampleStack(SamplingProfiler *localProfiler);
 
     /// Timer loop thread main routine.
     void timerLoop();
@@ -364,8 +366,15 @@ class SamplingProfiler {
 
 #if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
   /// Registered loom callback for collecting stack frames.
-  static FBLoomStackCollectionRetcode
-  collectStackForLoom(int64_t *frames, uint16_t *depth, uint16_t max_depth);
+  static FBLoomStackCollectionRetcode collectStackForLoom(
+      int64_t *frames,
+      uint16_t *depth,
+      uint16_t max_depth,
+      void *profiler);
+  /// Modified version of enable/disable, designed to be called by
+  /// SamplingProfiler::collectStackForLoom.
+  static bool enableForLoom();
+  static bool disableForLoom();
 #endif
 
   /// Clear previous stored samples.
@@ -416,6 +425,16 @@ class SamplingProfiler {
   /// Resumes the sample profiling. There must have been a previous call to
   /// suspend() that hansn't been resume()d yet.
   void resume();
+
+#if (defined(__ANDROID__) || defined(__APPLE__)) && \
+    defined(HERMES_FACEBOOK_BUILD)
+  // Common code that is shared by the collectStackForLoom(), for both the
+  // Android and Apple versions.
+  void collectStackForLoomCommon(
+      const StackFrame &frame,
+      int64_t *frames,
+      uint32_t index);
+#endif
 };
 
 /// An RAII class for temporarily suspending (and auto-resuming) the sampling
