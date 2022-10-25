@@ -27,7 +27,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="$(PackageRoot)\build\native\include\hermes\Public\rtti.cpp">
+    <ClCompile Include="$(PackageRoot)\build\native\include\hermes\Public\rtti.cpp" Condition="'$(HermesCompileRtti)' != 'false'">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>
