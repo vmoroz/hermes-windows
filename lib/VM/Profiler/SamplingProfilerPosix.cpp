@@ -51,8 +51,7 @@ void SamplingProfiler::GlobalProfiler::registerRuntime(
   std::lock_guard<std::mutex> lockGuard(profilerLock_);
   profilers_.insert(profiler);
 
-#if (defined(__ANDROID__) || defined(__APPLE__)) && \
-    defined(HERMES_FACEBOOK_BUILD)
+#if defined(__ANDROID__) && defined(HERMES_FACEBOOK_BUILD)
   assert(
       threadLocalProfilerForLoom_.get() == nullptr &&
       "multiple hermes runtime in the same thread");
@@ -69,8 +68,7 @@ void SamplingProfiler::GlobalProfiler::unregisterRuntime(
   assert(succeed && "How can runtime not registered yet?");
   (void)succeed;
 
-#if (defined(__ANDROID__) || defined(__APPLE__)) && \
-    defined(HERMES_FACEBOOK_BUILD)
+#if defined(__ANDROID__) && defined(HERMES_FACEBOOK_BUILD)
   // TODO(T125910634): re-introduce the requirement for unregistering the
   // runtime in the same thread it was registered.
   threadLocalProfilerForLoom_.set(nullptr);
