@@ -870,19 +870,14 @@ void HBCISel::generateDebuggerInst(DebuggerInst *Inst, BasicBlock *next) {
 void HBCISel::generateCreateRegExpInst(
     CreateRegExpInst *Inst,
     BasicBlock *next) {
+  const auto &pattern = Inst->getPattern()->getValue();
+  const auto &flags = Inst->getFlags()->getValue();
+  auto &ctx = F_->getParent()->getContext();
+  auto &regexp = ctx.getCompiledRegExp(
+      pattern.getUnderlyingPointer(), flags.getUnderlyingPointer());
+  uint32_t reBytecodeID = BCFGen_->addRegExp(&regexp);
   auto patternStrID = BCFGen_->getStringID(Inst->getPattern());
   auto flagsStrID = BCFGen_->getStringID(Inst->getFlags());
-  // Compile the regexp. We expect this to succeed because the AST went through
-  // the SemanticValidator. This is a bit of a hack: what we would really like
-  // to do is have the Parser emit a CompiledRegExp that can be threaded through
-  // the AST and then through the IR to this instruction selection, but that is
-  // too awkward, so we compile again here.
-  uint32_t reBytecodeID = UINT32_MAX;
-  if (auto regexp = CompiledRegExp::tryCompile(
-          Inst->getPattern()->getValue().str(),
-          Inst->getFlags()->getValue().str())) {
-    reBytecodeID = BCFGen_->addRegExp(std::move(*regexp));
-  }
   BCFGen_->emitCreateRegExp(
       encodeValue(Inst), patternStrID, flagsStrID, reBytecodeID);
 }
@@ -1337,6 +1332,10 @@ void HBCISel::generateHBCResolveEnvironment(
       "Cannot access variables in inner scopes");
   int32_t delta = curScopeDepth.getValue() - instScopeDepth.getValue();
   assert(delta > 0 && "HBCResolveEnvironment for current scope");
+  if (std::numeric_limits<uint8_t>::max() < delta) {
+    F_->getContext().getSourceErrorManager().error(
+        Inst->getLocation(), "Variable environment is out-of-reach");
+  }
   BCFGen_->emitGetEnvironment(encodeValue(Inst), delta - 1);
 }
 void HBCISel::generateHBCStoreToEnvironmentInst(
@@ -1419,6 +1418,20 @@ void HBCISel::generateHBCLoadConstInst(
       auto parsedBigInt = bigint::ParsedBigInt::parsedBigIntFromNumericValue(
           cast<LiteralBigInt>(literal)->getValue()->str());
       assert(parsedBigInt && "should be valid");
+      if (bigint::tooManyBytes(parsedBigInt->getBytes().size())) {
+        // TODO: move this to the semantic analysis so we can get a proper
+        // warning (i.e., with the correct location for the literal).
+        std::string sizeStr;
+        {
+          llvh::raw_string_ostream OS(sizeStr);
+          OS << parsedBigInt->getBytes().size();
+        }
+        F_->getContext().getSourceErrorManager().warning(
+            Inst->getLocation(),
+            Twine("BigInt literal has too many bytes (") + sizeStr +
+                ") and a RangeError will be raised at runtime time if it "
+                "is referenced.");
+      }
       auto idx = BCFGen_->addBigInt(std::move(*parsedBigInt));
       if (idx <= UINT16_MAX) {
         BCFGen_->emitLoadConstBigInt(output, idx);
