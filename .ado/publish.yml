@@ -4,7 +4,7 @@
 #
 # The main branch pre-release versions start with "0.0."
 # and follow the date and revision number.
-name: 0.0.2210.10$(Rev:rrr)
+name: 0.0.2210.24$(Rev:rrr)
 
 pr: none
 trigger:
