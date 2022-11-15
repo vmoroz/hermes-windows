@@ -39,11 +39,17 @@ class IRBuilder {
   BasicBlock *Block{};
 
   SMLoc Location{};
+  Value *CurrentSourceLevelScope;
 
  public:
-  explicit IRBuilder(Module *Mod) : M(Mod), InsertionPoint(nullptr) {}
+  explicit IRBuilder(Module *Mod)
+      : M(Mod),
+        InsertionPoint(nullptr),
+        CurrentSourceLevelScope(getLiteralUndefined()) {}
   explicit IRBuilder(Function *F)
-      : M(F->getParent()), InsertionPoint(nullptr) {}
+      : M(F->getParent()),
+        InsertionPoint(nullptr),
+        CurrentSourceLevelScope(getLiteralUndefined()) {}
 
   //--------------------------------------------------------------------------//
   //                          Stateless APIs.                                 //
@@ -63,6 +69,7 @@ class IRBuilder {
   /// \param insertBefore Another function in the module where this function
   ///   should be inserted before. If null, appends to the end of the module.
   Function *createFunction(
+      ScopeDesc *scopeDesc,
       Identifier OriginalName,
       Function::DefinitionKind definitionKind,
       bool strictMode,
@@ -73,6 +80,7 @@ class IRBuilder {
 
   /// Create a new Function and add it to the Module.
   Function *createFunction(
+      ScopeDesc *scopeDesc,
       llvh::StringRef OriginalName,
       Function::DefinitionKind definitionKind,
       bool strictMode,
@@ -86,6 +94,7 @@ class IRBuilder {
   /// \param insertBefore Another function in the module where this function
   ///   should be inserted before. If null, appends to the end of the module.
   AsyncFunction *createAsyncFunction(
+      ScopeDesc *scopeDesc,
       Identifier OriginalName,
       Function::DefinitionKind definitionKind,
       bool strictMode,
@@ -98,6 +107,7 @@ class IRBuilder {
   /// \param insertBefore Another function in the module where this function
   ///   should be inserted before. If null, appends to the end of the module.
   GeneratorFunction *createGeneratorFunction(
+      ScopeDesc *scopeDesc,
       Identifier OriginalName,
       Function::DefinitionKind definitionKind,
       bool strictMode,
@@ -110,6 +120,7 @@ class IRBuilder {
   /// \param insertBefore Another function in the module where this function
   ///   should be inserted before. If null, appends to the end of the module.
   GeneratorInnerFunction *createGeneratorInnerFunction(
+      ScopeDesc *scopeDesc,
       Identifier OriginalName,
       Function::DefinitionKind definitionKind,
       bool strictMode,
@@ -118,12 +129,10 @@ class IRBuilder {
 
   /// Create the top level function representing the global scope.
   Function *createTopLevelFunction(
+      ScopeDesc *scopeDesc,
       bool strictMode,
       SourceVisibility sourceVisibility = SourceVisibility::Default,
       SMRange sourceRange = SMRange{});
-
-  /// Create a new ExternalScope with the given depth, which must be negative.
-  ExternalScope *createExternalScope(Function *function, int32_t depth);
 
   /// Create a new global object property.
   GlobalObjectProperty *createGlobalObjectProperty(
@@ -142,13 +151,13 @@ class IRBuilder {
 
   /// Add a new variable to scope \p Parent.
   Variable *createVariable(
-      VariableScope *Parent,
+      ScopeDesc *Parent,
       Variable::DeclKind declKind,
       Identifier Name);
 
   /// Add a new variable to scope \p Parent.
   Variable *createVariable(
-      VariableScope *Parent,
+      ScopeDesc *Parent,
       Variable::DeclKind declKind,
       llvh::StringRef Name);
 
@@ -246,6 +255,10 @@ class IRBuilder {
     return Location;
   }
 
+  void setCurrentSourceLevelScope(Value *sourceLevelScope) {
+    CurrentSourceLevelScope = sourceLevelScope;
+  }
+
   /// Move instruction \p inst from its block to the insertion point in the
   /// current block. If the instruction is a terminator, correctly update the
   /// phi-nodes that refer to the old block and point then to the current one.
@@ -282,15 +295,22 @@ class IRBuilder {
 
   AddEmptyStringInst *createAddEmptyStringInst(Value *val);
 
-  CreateFunctionInst *createCreateFunctionInst(Function *code);
+  CreateScopeInst *createCreateScopeInst(ScopeDesc *scopeDesc);
+
+  CreateFunctionInst *createCreateFunctionInst(
+      Function *code,
+      ScopeCreationInst *environment);
 
   LoadStackInst *createLoadStackInst(AllocStackInst *ptr);
 
-  LoadFrameInst *createLoadFrameInst(Variable *ptr);
+  LoadFrameInst *createLoadFrameInst(Variable *ptr, ScopeCreationInst *scope);
 
   StoreStackInst *createStoreStackInst(Value *storedValue, AllocStackInst *ptr);
 
-  StoreFrameInst *createStoreFrameInst(Value *storedValue, Variable *ptr);
+  StoreFrameInst *createStoreFrameInst(
+      Value *storedValue,
+      Variable *ptr,
+      ScopeCreationInst *scope);
 
   CallInst *
   createCallInst(Value *callee, Value *thisValue, ArrayRef<Value *> args);
@@ -460,7 +480,9 @@ class IRBuilder {
       Value *result,
       BasicBlock *nextBlock);
 
-  CreateGeneratorInst *createCreateGeneratorInst(Function *innerFn);
+  CreateGeneratorInst *createCreateGeneratorInst(
+      Function *innerFn,
+      ScopeCreationInst *environment);
 
   StartGeneratorInst *createStartGeneratorInst();
 
@@ -470,7 +492,9 @@ class IRBuilder {
   //                  Target specific insertions                              //
   //--------------------------------------------------------------------------//
 
-  HBCResolveEnvironment *createHBCResolveEnvironment(VariableScope *scope);
+  HBCResolveEnvironment *createHBCResolveEnvironment(
+      ScopeDesc *originScopeDesc,
+      ScopeDesc *targetScopeDesc);
   HBCStoreToEnvironmentInst *
   createHBCStoreToEnvironmentInst(Value *env, Value *toPut, Variable *var);
   HBCLoadFromEnvironmentInst *createHBCLoadFromEnvironmentInst(
@@ -489,7 +513,8 @@ class IRBuilder {
 
   HBCLoadParamInst *createHBCLoadParamInst(LiteralNumber *value);
 
-  HBCCreateEnvironmentInst *createHBCCreateEnvironmentInst();
+  HBCCreateEnvironmentInst *createHBCCreateEnvironmentInst(
+      ScopeDesc *scopeDesc);
 
   HBCGetThisNSInst *createHBCGetThisNSInst();
 

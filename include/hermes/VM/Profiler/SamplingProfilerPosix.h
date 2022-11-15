@@ -195,6 +195,11 @@ class SamplingProfiler {
     /// Whether signal handler is registered or not. Protected by profilerLock_.
     bool isSigHandlerRegistered_{false};
 
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+    /// Indicating whether or not we are in the middle of collecting stack for
+    /// loom.
+    bool collectingStack_{false};
+#endif
 #ifndef _MSC_VER
     /// Semaphore to indicate all signal handlers have finished the sampling.
     Semaphore samplingDoneSem_;
@@ -218,6 +223,12 @@ class SamplingProfiler {
     /// This condition variable can be used to wait for a change in the enabled
     /// member variable.
     std::condition_variable enabledCondVar_;
+
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+    /// This condition variable is used when we disable profiler for loom
+    /// collection, in the disableForLoomCollection() function.
+    std::condition_variable disableForLoomCondVar_;
+#endif
 
 #ifndef _MSC_VER
     /// invoke sigaction() posix API to register \p handler.

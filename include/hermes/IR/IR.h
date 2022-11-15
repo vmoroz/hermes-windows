@@ -38,13 +38,14 @@
 namespace hermes {
 
 class Module;
-class VariableScope;
 class Function;
 class BasicBlock;
 class Parameter;
 class Instruction;
 class Context;
 class TerminatorInst;
+class ScopeDesc;
+class Variable;
 
 /// This is an instance of a JavaScript type.
 class Type {
@@ -448,6 +449,7 @@ class Value {
   // removes this requirement.
   friend class Module;
   friend class IRBuilder;
+  friend class ScopeDesc;
 
   ValueKind Kind;
 
@@ -549,6 +551,89 @@ class Value {
   inline iterator users_end() {
     return Users.end();
   }
+};
+
+/// This represents a "scope" in the JS Module. Conceptually, every function
+/// (including global()) in a JS module lives in a scope, and each function body
+/// defines a new scope.
+class ScopeDesc : public Value {
+  friend class Module;
+  friend class Value;
+  using VariableListType = llvh::SmallVector<Variable *, 8>;
+
+  ScopeDesc(const ScopeDesc &) = delete;
+  ScopeDesc &operator=(const ScopeDesc &) = delete;
+
+  ~ScopeDesc();
+
+  explicit ScopeDesc(ScopeDesc *p)
+      : Value(ValueKind::ScopeDescKind), parent_(p) {}
+
+ public:
+  using ScopeListTy = llvh::SmallVector<ScopeDesc *, 8>;
+
+  /// \return a new inner scope in this scope. This is the only way for new
+  /// scopes to be created as all scopes in JS are nested within another scope,
+  /// with the exception of the scope where the global() function lives.
+  ScopeDesc *createInnerScope() {
+    auto *S = new ScopeDesc(this);
+    innerScopes_.emplace_back(S);
+    return S;
+  }
+
+  ScopeDesc *getParent() const {
+    return parent_;
+  }
+
+  const ScopeListTy &getInnerScopes() const {
+    return innerScopes_;
+  }
+
+  VariableListType &getMutableVariables() {
+    return variables_;
+  }
+
+  const VariableListType &getVariables() const {
+    return variables_;
+  }
+
+  void addVariable(Variable *V) {
+    variables_.emplace_back(V);
+  }
+
+  /// Return true if this is the global function scope.
+  bool isGlobalScope() const;
+
+  bool hasFunction() const {
+    return function_;
+  }
+
+  inline Function *getFunction() const;
+
+  inline void setFunction(Function *F);
+
+  void setSerializedScope(SerializedScopePtr serializedScope) {
+    assert(!serializedScope_ && "scope has already been serialized");
+    serializedScope_ = std::move(serializedScope);
+  }
+
+  SerializedScopePtr getSerializedScope() const {
+    return serializedScope_;
+  }
+
+  static bool classof(const Value *V) {
+    return V->getKind() == ValueKind::ScopeDescKind;
+  }
+
+ private:
+  ScopeDesc *parent_{};
+  ScopeListTy innerScopes_;
+
+  SerializedScopePtr serializedScope_;
+
+  Function *function_{};
+
+  VariableListType variables_;
 };
 
 /// This represents a function parameter.
@@ -913,17 +998,17 @@ class Variable : public Value {
   Identifier text;
 
   /// The scope that owns the variable.
-  VariableScope *parent;
+  ScopeDesc *parent;
 
  protected:
   explicit Variable(
       ValueKind k,
-      VariableScope *scope,
+      ScopeDesc *scope,
       DeclKind declKind,
       Identifier txt);
 
  public:
-  explicit Variable(VariableScope *scope, DeclKind declKind, Identifier txt)
+  explicit Variable(ScopeDesc *scope, DeclKind declKind, Identifier txt)
       : Variable(ValueKind::VariableKind, scope, declKind, txt){};
 
   ~Variable();
@@ -935,7 +1020,7 @@ class Variable : public Value {
   Identifier getName() const {
     return text;
   }
-  VariableScope *getParent() const {
+  ScopeDesc *getParent() const {
     return parent;
   }
 
@@ -1002,6 +1087,7 @@ class Instruction
   BasicBlock *Parent;
   /// Saves the instruction operands.
   llvh::SmallVector<Value::Use, 2> Operands;
+  Value *SourceLevelScope{};
 
   SMLoc location_{};
   /// The statement of which this Instruction is a part.
@@ -1045,6 +1131,13 @@ class Instruction
   }
   bool hasLocation() const {
     return location_.isValid();
+  }
+
+  void setSourceLevelScope(Value *sourceLevelScope) {
+    SourceLevelScope = sourceLevelScope;
+  }
+  Value *getSourceLevelScope() const {
+    return SourceLevelScope;
   }
 
   /// Update the statement that this Instruction belongs to.
@@ -1288,85 +1381,6 @@ struct ilist_alloc_traits<::hermes::BasicBlock> {
 
 namespace hermes {
 
-/// VariableScope is a lexical scope.
-class VariableScope : public Value {
-  using Value::Value;
-  using VariableListType = llvh::SmallVector<Variable *, 8>;
-
-  friend class Function;
-
-  /// The function where the scope is declared.
-  Function *function_;
-
-  /// The variables associated with this scope.
-  VariableListType variables_;
-
- protected:
-  /// VariableScope is abstract and should not be constructed directly. Use a
-  /// subclass such as Function.
-  VariableScope(ValueKind kind, Function *function)
-      : Value(kind), function_(function) {}
-
-  VariableScope(Function *function)
-      : VariableScope(ValueKind::VariableScopeKind, function) {}
-
- public:
-  /// \return the function where the scope is declared.
-  Function *getFunction() const {
-    return function_;
-  }
-
-  /// Return true if this is the global function scope.
-  bool isGlobalScope() const;
-
-  /// \returns a list of variables.
-  VariableListType &getVariables() {
-    return variables_;
-  }
-
-  /// Add a variable \p V to the variable list.
-  void addVariable(Variable *V) {
-    variables_.push_back(V);
-  }
-
-  ~VariableScope() {
-    // Free all variables.
-    for (auto *v : variables_) {
-      Value::destroy(v);
-    }
-  }
-
-  static bool classof(const Value *V) {
-    switch (V->getKind()) {
-      case ValueKind::VariableScopeKind:
-      case ValueKind::ExternalScopeKind:
-        return true;
-      default:
-        return false;
-    }
-  }
-};
-
-/// An ExternalScope is a container for variables injected from the environment,
-/// i.e. upvars from an enclosing scope. These variables are stored at a given
-/// depth in the scope chain.
-class ExternalScope : public VariableScope {
-  /// The scope depth represented by this external scope
-  const int32_t depth_ = 0;
-
- public:
-  ExternalScope(Function *function, int32_t depth);
-
-  /// \return the scope depth
-  int32_t getDepth() const {
-    return depth_;
-  }
-
-  static bool classof(const Value *V) {
-    return V->getKind() == ValueKind::ExternalScopeKind;
-  }
-};
-
 class Function : public llvh::ilist_node_with_parent<Function, Module>,
                  public Value {
   Function(const Function &) = delete;
@@ -1390,11 +1404,8 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
   /// Indicates whether this is the global scope.
   bool isGlobal_;
 
-  /// List of external scopes owned by this function. Deleted upon destruction.
-  llvh::SmallVector<VariableScope *, 4> externalScopes_;
-
-  /// The function scope - it is always the first scope in the scope list.
-  VariableScope functionScope_;
+  /// The function scope descriptor.
+  ScopeDesc *scopeDesc_;
 
   /// The basic blocks in this function.
   BasicBlockListType BasicBlockList{};
@@ -1464,6 +1475,7 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
   explicit Function(
       ValueKind kind,
       Module *parent,
+      ScopeDesc *scopeDesc,
       Identifier originalName,
       DefinitionKind definitionKind,
       bool strictMode,
@@ -1474,6 +1486,7 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
 
  public:
   /// \param parent Module this function will belong to.
+  /// \param scopeDesc The function's "body" scope.
   /// \param originalName User-specified function name, or an empty string.
   /// \param strictMode Whether this function uses strict mode.
   /// \param isGlobal Whether this is the global (top-level) function.
@@ -1482,6 +1495,7 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
   ///   should be inserted before. If null, appends to the end of the module.
   explicit Function(
       Module *parent,
+      ScopeDesc *scopeDesc,
       Identifier originalName,
       DefinitionKind definitionKind,
       bool strictMode,
@@ -1492,6 +1506,7 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
       : Function(
             ValueKind::FunctionKind,
             parent,
+            scopeDesc,
             originalName,
             definitionKind,
             strictMode,
@@ -1504,6 +1519,10 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
 
   Module *getParent() const {
     return parent_;
+  }
+
+  ScopeDesc *getFunctionScopeDesc() const {
+    return scopeDesc_;
   }
 
   /// \returns whether this is the top level function (i.e. global scope).
@@ -1551,16 +1570,6 @@ class Function : public llvh::ilist_node_with_parent<Function, Module>,
 
   /// \return the Context of the parent module.
   Context &getContext() const;
-
-  /// Add a new scope to the function.
-  /// This is delete'd in our destructor.
-  void addExternalScope(ExternalScope *scope) {
-    externalScopes_.push_back(scope);
-  }
-
-  VariableScope *getFunctionScope() {
-    return &functionScope_;
-  }
 
   void addBlock(BasicBlock *BB);
   void addParameter(Parameter *A);
@@ -1739,6 +1748,7 @@ class GeneratorFunction final : public Function {
  public:
   explicit GeneratorFunction(
       Module *parent,
+      ScopeDesc *scopeDesc,
       Identifier originalName,
       DefinitionKind definitionKind,
       bool strictMode,
@@ -1749,6 +1759,7 @@ class GeneratorFunction final : public Function {
       : Function(
             ValueKind::GeneratorFunctionKind,
             parent,
+            scopeDesc,
             originalName,
             definitionKind,
             strictMode,
@@ -1766,6 +1777,7 @@ class GeneratorInnerFunction final : public Function {
  public:
   explicit GeneratorInnerFunction(
       Module *parent,
+      ScopeDesc *scopeDesc,
       Identifier originalName,
       DefinitionKind definitionKind,
       bool strictMode,
@@ -1775,6 +1787,7 @@ class GeneratorInnerFunction final : public Function {
       : Function(
             ValueKind::GeneratorInnerFunctionKind,
             parent,
+            scopeDesc,
             originalName,
             definitionKind,
             strictMode,
@@ -1796,6 +1809,7 @@ class AsyncFunction final : public Function {
  public:
   explicit AsyncFunction(
       Module *parent,
+      ScopeDesc *scopeDesc,
       Identifier originalName,
       DefinitionKind definitionKind,
       bool strictMode,
@@ -1806,6 +1820,7 @@ class AsyncFunction final : public Function {
       : Function(
             ValueKind::AsyncFunctionKind,
             parent,
+            scopeDesc,
             originalName,
             definitionKind,
             strictMode,
@@ -1870,6 +1885,8 @@ class Module : public Value {
   /// Mapping global property names to instances in the list.
   llvh::DenseMap<Identifier, GlobalObjectProperty *> globalPropertyMap_{};
 
+  /// The initial scope in a JS program.
+  ScopeDesc initialScope_{nullptr};
   GlobalObject globalObject_{};
   LiteralEmpty literalEmpty{};
   LiteralUndefined literalUndefined{};
@@ -2028,6 +2045,14 @@ class Module : public Value {
     return &literalNull;
   }
 
+  ScopeDesc *getInitialScope() {
+    return &initialScope_;
+  }
+
+  const ScopeDesc *getInitialScope() const {
+    return &initialScope_;
+  }
+
   /// Return the GlobalObject value.
   GlobalObject *getGlobalObject() {
     return &globalObject_;
@@ -2159,6 +2184,16 @@ class Module : public Value {
   /// Caches the result in cjsModuleUseGraph_.
   void populateCJSModuleUseGraph();
 };
+
+Function *ScopeDesc::getFunction() const {
+  assert(function_ && "function not set. Is this the initial scope?");
+  return function_;
+}
+
+void ScopeDesc::setFunction(Function *F) {
+  assert(!function_ && "Scopes shouldn't change functions.");
+  function_ = F;
+}
 
 /// The hash of a Type is the hash of its opaque value.
 static inline llvh::hash_code hash_value(Type V) {

@@ -288,7 +288,7 @@ void HBCISel::addDebugLexicalInfo() {
     BCFGen_->setLexicalParentID(BCFGen_->getFunctionID(parent));
 
   std::vector<Identifier> names;
-  for (const Variable *var : F_->getFunctionScope()->getVariables())
+  for (const Variable *var : F_->getFunctionScopeDesc()->getVariables())
     names.push_back(var->getName());
   BCFGen_->setDebugVariableNames(std::move(names));
 }
@@ -296,6 +296,12 @@ void HBCISel::addDebugLexicalInfo() {
 void HBCISel::populatePropertyCachingInfo() {
   BCFGen_->setHighestReadCacheIndex(lastPropertyReadCacheIndex_);
   BCFGen_->setHighestWriteCacheIndex(lastPropertyWriteCacheIndex_);
+}
+
+void HBCISel::generateScopeCreationInst(
+    ScopeCreationInst *Inst,
+    BasicBlock *next) {
+  llvm_unreachable("This is not a concrete instruction");
 }
 
 void HBCISel::generateSingleOperandInst(
@@ -802,7 +808,9 @@ void HBCISel::generateCreateFunctionInst(
     BasicBlock *next) {
   llvm_unreachable("CreateFunctionInst should have been lowered.");
 }
-
+void HBCISel::generateCreateScopeInst(CreateScopeInst *Inst, BasicBlock *next) {
+  llvm_unreachable("CreateScopeInst should have been lowered.");
+}
 void HBCISel::generateHBCCreateFunctionInst(
     HBCCreateFunctionInst *Inst,
     BasicBlock *) {
@@ -1318,10 +1326,10 @@ void HBCISel::generateHBCResolveEnvironment(
   // We statically determine the relative depth delta of the current scope
   // and the scope that the variable belongs to. Such delta is used as
   // the operand to get_scope instruction.
-  VariableScope *instScope = Inst->getScope();
+  ScopeDesc *instScope = Inst->getCreatedScopeDesc();
   Optional<int32_t> instScopeDepth = scopeAnalysis_.getScopeDepth(instScope);
   Optional<int32_t> curScopeDepth =
-      scopeAnalysis_.getScopeDepth(F_->getFunctionScope());
+      scopeAnalysis_.getScopeDepth(F_->getFunctionScopeDesc());
   if (!instScopeDepth || !curScopeDepth) {
     // the function did not have any CreateFunctionInst, this function is dead.
     emitUnreachableIfDebug();
