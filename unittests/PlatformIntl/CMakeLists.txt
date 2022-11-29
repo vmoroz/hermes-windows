@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 if(${HERMES_ENABLE_INTL})
-  set(PlatformIntlSources getCanonicalLocales.cpp)
+  set(PlatformIntlSources getCanonicalLocales.cpp DateTimeFormat.cpp)
 
   add_hermes_unittest(PlatformIntlTests
     ${PlatformIntlSources}
