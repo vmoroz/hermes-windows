@@ -446,7 +446,7 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // populated later.
   runtime.arrayPrototype =
       runtime
-          .ignoreAllocationFailure(JSArray::create(
+          .ignoreAllocationFailure(JSArray::createNoAllocPropStorage(
               runtime,
               Handle<JSObject>::vmcast(&runtime.objectPrototype),
               JSArray::createClass(
@@ -459,6 +459,12 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   runtime.arrayClass =
       JSArray::createClass(
           runtime, Handle<JSObject>::vmcast(&runtime.arrayPrototype))
+          .getHermesValue();
+
+  // Declare the regexp match object class.
+  runtime.regExpMatchClass =
+      JSRegExp::createMatchClass(
+          runtime, Handle<HiddenClass>::vmcast(&runtime.arrayClass))
           .getHermesValue();
 
   // "Forward declaration" of ArrayBuffer.prototype. Its properties will be

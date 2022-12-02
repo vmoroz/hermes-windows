@@ -195,11 +195,6 @@ class SamplingProfiler {
     /// Whether signal handler is registered or not. Protected by profilerLock_.
     bool isSigHandlerRegistered_{false};
 
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-    /// Indicating whether or not we are in the middle of collecting stack for
-    /// loom.
-    bool collectingStack_{false};
-#endif
 #ifndef _MSC_VER
     /// Semaphore to indicate all signal handlers have finished the sampling.
     Semaphore samplingDoneSem_;
@@ -223,12 +218,6 @@ class SamplingProfiler {
     /// This condition variable can be used to wait for a change in the enabled
     /// member variable.
     std::condition_variable enabledCondVar_;
-
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-    /// This condition variable is used when we disable profiler for loom
-    /// collection, in the disableForLoomCollection() function.
-    std::condition_variable disableForLoomCondVar_;
-#endif
 
 #ifndef _MSC_VER
     /// invoke sigaction() posix API to register \p handler.
@@ -262,13 +251,6 @@ class SamplingProfiler {
     /// Implementation of SamplingProfiler::enable/disable.
     bool enable();
     bool disable();
-
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-    /// Modified version of enable/disable, designed to be called by
-    /// SamplingProfiler::collectStackForLoom.
-    bool enableForLoomCollection();
-    bool disableForLoomCollection();
-#endif
 
     /// \return true if the sampling profiler is enabled, false otherwise.
     bool enabled();
@@ -336,6 +318,11 @@ class SamplingProfiler {
 
   Runtime &runtime_;
 
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+  bool loomDataPushEnabled_{false};
+  std::chrono::time_point<std::chrono::system_clock> previousPushTs;
+#endif
+
  private:
   /// Hold \p domain so that the RuntimeModule(s) used by profiler are not
   /// released during symbolication.
@@ -372,19 +359,6 @@ class SamplingProfiler {
       int64_t *frames,
       uint16_t *depth,
       uint16_t max_depth);
-#endif
-
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-  /// Registered loom callback for collecting stack frames.
-  static FBLoomStackCollectionRetcode collectStackForLoom(
-      int64_t *frames,
-      uint16_t *depth,
-      uint16_t max_depth,
-      void *profiler);
-  /// Modified version of enable/disable, designed to be called by
-  /// SamplingProfiler::collectStackForLoom.
-  static bool enableForLoom();
-  static bool disableForLoom();
 #endif
 
   /// Clear previous stored samples.
@@ -444,6 +418,11 @@ class SamplingProfiler {
       const StackFrame &frame,
       int64_t *frames,
       uint32_t index);
+#endif
+
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+  bool shouldPushDataToLoom() const;
+  void pushLastSampledStackToLoom();
 #endif
 };
 

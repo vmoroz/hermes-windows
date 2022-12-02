@@ -10,6 +10,7 @@
 
 'use strict';
 
+import type {VisitorKeysType} from './getVisitorKeys';
 import type {ESNode} from 'hermes-estree';
 
 import {getVisitorKeys, isNode} from './getVisitorKeys';
@@ -20,6 +21,8 @@ export type TraverserOptions = $ReadOnly<{
   enter: TraverserCallback,
   /** The callback function which is called on leaving each node. */
   leave: TraverserCallback,
+  /** The set of visitor keys to use for traversal. Defaults to the `hermes-eslint` visitor keys */
+  visitorKeys?: ?VisitorKeysType,
 }>;
 
 /**
@@ -74,10 +77,11 @@ export class SimpleTraverser {
       if (ex === SimpleTraverserSkip) {
         return;
       }
+      this._setErrorContext(ex, node);
       throw ex;
     }
 
-    const keys = getVisitorKeys(node);
+    const keys = getVisitorKeys(node, options.visitorKeys);
     for (const key of keys) {
       // $FlowExpectedError[prop-missing]
       const child = node[key];
@@ -97,8 +101,24 @@ export class SimpleTraverser {
       if (ex === SimpleTraverserSkip) {
         return;
       }
+      this._setErrorContext(ex, node);
       throw ex;
     }
+  }
+
+  /**
+   * Set useful contextual information onto the error object.
+   * @param ex The error object.
+   * @param node The current node.
+   * @private
+   */
+  _setErrorContext(ex: Error, node: ESNode): void {
+    // $FlowFixMe[prop-missing]
+    ex.currentNode = {
+      type: node.type,
+      range: node.range,
+      loc: node.loc,
+    };
   }
 
   /**
