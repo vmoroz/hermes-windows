@@ -16,18 +16,18 @@ function foo() {
 
 // Auto-generated content below. Please do not modify manually.
 
-// CHKRA:function global() : undefined
+// CHKRA:function global#0()#1 : undefined
 // CHKRA-NEXT:frame = [], globals = [x, foo]
 // CHKRA-NEXT:%BB0:
-// CHKRA-NEXT:  $Reg0 @0 [1...2) 	%0 = HBCCreateEnvironmentInst
-// CHKRA-NEXT:  $Reg1 @1 [2...4) 	%1 = HBCCreateFunctionInst %foo(), %0
+// CHKRA-NEXT:  $Reg0 @0 [1...2) 	%0 = HBCCreateEnvironmentInst %S{global#0()#1}
+// CHKRA-NEXT:  $Reg1 @1 [2...4) 	%1 = HBCCreateFunctionInst %foo#0#1()#2, %0
 // CHKRA-NEXT:  $Reg0 @2 [3...4) 	%2 = HBCGetGlobalObjectInst
 // CHKRA-NEXT:  $Reg0 @3 [empty]	%3 = StorePropertyInst %1 : closure, %2 : object, "foo" : string
 // CHKRA-NEXT:  $Reg0 @4 [5...6) 	%4 = HBCLoadConstInst undefined : undefined
 // CHKRA-NEXT:  $Reg0 @5 [empty]	%5 = ReturnInst %4 : undefined
 // CHKRA-NEXT:function_end
 
-// CHKRA:function foo()
+// CHKRA:function foo#0#1()#2
 // CHKRA-NEXT:frame = []
 // CHKRA-NEXT:%BB0:
 // CHKRA-NEXT:  $Reg0 @0 [1...2) 	%0 = HBCGetGlobalObjectInst
@@ -36,7 +36,7 @@ function foo() {
 // CHKRA-NEXT:function_end
 
 // CHKBC:Bytecode File Information:
-// CHKBC-NEXT:  Bytecode version number: 89
+// CHKBC-NEXT:  Bytecode version number: 90
 // CHKBC-NEXT:  Source hash: 0000000000000000000000000000000000000000
 // CHKBC-NEXT:  Function count: 2
 // CHKBC-NEXT:  String count: 3

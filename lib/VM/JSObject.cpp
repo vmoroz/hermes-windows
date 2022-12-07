@@ -114,6 +114,15 @@ PseudoHandle<JSObject> JSObject::create(
   return obj;
 }
 
+PseudoHandle<JSObject> JSObject::create(
+    Runtime &runtime,
+    Handle<JSObject> parentHandle,
+    Handle<HiddenClass> clazz) {
+  PseudoHandle<JSObject> obj = JSObject::create(runtime, clazz);
+  obj->parent_.set(runtime, parentHandle.get(), runtime.getHeap());
+  return obj;
+}
+
 void JSObject::initializeLazyObject(
     Runtime &runtime,
     Handle<JSObject> lazyObject) {

@@ -143,18 +143,26 @@ bool Value::hasUser(Value *other) {
   return std::find(Users.begin(), Users.end(), other) != Users.end();
 }
 
-bool VariableScope::isGlobalScope() const {
-  return function_->isGlobalScope() && function_->getFunctionScope() == this;
+ScopeDesc::~ScopeDesc() {
+  for (ScopeDesc *inner : innerScopes_) {
+    Value::destroy(inner);
+  }
+
+  // Free all variables.
+  for (auto *v : variables_) {
+    Value::destroy(v);
+  }
 }
 
-ExternalScope::ExternalScope(Function *function, int32_t depth)
-    : VariableScope(ValueKind::ExternalScopeKind, function), depth_(depth) {
-  function->addExternalScope(this);
+bool ScopeDesc::isGlobalScope() const {
+  return function_->isGlobalScope() &&
+      function_->getFunctionScopeDesc() == this;
 }
 
 Function::Function(
     ValueKind kind,
     Module *parent,
+    ScopeDesc *scopeDesc,
     Identifier originalName,
     DefinitionKind definitionKind,
     bool strictMode,
@@ -165,14 +173,14 @@ Function::Function(
     : Value(kind),
       parent_(parent),
       isGlobal_(isGlobal),
-      externalScopes_(),
-      functionScope_(this),
+      scopeDesc_(scopeDesc),
       originalOrInferredName_(originalName),
       definitionKind_(definitionKind),
       strictMode_(strictMode),
       SourceRange(sourceRange),
       sourceVisibility_(sourceVisibility),
       internalName_(parent->deriveUniqueInternalName(originalName)) {
+  scopeDesc_->setFunction(this);
   if (insertBefore) {
     assert(insertBefore != this && "Cannot insert a function before itself!");
     assert(
@@ -193,10 +201,6 @@ Function::~Function() {
     Value::destroy(p);
   }
   Value::destroy(thisParameter);
-
-  // Free all external scopes.
-  for (auto *ES : externalScopes_)
-    Value::destroy(ES);
 }
 
 std::string Function::getDefinitionKindStr(bool isDescriptive) const {
@@ -453,7 +457,7 @@ Parameter::Parameter(Function *parent, Identifier name)
 
 Variable::Variable(
     ValueKind k,
-    VariableScope *scope,
+    ScopeDesc *scope,
     DeclKind declKind,
     Identifier txt)
     : Value(k), declKind(declKind), text(txt), parent(scope) {

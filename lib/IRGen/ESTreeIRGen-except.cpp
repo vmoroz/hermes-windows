@@ -112,7 +112,7 @@ CatchInst *ESTreeIRGen::prepareCatch(ESTree::NodePtr catchParam) {
       genAnonymousLabelName(catchVariableName.str());
 
   auto errorVar = Builder.createVariable(
-      curFunction()->function->getFunctionScope(),
+      curFunction()->function->getFunctionScopeDesc(),
       Variable::DeclKind::Var,
       uniquedCatchVariableName);
 
@@ -124,7 +124,7 @@ CatchInst *ESTreeIRGen::prepareCatch(ESTree::NodePtr catchParam) {
   // Alias the lexical name to the synthesized variable.
   nameTable_.insert(catchVariableName, errorVar);
 
-  emitStore(Builder, catchInst, errorVar, true);
+  emitStore(catchInst, errorVar, true);
   return catchInst;
 }
 

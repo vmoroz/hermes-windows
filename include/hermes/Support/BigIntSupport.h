@@ -76,21 +76,31 @@ inline constexpr uint32_t BigIntDigitSizeInBits = BigIntDigitSizeInBytes * 8;
 inline constexpr uint32_t BigIntMaxSizeInDigits =
     0x400; // 1k digits == 8k bytes
 
+/// Arbitrary upper limit on number of bytes a bigint may have.
+inline constexpr uint32_t BigIntMaxSizeInBytes =
+    BigIntDigitSizeInBytes * BigIntMaxSizeInDigits;
+
 /// Helper function that should be called before allocating a Digits array on
 /// the stack.
 inline constexpr bool tooManyDigits(uint32_t numDigits) {
   return BigIntMaxSizeInDigits < numDigits;
 }
 
+/// Helper function that returns if the given number of bytes exceeds the
+/// maximum BigInt size in bytes.
+inline constexpr bool tooManyBytes(uint32_t numBytes) {
+  return BigIntMaxSizeInBytes < numBytes;
+}
+
 /// \return number of BigInt digits to represent \p v bits.
-inline size_t numDigitsForSizeInBits(uint32_t v) {
-  return static_cast<size_t>(llvh::alignTo(v, BigIntDigitSizeInBits)) /
+inline uint32_t numDigitsForSizeInBits(uint32_t v) {
+  return static_cast<uint32_t>(llvh::alignTo(v, BigIntDigitSizeInBits)) /
       BigIntDigitSizeInBits;
 }
 
 /// \return number of BigInt digits to represent \p v bytes.
-inline size_t numDigitsForSizeInBytes(uint32_t v) {
-  return static_cast<size_t>(llvh::alignTo(v, BigIntDigitSizeInBytes)) /
+inline uint32_t numDigitsForSizeInBytes(uint32_t v) {
+  return static_cast<uint32_t>(llvh::alignTo(v, BigIntDigitSizeInBytes)) /
       BigIntDigitSizeInBytes;
 }
 
@@ -264,8 +274,12 @@ std::string toString(ImmutableBigIntRef src, uint8_t radix);
 OperationStatus
 toString(std::string &out, llvh::ArrayRef<uint8_t> bytes, uint8_t radix);
 
-/// \return number of digits needed to perform asUintN(\p n, \p src).
-uint32_t asUintNResultSize(uint64_t n, ImmutableBigIntRef src);
+/// Computes number of digits needed to perform asUintN(\p n, \p src), storing
+/// the result in \p resultSize.
+/// \returns OperationStatus::TOO_MANY_DIGITS if the result would be too large
+/// to represent; and OperationStatus::RETURNED otherwise.
+OperationStatus
+asUintNResultSize(uint64_t n, ImmutableBigIntRef src, uint32_t &resultSize);
 
 /// \return \p src % (2n ** \p n), zero extended.
 OperationStatus
