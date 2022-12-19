@@ -5,8 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#if !defined(__EMSCRIPTEN__)
-#include "hermes/VM/Profiler/ChromeTraceSerializerPosix.h"
+#include "ChromeTraceSerializer.h"
+
+#if HERMESVM_SAMPLING_PROFILER_AVAILABLE
 
 #include "hermes/VM/JSNativeFunctions.h"
 
@@ -559,4 +560,4 @@ void serializeAsProfilerProfile(
 } // namespace vm
 } // namespace hermes
 
-#endif // not _WINDOWS
+#endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
