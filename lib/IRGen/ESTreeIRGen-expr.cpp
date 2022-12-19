@@ -6,6 +6,8 @@
  */
 
 #include "ESTreeIRGen.h"
+#include "hermes/Support/RegExpSerialization.h"
+#include "hermes/Support/UTF8.h"
 
 #include "llvh/ADT/ScopeExit.h"
 
@@ -40,13 +42,7 @@ Value *ESTreeIRGen::genExpression(ESTree::Node *expr, Identifier nameHint) {
   // Handle Regexp Literals.
   // http://www.ecma-international.org/ecma-262/6.0/#sec-literals-regular-expression-literals
   if (auto *Lit = llvh::dyn_cast<ESTree::RegExpLiteralNode>(expr)) {
-    LLVM_DEBUG(
-        llvh::dbgs() << "Loading regexp Literal \"" << Lit->_pattern->str()
-                     << " / " << Lit->_flags->str() << "\"\n");
-
-    return Builder.createRegExpInst(
-        Identifier::getFromPointer(Lit->_pattern),
-        Identifier::getFromPointer(Lit->_flags));
+    return genRegExpLiteral(Lit);
   }
 
   // Handle Boolean Literals.
@@ -138,7 +134,8 @@ Value *ESTreeIRGen::genExpression(ESTree::Node *expr, Identifier nameHint) {
       assert(
           curFunction()->capturedThis &&
           "arrow function must have a captured this");
-      return Builder.createLoadFrameInst(curFunction()->capturedThis);
+      return Builder.createLoadFrameInst(
+          curFunction()->capturedThis, currentIRScope_);
     }
     return curFunction()->function->getThisParameter();
   }
@@ -1563,6 +1560,45 @@ Value *ESTreeIRGen::genAssignmentExpr(ESTree::AssignmentExpressionNode *AE) {
   return result;
 }
 
+Value *ESTreeIRGen::genRegExpLiteral(ESTree::RegExpLiteralNode *RE) {
+  LLVM_DEBUG(llvh::dbgs() << "IRGen reg exp literal.\n");
+  LLVM_DEBUG(
+      llvh::dbgs() << "Loading regexp Literal \"" << RE->_pattern->str()
+                   << " / " << RE->_flags->str() << "\"\n");
+  auto exp = Builder.createRegExpInst(
+      Identifier::getFromPointer(RE->_pattern),
+      Identifier::getFromPointer(RE->_flags));
+
+  auto &regexp = Builder.getModule()->getContext().getCompiledRegExp(
+      RE->_pattern, RE->_flags);
+
+  if (regexp.getMapping().size()) {
+    auto &mapping = regexp.getMapping();
+    HBCAllocObjectFromBufferInst::ObjectPropertyMap propMap;
+    for (auto &identifier : regexp.getOrderedGroupNames()) {
+      std::string converted;
+      convertUTF16ToUTF8WithSingleSurrogates(converted, identifier);
+      auto *key = Builder.getLiteralString(converted);
+      auto groupIdxRes = mapping.find(identifier);
+      assert(
+          groupIdxRes != mapping.end() &&
+          "identifier not found in named groups");
+      auto groupIdx = groupIdxRes->second;
+      auto *val = Builder.getLiteralNumber(groupIdx);
+      propMap.emplace_back(key, val);
+    }
+    auto sz = mapping.size();
+
+    auto literalObj = Builder.createHBCAllocObjectFromBufferInst(propMap, sz);
+
+    Value *params[] = {exp, literalObj};
+    Builder.createCallBuiltinInst(
+        BuiltinMethod::HermesBuiltin_initRegexNamedGroups, params);
+  }
+
+  return exp;
+}
+
 Value *ESTreeIRGen::genLogicalAssignmentExpr(
     ESTree::AssignmentExpressionNode *AE,
     BinaryOperatorInst::OpKind AssignmentKind,
@@ -1661,7 +1697,8 @@ Value *ESTreeIRGen::genIdentifierExpression(
       !nameTable_.count(getNameFieldFromID(Iden))) {
     // If it is captured, we must use the captured value.
     if (curFunction()->capturedArguments) {
-      return Builder.createLoadFrameInst(curFunction()->capturedArguments);
+      return Builder.createLoadFrameInst(
+          curFunction()->capturedArguments, currentIRScope_);
     }
 
     return curFunction()->createArgumentsInst;
@@ -1689,7 +1726,7 @@ Value *ESTreeIRGen::genIdentifierExpression(
                    << "\"\n");
 
   // Typeof <variable> does not throw.
-  return emitLoad(Builder, Var, afterTypeOf);
+  return emitLoad(Var, afterTypeOf);
 }
 
 Value *ESTreeIRGen::genMetaProperty(ESTree::MetaPropertyNode *MP) {
@@ -1709,7 +1746,7 @@ Value *ESTreeIRGen::genMetaProperty(ESTree::MetaPropertyNode *MP) {
 
       // If it is a variable, we must issue a load.
       if (auto *V = llvh::dyn_cast<Variable>(value))
-        return Builder.createLoadFrameInst(V);
+        return Builder.createLoadFrameInst(V, currentIRScope_);
 
       return value;
     }

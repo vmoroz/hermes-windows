@@ -252,13 +252,6 @@ class SamplingProfiler {
     bool enable();
     bool disable();
 
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-    /// Modified version of enable/disable, designed to be called by
-    /// SamplingProfiler::collectStackForLoom.
-    bool enableForLoomCollection();
-    bool disableForLoomCollection();
-#endif
-
     /// \return true if the sampling profiler is enabled, false otherwise.
     bool enabled();
 
@@ -325,6 +318,11 @@ class SamplingProfiler {
 
   Runtime &runtime_;
 
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+  bool loomDataPushEnabled_{false};
+  std::chrono::time_point<std::chrono::system_clock> previousPushTs;
+#endif
+
  private:
   /// Hold \p domain so that the RuntimeModule(s) used by profiler are not
   /// released during symbolication.
@@ -361,19 +359,6 @@ class SamplingProfiler {
       int64_t *frames,
       uint16_t *depth,
       uint16_t max_depth);
-#endif
-
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-  /// Registered loom callback for collecting stack frames.
-  static FBLoomStackCollectionRetcode collectStackForLoom(
-      int64_t *frames,
-      uint16_t *depth,
-      uint16_t max_depth,
-      void *profiler);
-  /// Modified version of enable/disable, designed to be called by
-  /// SamplingProfiler::collectStackForLoom.
-  static bool enableForLoom();
-  static bool disableForLoom();
 #endif
 
   /// Clear previous stored samples.
@@ -433,6 +418,11 @@ class SamplingProfiler {
       const StackFrame &frame,
       int64_t *frames,
       uint32_t index);
+#endif
+
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+  bool shouldPushDataToLoom() const;
+  void pushLastSampledStackToLoom();
 #endif
 };
 

@@ -207,6 +207,11 @@ bool SamplingProfiler::GlobalProfiler::sampleStacks() {
     if (!sampleStack(localProfiler)) {
       return false;
     }
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+    if (localProfiler->shouldPushDataToLoom()) {
+      localProfiler->pushLastSampledStackToLoom();
+    }
+#endif
   }
   return true;
 }
@@ -456,6 +461,11 @@ void SamplingProfiler::collectStackForLoomCommon(
       break;
     }
 
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+    case StackFrame::FrameKind::SuspendFrame:
+      break;
+#endif
+
     default:
       llvm_unreachable("Loom: unknown frame kind");
   }
@@ -516,58 +526,6 @@ void SamplingProfiler::collectStackForLoomCommon(
 }
 #endif
 
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-/*static*/ FBLoomStackCollectionRetcode SamplingProfiler::collectStackForLoom(
-    int64_t *frames,
-    uint16_t *depth,
-    uint16_t max_depth,
-    void *profiler) {
-  auto profilerInstance = GlobalProfiler::get();
-  auto *localProfiler = reinterpret_cast<SamplingProfiler *>(profiler);
-  std::lock_guard<std::mutex> lk(localProfiler->runtimeDataLock_);
-
-  *depth = 0;
-  // Sampling stack will touch GC objects(like closure) so
-  // only do so if heap is valid.
-  if (LLVM_LIKELY(localProfiler->suspendCount_ == 0)) {
-    // Do not register domains for Loom profiling, since we don't use them for
-    // symbolication.
-    if (!profilerInstance->sampleStack(localProfiler)) {
-      return FBLoomStackCollectionRetcode::NO_STACK_FOR_THREAD;
-    }
-  } else {
-    return FBLoomStackCollectionRetcode::EMPTY_STACK;
-  }
-
-  uint32_t index = 0;
-  for (unsigned i = 0; i < localProfiler->sampledStacks_.size(); ++i) {
-    auto &sample = localProfiler->sampledStacks_[i];
-    for (auto iter = sample.stack.rbegin(); iter != sample.stack.rend();
-         ++iter) {
-      const StackFrame &frame = *iter;
-      localProfiler->collectStackForLoomCommon(frame, frames, index);
-      (*depth)++;
-      index++;
-    }
-  }
-  localProfiler->clear();
-  if (*depth == 0) {
-    return FBLoomStackCollectionRetcode::EMPTY_STACK;
-  }
-  return FBLoomStackCollectionRetcode::SUCCESS;
-}
-
-/*static*/ bool SamplingProfiler::enableForLoom() {
-  auto profilerInstance = GlobalProfiler::get();
-  return profilerInstance->enableForLoomCollection();
-}
-
-/*static*/ bool SamplingProfiler::disableForLoom() {
-  auto profilerInstance = GlobalProfiler::get();
-  return profilerInstance->disableForLoomCollection();
-}
-#endif
-
 SamplingProfiler::SamplingProfiler(Runtime &runtime)
     :
 #ifndef _MSC_VER
@@ -586,12 +544,13 @@ SamplingProfiler::SamplingProfiler(Runtime &runtime)
   threadNames_[oscompat::thread_id()] = oscompat::thread_name();
   GlobalProfiler::get()->registerRuntime(this);
 #if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-  fbloom_profilo_api()->fbloom_register_external_tracer_callback(
-      1, this, collectStackForLoom);
+  // TODO(xidachen): do a refactor to use the enum in ExternalTracer.h
+  const int32_t tracerTypeJavascript = 1;
   fbloom_profilo_api()->fbloom_register_enable_for_loom_callback(
-      1, enableForLoom);
+      tracerTypeJavascript, enable);
   fbloom_profilo_api()->fbloom_register_disable_for_loom_callback(
-      1, disableForLoom);
+      tracerTypeJavascript, disable);
+  loomDataPushEnabled_ = true;
 #endif
 }
 
@@ -708,23 +667,6 @@ bool SamplingProfiler::GlobalProfiler::enable() {
   return true;
 }
 
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-bool SamplingProfiler::GlobalProfiler::enableForLoomCollection() {
-  std::lock_guard<std::mutex> lockGuard(profilerLock_);
-  if (enabled_) {
-    return true;
-  }
-  if (!samplingDoneSem_.open(kSamplingDoneSemaphoreName)) {
-    return false;
-  }
-  if (!registerSignalHandlers()) {
-    return false;
-  }
-  enabled_ = true;
-  return true;
-}
-#endif
-
 bool SamplingProfiler::disable() {
   return GlobalProfiler::get()->disable();
 }
@@ -757,28 +699,6 @@ bool SamplingProfiler::GlobalProfiler::disable() {
   return true;
 }
 
-#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
-bool SamplingProfiler::GlobalProfiler::disableForLoomCollection() {
-  {
-    std::lock_guard<std::mutex> lockGuard(profilerLock_);
-    if (!enabled_) {
-      // Already disabled.
-      return true;
-    }
-    if (!samplingDoneSem_.close()) {
-      return false;
-    }
-    // Unregister handlers before shutdown.
-    if (!unregisterSignalHandler()) {
-      return false;
-    }
-    // Telling timer thread to exit.
-    enabled_ = false;
-  }
-  return true;
-}
-#endif
-
 void SamplingProfiler::clear() {
   sampledStacks_.clear();
   // Release all strong roots.
@@ -787,6 +707,39 @@ void SamplingProfiler::clear() {
   // TODO: keep thread names that are still in use.
   threadNames_.clear();
 }
+
+#if defined(__APPLE__) && defined(HERMES_FACEBOOK_BUILD)
+bool SamplingProfiler::shouldPushDataToLoom() const {
+  auto now = std::chrono::system_clock::now();
+  constexpr auto kLoomDelay = std::chrono::milliseconds(50);
+  // The default sample stack interval in timerLoop() is between 5-15ms which
+  // is too often for loom.
+  return loomDataPushEnabled_ && (now - previousPushTs > kLoomDelay);
+}
+
+void SamplingProfiler::pushLastSampledStackToLoom() {
+  constexpr uint16_t maxDepth = 512;
+  int64_t frames[maxDepth];
+  uint16_t depth = 0;
+  // Each element in sampledStacks_ is one call stack, access the last one
+  // to get the latest stack trace.
+  auto sample = sampledStacks_.back();
+  for (auto iter = sample.stack.rbegin(); iter != sample.stack.rend(); ++iter) {
+    const StackFrame &frame = *iter;
+    collectStackForLoomCommon(frame, frames, depth);
+    depth++;
+    if (depth > maxDepth) {
+      return;
+    }
+  }
+  // TODO(xidachen): do a refactor to use the enum in ExternalTracer.h
+  const int32_t tracerTypeJavascript = 1;
+  fbloom_profilo_api()->fbloom_write_stack_to_loom(
+      tracerTypeJavascript, frames, depth);
+  previousPushTs = std::chrono::system_clock::now();
+  clear();
+}
+#endif
 
 void SamplingProfiler::suspend(std::string_view extraInfo) {
   std::lock_guard<std::mutex> lk(runtimeDataLock_);

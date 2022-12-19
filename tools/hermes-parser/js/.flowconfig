@@ -4,13 +4,14 @@
 [ignore]
 <PROJECT_ROOT>/.*/dist
 <PROJECT_ROOT>/.*/node_modules
+<PROJECT_ROOT>/hermes-translate/__tests__/flowDefToTSDef/fixtures
 
 [options]
+name=hermes-parser
 emoji=true
 file_watcher=watchman
 lazy_mode=true
 exact_by_default=true
-exact_empty_objects=true
 module.system=node
 munge_underscores=true
 ; Yarn workspaces hoist packages to the top level node_modules, causing module resolution errors if
@@ -22,10 +23,9 @@ module.name_mapper='^hermes-transform$' -> '<PROJECT_ROOT>/hermes-transform/src/
 
 enums=true
 inference_mode=constrain_writes
-experimental.enforce_local_inference_annotations=true
 
 [version]
-^0.184.0
+^0.194.0
 
 [lints]
 untyped-type-import=error

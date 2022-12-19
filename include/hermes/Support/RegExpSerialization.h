@@ -8,6 +8,7 @@
 #ifndef HERMES_SUPPORT_REGEXPSERIALIZATION_H
 #define HERMES_SUPPORT_REGEXPSERIALIZATION_H
 
+#include "hermes/Support/RegExpSupport.h"
 #include "llvh/ADT/DenseMap.h"
 #include "llvh/ADT/Optional.h"
 #include "llvh/ADT/StringRef.h"
@@ -65,6 +66,14 @@ class CompiledRegExp {
     return flags_;
   }
 
+  regex::ParsedGroupNamesMapping &getMapping() {
+    return mapping_;
+  }
+
+  std::deque<llvh::SmallVector<char16_t, 5>> &getOrderedGroupNames() {
+    return orderedGroupNames_;
+  }
+
   /// \return regexp-specific bytecode for the receiver.
   llvh::ArrayRef<uint8_t> getBytecode() const;
 
@@ -72,19 +81,22 @@ class CompiledRegExp {
   std::vector<uint8_t> bytecode_;
   std::string pattern_;
   std::string flags_;
+  std::deque<llvh::SmallVector<char16_t, 5>> orderedGroupNames_;
+  regex::ParsedGroupNamesMapping mapping_;
   CompiledRegExp(
       std::vector<uint8_t> bytecode,
       std::string pattern,
-      std::string flags);
+      std::string flags,
+      std::deque<llvh::SmallVector<char16_t, 5>> &&orderedGroupNames,
+      regex::ParsedGroupNamesMapping &&mapping_);
   CompiledRegExp(const CompiledRegExp &) = delete;
   void operator=(const CompiledRegExp &) = delete;
 };
 
 /// A class responsible for assigning IDs to regexps.
 class UniquingRegExpTable {
-  /// List of compiled regexps. Use deque because it does not move elements when
-  /// appending, which might invalidate the StringRefs.
-  std::deque<CompiledRegExp> regexps_;
+  /// List of pointers to compiled regexps.
+  std::vector<CompiledRegExp *> regexps_;
 
   /// RegExps are uniqued according to their pattern and flags. Note that a
   /// regexp pattern is logically UCS-2 (or UTF-16 with the 'u' flag). We match
@@ -105,14 +117,14 @@ class UniquingRegExpTable {
 
   /// Adds a regexp to the table if not already present.
   /// \return the ID of the regexp.
-  uint32_t addRegExp(CompiledRegExp regexp) {
-    auto iter = keysToIndex_.find(keyFor(regexp));
+  uint32_t addRegExp(CompiledRegExp *regexp) {
+    auto iter = keysToIndex_.find(keyFor(*regexp));
     if (iter != keysToIndex_.end())
       return iter->second;
 
     uint32_t index = regexps_.size();
-    regexps_.push_back(std::move(regexp));
-    keysToIndex_[keyFor(regexps_.back())] = index;
+    regexps_.push_back(regexp);
+    keysToIndex_[keyFor(*regexps_.back())] = index;
     return index;
   }
 

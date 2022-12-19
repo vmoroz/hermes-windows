@@ -511,7 +511,7 @@ static Handle<HiddenClass> getHiddenClassForBuffer(
 
   MutableHandle<> tmpHandleKey{runtime};
   MutableHandle<HiddenClass> clazz =
-      runtime.makeMutableHandle(runtime.getHiddenClassForPrototypeRaw(
+      runtime.makeMutableHandle(*runtime.getHiddenClassForPrototype(
           vmcast<JSObject>(runtime.objectPrototype),
           JSObject::numOverlapSlots<JSObject>()));
 
@@ -785,7 +785,10 @@ static inline const Inst *nextInstCall(const Inst *ip) {
 
 CallResult<HermesValue> Runtime::interpretFunctionImpl(
     CodeBlock *newCodeBlock) {
-  newCodeBlock->lazyCompile(*this);
+  if (LLVM_UNLIKELY(
+          newCodeBlock->lazyCompile(*this) == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
 
 #if defined(HERMES_MEMORY_INSTRUMENTATION) || !defined(NDEBUG)
   // We always call getCurrentIP() in a debug build as this has the effect
@@ -1584,7 +1587,10 @@ tailCall:
 #endif
 
         CodeBlock *calleeBlock = func->getCodeBlock(runtime);
-        CAPTURE_IP(calleeBlock->lazyCompile(runtime));
+        CAPTURE_IP_ASSIGN(auto res, calleeBlock->lazyCompile(runtime));
+        if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+          goto exception;
+        }
         curCodeBlock = calleeBlock;
         CAPTURE_IP_SET();
         goto tailCall;
@@ -1637,7 +1643,10 @@ tailCall:
 
         assert(!SingleStep && "can't single-step a call");
 
-        CAPTURE_IP(calleeBlock->lazyCompile(runtime));
+        CAPTURE_IP_ASSIGN(auto res, calleeBlock->lazyCompile(runtime));
+        if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+          goto exception;
+        }
         curCodeBlock = calleeBlock;
         CAPTURE_IP_SET();
         goto tailCall;
@@ -2769,25 +2778,11 @@ tailCall:
           ip = NEXTINST(BitNot);
           DISPATCH;
         }
-        CAPTURE_IP(res = toNumeric_RJS(runtime, Handle<>(&O2REG(BitNot))));
+        CAPTURE_IP(res = doBitNotSlowPath(runtime, Handle<>(&O2REG(BitNot))));
         if (res == ExecutionStatus::EXCEPTION) {
           goto exception;
         }
-        if (res->isBigInt()) {
-          CAPTURE_IP_ASSIGN(auto bigint, runtime.makeHandle(res->getBigInt()));
-          CAPTURE_IP(res = BigIntPrimitive::unaryNOT(runtime, bigint));
-          if (res == ExecutionStatus::EXCEPTION) {
-            goto exception;
-          }
-          O1REG(Negate) = HermesValue::encodeBigIntValue(res->getBigInt());
-        } else {
-          CAPTURE_IP(res = toInt32_RJS(runtime, Handle<>(&O2REG(BitNot))));
-          if (res == ExecutionStatus::EXCEPTION) {
-            goto exception;
-          }
-          O1REG(BitNot) = HermesValue::encodeDoubleValue(
-              ~static_cast<int32_t>(res->getNumber()));
-        }
+        O1REG(BitNot) = *res;
         gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(BitNot);
         DISPATCH;
@@ -3059,24 +3054,14 @@ tailCall:
         if (LLVM_LIKELY(O2REG(Negate).isNumber())) {
           O1REG(Negate) =
               HermesValue::encodeDoubleValue(-O2REG(Negate).getNumber());
-        } else {
-          CAPTURE_IP(res = toNumeric_RJS(runtime, Handle<>(&O2REG(Negate))));
-          if (res == ExecutionStatus::EXCEPTION)
-            goto exception;
-          if (res->isNumber()) {
-            O1REG(Negate) = HermesValue::encodeDoubleValue(-res->getNumber());
-          } else {
-            assert(res->isBigInt() && "should be bigint");
-            CAPTURE_IP_ASSIGN(
-                auto bigint, runtime.makeHandle(res->getBigInt()));
-            CAPTURE_IP(res = BigIntPrimitive::unaryMinus(runtime, bigint));
-            if (res == ExecutionStatus::EXCEPTION) {
-              goto exception;
-            }
-            O1REG(Negate) = HermesValue::encodeBigIntValue(res->getBigInt());
-          }
-          gcScope.flushToSmallCount(KEEP_HANDLES);
+          ip = NEXTINST(Negate);
+          DISPATCH;
         }
+        CAPTURE_IP(res = doNegateSlowPath(runtime, Handle<>(&O2REG(Negate))));
+        if (res == ExecutionStatus::EXCEPTION)
+          goto exception;
+        O1REG(Negate) = *res;
+        gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(Negate);
         DISPATCH;
       }
@@ -3333,22 +3318,6 @@ tailCall:
       LOAD_CONST(
           LoadConstDouble,
           HermesValue::encodeDoubleValue(ip->iLoadConstDouble.op2));
-      // LoadConstBigInt will always allocate a new (heap) object (unlike, e.g.,
-      // LoadConstString). This could become an issue for code that uses lots of
-      // BigInt literals in loops, in which case the VM may need to cache the
-      // objects.
-      LOAD_CONST_CAPTURE_IP(
-          LoadConstBigInt,
-          runtime.ignoreAllocationFailure(BigIntPrimitive::fromBytes(
-              runtime,
-              curCodeBlock->getRuntimeModule()->getBigIntBytesFromBigIntId(
-                  ip->iLoadConstBigInt.op2))));
-      LOAD_CONST_CAPTURE_IP(
-          LoadConstBigIntLongIndex,
-          runtime.ignoreAllocationFailure(BigIntPrimitive::fromBytes(
-              runtime,
-              curCodeBlock->getRuntimeModule()->getBigIntBytesFromBigIntId(
-                  ip->iLoadConstBigIntLongIndex.op2))));
       LOAD_CONST_CAPTURE_IP(
           LoadConstString,
           HermesValue::encodeStringValue(
@@ -3367,6 +3336,34 @@ tailCall:
       LOAD_CONST(LoadConstTrue, HermesValue::encodeBoolValue(true));
       LOAD_CONST(LoadConstFalse, HermesValue::encodeBoolValue(false));
       LOAD_CONST(LoadConstZero, HermesValue::encodeDoubleValue(0));
+      CASE(LoadConstBigInt) {
+        idVal = ip->iLoadConstBigInt.op2;
+        nextIP = NEXTINST(LoadConstBigInt);
+        goto doLoadConstBigInt;
+      }
+      CASE(LoadConstBigIntLongIndex) {
+        idVal = ip->iLoadConstBigIntLongIndex.op2;
+        nextIP = NEXTINST(LoadConstBigIntLongIndex);
+        goto doLoadConstBigInt;
+      }
+    doLoadConstBigInt : {
+      CAPTURE_IP_ASSIGN(
+          auto res,
+          BigIntPrimitive::fromBytes(
+              runtime,
+              curCodeBlock->getRuntimeModule()->getBigIntBytesFromBigIntId(
+                  idVal)));
+      if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+        goto exception;
+      }
+      // It is safe to access O1REG(LoadConstBigInt) or
+      // O1REG(LoadConstBigIntLongIndex) here as both instructions' O1 operands
+      // are the same size and live in the same offset w.r.t. the start of the
+      // instruction.
+      O1REG(LoadConstBigInt) = std::move(*res);
+      ip = nextIP;
+      DISPATCH;
+    }
       BINOP(Sub);
       BINOP(Mul);
       BINOP(Div);
