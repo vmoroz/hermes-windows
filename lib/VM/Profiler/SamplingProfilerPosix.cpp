@@ -169,12 +169,10 @@ struct SamplerPosix : Sampler {
 SamplingProfilerPosix::SamplingProfilerPosix(Runtime &rt)
     : SamplingProfiler(rt), currentThread_{pthread_self()} {
 #if defined(HERMESVM_ENABLE_LOOM_APPLE)
-  // TODO(xidachen): do a refactor to use the enum in ExternalTracer.h
-  const int32_t tracerTypeJavascript = 1;
   fbloom_profilo_api()->fbloom_register_enable_for_loom_callback(
-      tracerTypeJavascript, enable);
+      FBLoomTracerType::JAVASCRIPT, enable);
   fbloom_profilo_api()->fbloom_register_disable_for_loom_callback(
-      tracerTypeJavascript, disable);
+      FBLoomTracerType::JAVASCRIPT, disable);
   loomDataPushEnabled_ = true;
 #endif // defined(HERMESVM_ENABLE_LOOM_APPLE)
 }
@@ -183,9 +181,6 @@ SamplingProfilerPosix::~SamplingProfilerPosix() {
   // TODO(T125910634): re-introduce the requirement for destroying the sampling
   // profiler on the same thread in which it was created.
   Sampler::get()->unregisterRuntime(this);
-#if defined(HERMESVM_ENABLE_LOOM_APPLE)
-  fbloom_profilo_api()->fbloom_notify_profiler_destroy();
-#endif // defined(HERMESVM_ENABLE_LOOM_APPLE)
 }
 
 std::atomic<SamplerPosix *> SamplerPosix::instance_{nullptr};
@@ -478,10 +473,8 @@ void SamplingProfilerPosix::pushLastSampledStackToLoom() {
       return;
     }
   }
-  // TODO(xidachen): do a refactor to use the enum in ExternalTracer.h
-  const int32_t tracerTypeJavascript = 1;
   fbloom_profilo_api()->fbloom_write_stack_to_loom(
-      tracerTypeJavascript, frames, depth);
+      FBLoomTracerType::JAVASCRIPT, frames, depth);
   previousPushTs = std::chrono::system_clock::now();
   clear();
 }
