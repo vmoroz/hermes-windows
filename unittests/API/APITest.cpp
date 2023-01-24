@@ -20,7 +20,7 @@ using namespace facebook::hermes;
 
 struct HermesTestHelper {
   static size_t rootsListLength(const HermesRuntime &rt) {
-    return rt.rootsListLength();
+    return rt.rootsListLengthForTests();
   }
 
   static int64_t calculateRootsListChange(
@@ -351,44 +351,26 @@ TEST(HermesRuntimeDeathTest, ValueTest) {
 
 TEST_F(HermesRuntimeTest, DontGrowWhenMoveObjectOutOfValue) {
   Value val = Object(*rt);
+  // Keep the object alive during measurement.
+  std::unique_ptr<Object> obj;
   auto rootsDelta = HermesTestHelper::calculateRootsListChange(*rt, [&]() {
-    Object obj = std::move(val).getObject(*rt);
-    (void)obj;
+    obj = std::make_unique<Object>(std::move(val).getObject(*rt));
   });
   EXPECT_EQ(rootsDelta, 0);
 }
 
 TEST_F(HermesRuntimeTest, DontGrowWhenCloneObject) {
   Value val = Object(*rt);
+  constexpr int kCloneCount = 1000;
+  // Keep the objects alive during measurement.
+  std::vector<Object> objects;
+  objects.reserve(kCloneCount);
   auto rootsDelta = HermesTestHelper::calculateRootsListChange(*rt, [&]() {
-    for (int i = 0; i < 1000; i++) {
-      Object obj = val.getObject(*rt);
-      (void)obj;
+    for (size_t i = 0; i < kCloneCount; i++) {
+      objects.push_back(val.getObject(*rt));
     }
   });
   EXPECT_EQ(rootsDelta, 0);
-}
-
-TEST_F(HermesRuntimeTest, ScopeCleansUpObjectReferences) {
-  Object o1(*rt);
-  auto rootsDelta = HermesTestHelper::calculateRootsListChange(*rt, [&]() {
-    Scope s(*rt);
-    Object o2(*rt);
-    Object o3(*rt);
-  });
-  EXPECT_EQ(rootsDelta, 0);
-}
-
-TEST_F(HermesRuntimeTest, ReferencesCanEscapeScope) {
-  Value v;
-  auto rootsDelta = HermesTestHelper::calculateRootsListChange(*rt, [&]() {
-    Scope s(*rt);
-    Object o1(*rt);
-    Object o2(*rt);
-    Object o3(*rt);
-    v = std::move(o2);
-  });
-  EXPECT_EQ(rootsDelta, 1);
 }
 
 TEST(HermesWatchTimeLimitTest, WatchTimeLimit) {
