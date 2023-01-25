@@ -493,6 +493,30 @@ JSON.stringify(JSON.parse(out).callstack.map(x => x.SourceLocation));
   EXPECT_EQ(callstack, expected);
 }
 
+TEST_F(HermesRuntimeTest, SpreadHostObjectWithOwnProperties) {
+  class HostObjectWithPropertyNames : public HostObject {
+    std::vector<PropNameID> getPropertyNames(Runtime &rt) override {
+      return PropNameID::names(rt, "prop1", "1", "2", "prop2", "3");
+    }
+    Value get(Runtime &runtime, const PropNameID &name) override {
+      return Value();
+    }
+  };
+
+  Object ho = Object::createFromHostObject(
+      *rt, std::make_shared<HostObjectWithPropertyNames>());
+  rt->global().setProperty(*rt, "ho", ho);
+
+  auto res = eval(R"###(
+var spreaded = {...ho};
+var props = Object.getOwnPropertyNames(spreaded);
+props.toString();
+)###")
+                 .getString(*rt)
+                 .utf8(*rt);
+  EXPECT_EQ(res, "1,2,3,prop1,prop2");
+}
+
 TEST_F(HermesRuntimeTest, HostObjectWithOwnProperties) {
   class HostObjectWithPropertyNames : public HostObject {
     std::vector<PropNameID> getPropertyNames(Runtime &rt) override {
@@ -1011,5 +1035,35 @@ TEST_F(HermesRuntimeTestSmallHeap, OOMExceptionTest) {
   EXPECT_THROW(func.call(*rt, makeOOM), ::hermes::vm::JSOutOfMemoryError);
 }
 #endif
+
+TEST_F(HermesRuntimeTest, NativeExceptionDoesNotUseGlobalError) {
+  Function alwaysThrows = Function::createFromHostFunction(
+      *rt,
+      PropNameID::forAscii(*rt, "alwaysThrows"),
+      0,
+      [](Runtime &, const Value &, const Value *, size_t) -> Value {
+        throw std::logic_error(
+            "Native std::logic_error C++ exception in Host Function");
+      });
+  rt->global().setProperty(*rt, "alwaysThrows", alwaysThrows);
+  rt->global().setProperty(*rt, "Error", 10);
+
+  auto test = eval(
+                  R"#((function(val) {
+                          'use strict';
+                          try {
+                            alwaysThrows(val);
+                          } catch(e) {
+                            return 'typeof Error is ' + typeof(Error) + '; ' + e.message;
+                          }
+                          throw new Error('Unreachable statement');
+                       }))#")
+                  .getObject(*rt)
+                  .getFunction(*rt);
+  EXPECT_EQ(
+      "typeof Error is number; Exception in HostFunction: Native "
+      "std::logic_error C++ exception in Host Function",
+      test.call(*rt).getString(*rt).utf8(*rt));
+}
 
 } // namespace
