@@ -29,6 +29,9 @@ struct SamplingProfilerWindows : SamplingProfiler {
   }
 
   ~SamplingProfilerWindows() override {
+    // TODO(T125910634): re-introduce the requirement for destroying the
+    // sampling profiler on the same thread in which it was created.
+    Sampler::get()->unregisterRuntime(this);
     CloseHandle(currentThread_);
   }
 
