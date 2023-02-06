@@ -110,15 +110,6 @@ void hermesFatalErrorHandler(
 
 namespace {
 
-// Max size of the runtime's register stack.
-// The runtime register stack needs to be small enough to be allocated on the
-// native thread stack in Android (1MiB) and on MacOS's thread stack (512 KiB)
-// Calculated by: (thread stack size - size of runtime -
-// 8 memory pages for other stuff in the thread)
-static constexpr unsigned kMaxNumRegisters =
-    (512 * 1024 - sizeof(::hermes::vm::Runtime) - 4096 * 8) /
-    sizeof(::hermes::vm::PinnedHermesValue);
-
 void raw_ostream_append(llvh::raw_ostream &os) {}
 
 template <typename Arg0, typename... Args>
@@ -170,11 +161,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   HermesRuntimeImpl(const vm::RuntimeConfig &runtimeConfig)
       : hermesValues_(runtimeConfig.getGCConfig().getOccupancyTarget()),
         weakHermesValues_(runtimeConfig.getGCConfig().getOccupancyTarget()),
-        rt_(::hermes::vm::Runtime::create(
-            runtimeConfig.rebuild()
-                .withRegisterStack(nullptr)
-                .withMaxNumRegisters(kMaxNumRegisters)
-                .build())),
+        rt_(::hermes::vm::Runtime::create(runtimeConfig)),
         runtime_(*rt_),
         vmExperimentFlags_(runtimeConfig.getVMExperimentFlags()) {
 #ifdef HERMES_ENABLE_DEBUGGER
@@ -506,11 +493,12 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return ::hermes::vm::Handle<::hermes::vm::JSArrayBuffer>::vmcast(&phv(arr));
   }
 
-  static ::hermes::vm::WeakRoot<vm::JSObject> &weakRoot(jsi::Pointer &pointer) {
+  static const ::hermes::vm::WeakRoot<vm::JSObject> &weakRoot(
+      const jsi::Pointer &pointer) {
     assert(
-        dynamic_cast<WeakRefPointerValue *>(getPointerValue(pointer)) &&
+        dynamic_cast<const WeakRefPointerValue *>(getPointerValue(pointer)) &&
         "Pointer does not contain a WeakRefPointerValue");
-    return static_cast<WeakRefPointerValue *>(getPointerValue(pointer))
+    return static_cast<const WeakRefPointerValue *>(getPointerValue(pointer))
         ->value();
   }
 
@@ -645,11 +633,11 @@ class HermesRuntimeImpl final : public HermesRuntime,
   bool hasProperty(const jsi::Object &, const jsi::PropNameID &name) override;
   bool hasProperty(const jsi::Object &, const jsi::String &name) override;
   void setPropertyValue(
-      jsi::Object &,
+      const jsi::Object &,
       const jsi::PropNameID &name,
       const jsi::Value &value) override;
   void setPropertyValue(
-      jsi::Object &,
+      const jsi::Object &,
       const jsi::String &name,
       const jsi::Value &value) override;
   bool isArray(const jsi::Object &) const override;
@@ -660,7 +648,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::Array getPropertyNames(const jsi::Object &) override;
 
   jsi::WeakObject createWeakObject(const jsi::Object &) override;
-  jsi::Value lockWeakObject(jsi::WeakObject &) override;
+  jsi::Value lockWeakObject(const jsi::WeakObject &) override;
 
   jsi::Array createArray(size_t length) override;
   jsi::ArrayBuffer createArrayBuffer(
@@ -669,8 +657,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
   size_t size(const jsi::ArrayBuffer &) override;
   uint8_t *data(const jsi::ArrayBuffer &) override;
   jsi::Value getValueAtIndex(const jsi::Array &, size_t i) override;
-  void setValueAtIndexImpl(jsi::Array &, size_t i, const jsi::Value &value)
-      override;
+  void setValueAtIndexImpl(
+      const jsi::Array &,
+      size_t i,
+      const jsi::Value &value) override;
 
   jsi::Function createFunctionFromHostFunction(
       const jsi::PropNameID &name,
@@ -724,25 +714,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
       catch (const jsi::JSError &error) {
         return rt_.runtime_.setThrownValue(hvFromValue(error.value()));
       } catch (const std::exception &ex) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    "Exception in HostObject::get for prop '" +
-                        rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
-                            id) +
-                        "': " + ex.what())));
+        return rt_.runtime_.raiseError(
+            vm::TwineChar16{"Exception in HostObject::get for prop '"} +
+            rt_.runtime_.getIdentifierTable().getStringViewForDev(
+                rt_.runtime_, id) +
+            "': " + ex.what());
       } catch (...) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    "Exception in HostObject::get: for prop '" +
-                        rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
-                            id) +
-                        "': <unknown exception>")));
+        return rt_.runtime_.raiseError(
+            vm::TwineChar16{"Exception in HostObject::get: for prop '"} +
+            rt_.runtime_.getIdentifierTable().getStringViewForDev(
+                rt_.runtime_, id) +
+            "': <unknown exception>");
       }
 
       return hvFromValue(ret);
@@ -762,25 +744,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
       catch (const jsi::JSError &error) {
         return rt_.runtime_.setThrownValue(hvFromValue(error.value()));
       } catch (const std::exception &ex) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    "Exception in HostObject::set for prop '" +
-                        rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
-                            id) +
-                        "': " + ex.what())));
+        return rt_.runtime_.raiseError(
+            vm::TwineChar16{"Exception in HostObject::set for prop '"} +
+            rt_.runtime_.getIdentifierTable().getStringViewForDev(
+                rt_.runtime_, id) +
+            "': " + ex.what());
       } catch (...) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    "Exception in HostObject::set: for prop '" +
-                        rt_.runtime_.getIdentifierTable().convertSymbolToUTF8(
-                            id) +
-                        "': <unknown exception>")));
+        return rt_.runtime_.raiseError(
+            vm::TwineChar16{"Exception in HostObject::set: for prop '"} +
+            rt_.runtime_.getIdentifierTable().getStringViewForDev(
+                rt_.runtime_, id) +
+            "': <unknown exception>");
       }
       return true;
     }
@@ -814,20 +788,12 @@ class HermesRuntimeImpl final : public HermesRuntime,
       catch (const jsi::JSError &error) {
         return rt_.runtime_.setThrownValue(hvFromValue(error.value()));
       } catch (const std::exception &ex) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    std::string("Exception in HostObject::getPropertyNames: ") +
-                        ex.what())));
+        return rt_.runtime_.raiseError(
+            vm::TwineChar16{"Exception in HostObject::getPropertyNames: "} +
+            ex.what());
       } catch (...) {
-        return rt_.runtime_.setThrownValue(hvFromValue(
-            rt_.global()
-                .getPropertyAsFunction(rt_, "Error")
-                .call(
-                    rt_,
-                    "Exception in HostObject::getPropertyNames: <unknown>")));
+        return rt_.runtime_.raiseError(vm::TwineChar16{
+            "Exception in HostObject::getPropertyNames: <unknown>"});
       }
     };
   };
@@ -865,17 +831,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
       catch (const jsi::JSError &error) {
         return runtime.setThrownValue(hvFromValue(error.value()));
       } catch (const std::exception &ex) {
-        return rt.runtime_.setThrownValue(hvFromValue(
-            rt.global()
-                .getPropertyAsFunction(rt, "Error")
-                .call(
-                    rt,
-                    std::string("Exception in HostFunction: ") + ex.what())));
+        return runtime.raiseError(
+            vm::TwineChar16{"Exception in HostFunction: "} + ex.what());
       } catch (...) {
-        return rt.runtime_.setThrownValue(
-            hvFromValue(rt.global()
-                            .getPropertyAsFunction(rt, "Error")
-                            .call(rt, "Exception in HostFunction: <unknown>")));
+        return runtime.raiseError("Exception in HostFunction: <unknown>");
       }
 
       return hvFromValue(ret);
@@ -1920,7 +1879,7 @@ bool HermesRuntimeImpl::hasProperty(
 }
 
 void HermesRuntimeImpl::setPropertyValue(
-    jsi::Object &obj,
+    const jsi::Object &obj,
     const jsi::String &name,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
@@ -1935,7 +1894,7 @@ void HermesRuntimeImpl::setPropertyValue(
 }
 
 void HermesRuntimeImpl::setPropertyValue(
-    jsi::Object &obj,
+    const jsi::Object &obj,
     const jsi::PropNameID &name,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
@@ -2004,8 +1963,8 @@ jsi::WeakObject HermesRuntimeImpl::createWeakObject(const jsi::Object &obj) {
       static_cast<vm::JSObject *>(phv(obj).getObject()), runtime_));
 }
 
-jsi::Value HermesRuntimeImpl::lockWeakObject(jsi::WeakObject &wo) {
-  vm::WeakRoot<vm::JSObject> &wr = weakRoot(wo);
+jsi::Value HermesRuntimeImpl::lockWeakObject(const jsi::WeakObject &wo) {
+  const vm::WeakRoot<vm::JSObject> &wr = weakRoot(wo);
 
   if (const auto ptr = wr.get(runtime_, runtime_.getHeap()))
     return add<jsi::Object>(vm::HermesValue::encodeObjectValue(ptr));
@@ -2074,7 +2033,7 @@ jsi::Value HermesRuntimeImpl::getValueAtIndex(const jsi::Array &arr, size_t i) {
 }
 
 void HermesRuntimeImpl::setValueAtIndexImpl(
-    jsi::Array &arr,
+    const jsi::Array &arr,
     size_t i,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
