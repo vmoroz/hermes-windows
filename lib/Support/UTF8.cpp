@@ -63,80 +63,6 @@ void encodeUTF8(char *&dst, uint32_t cp) {
   dst = d;
 }
 
-char32_t readUTF16WithReplacements(
-    const char16_t *&cur,
-    const char16_t *end) noexcept {
-  char16_t c = *cur++;
-  // ASCII fast-path.
-  if (LLVM_LIKELY(c <= 0x7F)) {
-    return c;
-  }
-
-  if (isLowSurrogate(c)) {
-    // Unpaired low surrogate.
-    return UNICODE_REPLACEMENT_CHARACTER;
-  } else if (isHighSurrogate(c)) {
-    // Leading high surrogate. See if the next character is a low surrogate.
-    if (cur == end || !isLowSurrogate(*cur)) {
-      // Trailing or unpaired high surrogate.
-      return UNICODE_REPLACEMENT_CHARACTER;
-    } else {
-      // Decode surrogate pair and increment, because we consumed two chars.
-      return decodeSurrogatePair(c, *cur++);
-    }
-  } else {
-    // Not a surrogate.
-    return c;
-  }
-}
-
-size_t utf8LengthWithReplacements(llvh::ArrayRef<char16_t> input) {
-  size_t length{0};
-  for (const char16_t *cur = input.begin(), *end = input.end(); cur < end;) {
-    char32_t c32 = readUTF16WithReplacements(cur, end);
-    if (LLVM_LIKELY(c32 <= 0x7F)) {
-      ++length;
-    } else if (c32 <= 0x7FF) {
-      length += 2;
-    } else if (c32 <= 0xFFFF) {
-      length += 3;
-    } else if (c32 <= 0x1FFFFF) {
-      length += 4;
-    } else if (c32 <= 0x3FFFFFF) {
-      length += 5;
-    } else {
-      length += 6;
-    }
-  }
-
-  return length;
-}
-
-size_t convertUTF16ToUTF8WithReplacements(
-    llvh::ArrayRef<char16_t> input,
-    char *buf,
-    size_t bufSize) {
-  char *curBuf = buf;
-  char *endBuf = buf + bufSize;
-  for (const char16_t *cur = input.begin(), *end = input.end();
-       cur < end && curBuf < endBuf;) {
-    char32_t c32 = readUTF16WithReplacements(cur, end);
-
-    char buff[UTF8CodepointMaxBytes];
-    char *ptr = buff;
-    encodeUTF8(ptr, c32);
-    size_t u8Length = static_cast<size_t>(ptr - buff);
-    if (curBuf + u8Length <= endBuf) {
-      std::char_traits<char>::copy(curBuf, buff, u8Length);
-      curBuf += u8Length;
-    } else {
-      break;
-    }
-  }
-
-  return static_cast<size_t>(curBuf - buf);
-}
-
 bool convertUTF16ToUTF8WithReplacements(
     std::string &out,
     llvh::ArrayRef<char16_t> input,
@@ -151,21 +77,37 @@ bool convertUTF16ToUTF8WithReplacements(
   }
   for (auto cur = input.begin(), end = input.end();
        cur < end && currNumCharacters < maxCharacters;
-       ++currNumCharacters) {
+       ++cur, ++currNumCharacters) {
     char16_t c = cur[0];
     // ASCII fast-path.
     if (LLVM_LIKELY(c <= 0x7F)) {
       out.push_back(static_cast<char>(c));
-      ++cur;
       continue;
     }
 
-    char32_t c32 = readUTF16WithReplacements(cur, end);
+    char32_t c32;
+    if (isLowSurrogate(cur[0])) {
+      // Unpaired low surrogate.
+      c32 = UNICODE_REPLACEMENT_CHARACTER;
+    } else if (isHighSurrogate(cur[0])) {
+      // Leading high surrogate. See if the next character is a low surrogate.
+      if (cur + 1 == end || !isLowSurrogate(cur[1])) {
+        // Trailing or unpaired high surrogate.
+        c32 = UNICODE_REPLACEMENT_CHARACTER;
+      } else {
+        // Decode surrogate pair and increment, because we consumed two chars.
+        c32 = decodeSurrogatePair(cur[0], cur[1]);
+        ++cur;
+      }
+    } else {
+      // Not a surrogate.
+      c32 = c;
+    }
 
     char buff[UTF8CodepointMaxBytes];
     char *ptr = buff;
     encodeUTF8(ptr, c32);
-    out.append(buff, ptr);
+    out.insert(out.end(), buff, ptr);
   }
   return currNumCharacters < maxCharacters;
 }
@@ -225,6 +167,29 @@ bool isAllASCII(const uint8_t *start, const uint8_t *end) {
   if (mask & 0x80u)
     return false;
   return true;
+}
+
+void convertUTF8WithSurrogatesToUTF8WithReplacements(
+    std::string &output,
+    llvh::StringRef input) {
+  // Temporary buffer to convert input to UTF16.
+  llvh::SmallVector<char16_t, 8> ustr;
+  // The temporary string cannot possibly have more characters than input. Using
+  // reserve avoids default-initializing the elements.
+  ustr.reserve(input.size());
+  // ustr is pessimistically allocated, so pass a raw pointer to its contents to
+  // convertUTF8WithSurrogatesToUTF16. The alternative is to use a
+  // std::back_inserter that would resize the buffer if needed. It turns out
+  // that the resulting code using std::back_inserter is considerably larger.
+  char16_t *ustrEnd =
+      convertUTF8WithSurrogatesToUTF16(ustr.data(), input.begin(), input.end());
+  // Sanity-check for buffer overflow.
+  assert(
+      static_cast<uintptr_t>(ustrEnd - ustr.data()) <= ustr.capacity() &&
+      "buffer overflow while converting UTF8 surrogates");
+  // Now convert the UTF16 string to UTF8 without surrogates.
+  convertUTF16ToUTF8WithReplacements(
+      output, llvh::makeArrayRef(ustr.data(), ustrEnd));
 }
 
 } // namespace hermes

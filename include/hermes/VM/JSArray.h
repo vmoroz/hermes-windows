@@ -151,9 +151,11 @@ class ArrayImpl : public JSObject {
   ArrayImpl(Runtime &runtime, JSObject *parent, HiddenClass *clazz)
       : ArrayImpl(runtime, parent, clazz, GCPointerBase::YesBarriers()) {}
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Adds the special indexed element edges from this array to its backing
   /// storage.
   static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
   /// Check whether property with index \p index exists in indexed storage and
   /// \return true if it does.
@@ -177,8 +179,10 @@ class ArrayImpl : public JSObject {
   /// Obtain an element from the "indexed storage" of this object. The storage
   /// itself is implementation dependent.
   /// \return the value of the element or "empty" if there is no such element.
-  static HermesValue
-  _getOwnIndexedImpl(JSObject *self, Runtime &runtime, uint32_t index);
+  static HermesValue _getOwnIndexedImpl(
+      PseudoHandle<JSObject> self,
+      Runtime &runtime,
+      uint32_t index);
 
   /// Set an element in the "indexed storage" of this object. Depending on the
   /// semantics of the "indexed storage" the storage capacity may need to be
@@ -294,8 +298,19 @@ class JSArray final : public ArrayImpl {
 
   /// Create an instance of Array, with [[Prototype]] initialized with
   /// \p prototypeHandle, with capacity for \p capacity elements and actual size
-  /// \p length.
-  static CallResult<Handle<JSArray>> create(
+  /// \p length. Does not allocate the return object's property storage array.
+  static CallResult<Handle<JSArray>> createNoAllocPropStorage(
+      Runtime &runtime,
+      Handle<JSObject> prototypeHandle,
+      Handle<HiddenClass> classHandle,
+      size_type capacity = 0,
+      size_type length = 0);
+
+  /// Create an instance of Array, with [[Prototype]] initialized with
+  /// \p prototypeHandle, with capacity for \p capacity elements and actual size
+  /// \p length. It also allocates the return object's property storage array
+  /// to hold all properties in \p classHandle.
+  static CallResult<Handle<JSArray>> createAndAllocPropStorage(
       Runtime &runtime,
       Handle<JSObject> prototypeHandle,
       Handle<HiddenClass> classHandle,
@@ -307,7 +322,7 @@ class JSArray final : public ArrayImpl {
       Handle<JSObject> prototypeHandle,
       size_type capacity,
       size_type length) {
-    return create(
+    return createNoAllocPropStorage(
         runtime,
         prototypeHandle,
         *prototypeHandle == runtime.arrayPrototype.getObject()

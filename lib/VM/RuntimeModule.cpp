@@ -336,6 +336,14 @@ std::string RuntimeModule::getStringFromStringID(StringID stringID) {
   }
 }
 
+llvh::ArrayRef<uint8_t> RuntimeModule::getBigIntBytesFromBigIntId(
+    BigIntID bigIntId) const {
+  assert(
+      bigIntId < bcProvider_->getBigIntTable().size() && "Invalid bigint id");
+  bigint::BigIntTableEntry entry = bcProvider_->getBigIntTable()[bigIntId];
+  return bcProvider_->getBigIntStorage().slice(entry.offset, entry.length);
+}
+
 llvh::ArrayRef<uint8_t> RuntimeModule::getRegExpBytecodeFromRegExpID(
     uint32_t regExpId) const {
   assert(
@@ -438,6 +446,7 @@ size_t RuntimeModule::additionalMemorySize() const {
       templateMap_.getMemorySize();
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void RuntimeModule::snapshotAddNodes(GC &gc, HeapSnapshot &snap) const {
   // Create a native node for each CodeBlock owned by this module.
   for (const CodeBlock *cb : functionMap_) {
@@ -482,6 +491,7 @@ void RuntimeModule::snapshotAddEdges(GC &gc, HeapSnapshot &snap) const {
       "functionMap",
       gc.getNativeID(&functionMap_));
 }
+#endif // HERMES_MEMORY_INSTRUMENTATION
 
 namespace detail {
 

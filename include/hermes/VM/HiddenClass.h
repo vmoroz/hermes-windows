@@ -55,16 +55,11 @@ struct ClassFlags {
   /// searched for - they don't exist.
   uint8_t hasIndexLikeProperties : 1;
 
-  /// All properties in this class are non-configurable. This flag can sometimes
-  /// be set lazily, after we have checked whether all properties are non-
-  /// configurable.
-  uint8_t allNonConfigurable : 1;
-
-  /// All properties in this class are both non-configurable and non-writable.
-  /// It imples that \c allNonConfigurable is also set.
-  /// This flag can sometimes be set lazily, after we have checked whether all
-  /// properties are "read-only".
-  uint8_t allReadOnly : 1;
+  /// There may be a accessor property somewhere in the entire chain of leading
+  /// up to this HiddenClass. Set when a property is an accessor, and can never
+  /// be unset. That means this is a pessimistic flag: if a getter/setter
+  /// property is set and then deleted, this will still be set to true.
+  uint8_t mayHaveAccessor : 1;
 
   ClassFlags() {
     ::memset(this, 0, sizeof(*this));
@@ -162,16 +157,15 @@ class TransitionMap {
         (isLarge() && large()->containsKey(key));
   }
 
-  /// Look for key and return the value as Handle<T> if found or None if not.
-  llvh::Optional<Handle<HiddenClass>> lookup(
-      Runtime &runtime,
-      const Transition &key) {
+  /// Look for a \p key and return the corresponding HiddenClass, or nullptr if
+  /// it is not found.
+  HiddenClass *lookup(Runtime &runtime, const Transition &key) {
     if (smallKey_ == key) {
       return smallValue().get(runtime);
     } else if (isLarge()) {
       return large()->lookup(runtime, key);
     } else {
-      return llvh::None;
+      return nullptr;
     }
   }
 
@@ -198,9 +192,6 @@ class TransitionMap {
       uncleanMakeLarge(runtime);
     return large()->insertNewLocked(runtime, key, value);
   }
-
-  /// Insert key/value into the map. Used by deserialization.
-  void insertUnsafe(Runtime &runtime, const Transition &key, WeakRefSlot *ptr);
 
   /// Accepts every valid WeakRef in the map.
   void markWeakRefs(WeakRefAcceptor &acceptor) {
@@ -229,9 +220,11 @@ class TransitionMap {
     }
   }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   void snapshotAddNodes(GC &gc, HeapSnapshot &snap);
   void snapshotAddEdges(GC &gc, HeapSnapshot &snap);
   void snapshotUntrackMemory(GC &gc);
+#endif
 
  private:
   /// Clean = no transition has been inserted since construction.
@@ -325,6 +318,10 @@ class HiddenClass final : public GCCell {
 
   bool getHasIndexLikeProperties() const {
     return flags_.hasIndexLikeProperties;
+  }
+
+  bool getMayHaveAccessor() const {
+    return flags_.mayHaveAccessor;
   }
 
   /// \return The for-in cache if one has been set, otherwise nullptr.
@@ -562,9 +559,11 @@ class HiddenClass final : public GCCell {
   /// is assumed to be a HiddenClass.
   static size_t _mallocSizeImpl(GCCell *cell);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
   static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
   static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
  private:
   /// The symbol that was added when transitioning to this hidden class.
@@ -603,6 +602,15 @@ class HiddenClass final : public GCCell {
   /// Cache that contains for-in property names for objects of this class.
   /// Never used in dictionary mode.
   GCPointer<BigStorage> forInCache_{};
+
+  /// Computes the updated class flags for a class with flags \p flags for when
+  /// a property is added or updated with property flags \p pf and based on
+  /// whether a new index like property has been added.
+  /// This operation is idempotent, which means that multiple updates with the
+  /// same \p pf and \p addedIndexLike may be collapsed into a single update.
+  /// \return Updated flags that reflect the added/updated property.
+  static ClassFlags
+  computeFlags(ClassFlags flags, PropertyFlags pf, bool addedIndexLike);
 };
 
 //===----------------------------------------------------------------------===//
@@ -650,6 +658,16 @@ inline OptValue<bool> HiddenClass::tryFindPropertyFast(
     return false;
   }
   return llvh::None;
+}
+inline ClassFlags HiddenClass::computeFlags(
+    ClassFlags flags,
+    PropertyFlags pf,
+    bool addedIndexLike) {
+  flags.hasIndexLikeProperties |= addedIndexLike;
+  // Carry over the the existing mayHaveAccessor flag. Once an accessor property
+  // has been set, all subsequent classes must have this property marked.
+  flags.mayHaveAccessor |= pf.accessor;
+  return flags;
 }
 
 } // namespace vm

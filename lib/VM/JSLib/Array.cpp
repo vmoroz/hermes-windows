@@ -9,8 +9,10 @@
 /// \file
 /// ES5.1 15.4 Initialize the Array constructor.
 //===----------------------------------------------------------------------===//
+
 #include "JSLibInternal.h"
 
+#include "hermes/ADT/SafeInt.h"
 #include "hermes/VM/HandleRootOwner-inline.h"
 #include "hermes/VM/JSLib/Sorting.h"
 #include "hermes/VM/Operations.h"
@@ -19,7 +21,11 @@
 #include "hermes/VM/StringView.h"
 
 #include "llvh/ADT/ScopeExit.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -44,6 +50,13 @@ Handle<JSObject> createArrayConstructor(Runtime &runtime) {
       nullptr,
       arrayPrototypeToLocaleString,
       0);
+  defineMethod(
+      runtime,
+      arrayPrototype,
+      Predefined::getSymbolID(Predefined::at),
+      nullptr,
+      arrayPrototypeAt,
+      1);
   defineMethod(
       runtime,
       arrayPrototype,
@@ -533,6 +546,78 @@ arrayPrototypeToLocaleString(void *, Runtime &runtime, NativeArgs args) {
   return HermesValue::encodeStringValue(*builder->getStringPrimitive());
 }
 
+// 23.1.3.1
+CallResult<HermesValue>
+arrayPrototypeAt(void *, Runtime &runtime, NativeArgs args) {
+  GCScope gcScope(runtime);
+  // 1. Let O be ? ToObject(this value).
+  auto objRes = toObject(runtime, args.getThisHandle());
+  if (LLVM_UNLIKELY(objRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  auto O = runtime.makeHandle<JSObject>(objRes.getValue());
+
+  // 2. Let len be ? LengthOfArrayLike(O).
+  Handle<JSArray> jsArr = Handle<JSArray>::dyn_vmcast(O);
+  uint32_t len = 0;
+  if (LLVM_LIKELY(jsArr)) {
+    // Fast path for getting the length.
+    len = JSArray::getLength(jsArr.get(), runtime);
+  } else {
+    // Slow path
+    CallResult<PseudoHandle<>> propRes = JSObject::getNamed_RJS(
+        O, runtime, Predefined::getSymbolID(Predefined::length));
+    if (LLVM_UNLIKELY(propRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    auto lenRes = toLength(runtime, runtime.makeHandle(std::move(*propRes)));
+    if (LLVM_UNLIKELY(lenRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    len = lenRes->getNumber();
+  }
+
+  // 3. Let relativeIndex be ? ToIntegerOrInfinity(index).
+  auto idx = args.getArgHandle(0);
+  auto relativeIndexRes = toIntegerOrInfinity(runtime, idx);
+  if (relativeIndexRes == ExecutionStatus::EXCEPTION) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  const double relativeIndex = relativeIndexRes->getNumber();
+
+  double k;
+  // 4. If relativeIndex ≥ 0, then
+  if (relativeIndex >= 0) {
+    // a. Let k be relativeIndex.
+    k = relativeIndex;
+  } else {
+    // 5. Else,
+    // a. Let k be len + relativeIndex.
+    k = len + relativeIndex;
+  }
+
+  // 6. If k < 0 or k ≥ len, return undefined.
+  if (k < 0 || k >= len) {
+    return HermesValue::encodeUndefinedValue();
+  }
+
+  // 7. Return ? Get(O, ! ToString(𝔽(k))).
+  if (LLVM_LIKELY(jsArr)) {
+    const SmallHermesValue elm = jsArr->at(runtime, k);
+    if (elm.isEmpty()) {
+      return HermesValue::encodeUndefinedValue();
+    } else {
+      return elm.unboxToHV(runtime);
+    }
+  }
+  CallResult<PseudoHandle<>> propRes = JSObject::getComputed_RJS(
+      O, runtime, runtime.makeHandle(HermesValue::encodeDoubleValue(k)));
+  if (LLVM_UNLIKELY(propRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  return propRes->getHermesValue();
+}
+
 CallResult<HermesValue>
 arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
   GCScope gcScope(runtime);
@@ -548,22 +633,26 @@ arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
   // Precompute the final size of the array so it can be preallocated.
   // Note this is necessarily an estimate because an accessor on one array
   // may change the length of subsequent arrays.
-  uint64_t finalSizeEstimate = 0;
+  SafeUInt32 finalSizeEstimate{0};
   if (JSArray *arr = dyn_vmcast<JSArray>(O.get())) {
-    finalSizeEstimate += JSArray::getLength(arr, runtime);
+    finalSizeEstimate.add(JSArray::getLength(arr, runtime));
   } else {
-    ++finalSizeEstimate;
+    finalSizeEstimate.add(1);
   }
   for (int64_t i = 0; i < argCount; ++i) {
     if (JSArray *arr = dyn_vmcast<JSArray>(args.getArg(i))) {
-      finalSizeEstimate += JSArray::getLength(arr, runtime);
+      finalSizeEstimate.add(JSArray::getLength(arr, runtime));
     } else {
-      ++finalSizeEstimate;
+      finalSizeEstimate.add(1);
     }
+  }
+  if (finalSizeEstimate.isOverflowed()) {
+    return runtime.raiseTypeError("Array.prototype.concat result out of space");
   }
 
   // Resultant array.
-  auto arrRes = JSArray::create(runtime, finalSizeEstimate, finalSizeEstimate);
+  auto arrRes =
+      JSArray::create(runtime, *finalSizeEstimate, *finalSizeEstimate);
   if (LLVM_UNLIKELY(arrRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -718,7 +807,10 @@ arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
   }
   // Update the array's length. We never expect this to fail since we just
   // created the array.
-  auto res = JSArray::setLengthProperty(A, runtime, n);
+  if (n > UINT32_MAX) {
+    return runtime.raiseRangeError("invalid array length");
+  }
+  auto res = JSArray::setLengthProperty(A, runtime, static_cast<uint32_t>(n));
   assert(
       res == ExecutionStatus::RETURNED &&
       "Setting length of new array should never fail");

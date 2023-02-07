@@ -56,7 +56,12 @@ inline PropNameID&& toPropNameID(Runtime&, PropNameID&& name) {
   return std::move(name);
 }
 
-void throwJSError(Runtime&, const char* msg);
+/// Helper to throw while still compiling with exceptions turned off.
+template <typename E, typename... Args>
+[[noreturn]] inline void throwOrDie(Args&&... args) {
+  std::rethrow_exception(
+      std::make_exception_ptr(E{std::forward<Args>(args)...}));
+}
 
 } // namespace detail
 
@@ -65,9 +70,11 @@ inline T Runtime::make(Runtime::PointerValue* pv) {
   return T(pv);
 }
 
+#if JSI_VERSION >= 3
 inline Runtime::PointerValue* Runtime::getPointerValue(jsi::Pointer& pointer) {
   return pointer.ptr_;
 }
+#endif
 
 inline const Runtime::PointerValue* Runtime::getPointerValue(
     const jsi::Pointer& pointer) {
@@ -106,19 +113,22 @@ inline bool Object::hasProperty(Runtime& runtime, const PropNameID& name)
 }
 
 template <typename T>
-void Object::setProperty(Runtime& runtime, const char* name, T&& value) {
+void Object::setProperty(Runtime& runtime, const char* name, T&& value)
+    JSI_CONST_10 {
   setProperty(
       runtime, String::createFromAscii(runtime, name), std::forward<T>(value));
 }
 
 template <typename T>
-void Object::setProperty(Runtime& runtime, const String& name, T&& value) {
+void Object::setProperty(Runtime& runtime, const String& name, T&& value)
+    JSI_CONST_10 {
   setPropertyValue(
       runtime, name, detail::toValue(runtime, std::forward<T>(value)));
 }
 
 template <typename T>
-void Object::setProperty(Runtime& runtime, const PropNameID& name, T&& value) {
+void Object::setProperty(Runtime& runtime, const PropNameID& name, T&& value)
+    JSI_CONST_10 {
   setPropertyValue(
       runtime, name, detail::toValue(runtime, std::forward<T>(value)));
 }
@@ -184,7 +194,8 @@ inline std::shared_ptr<T> Object::getHostObject(Runtime& runtime) const {
 template <typename T>
 inline std::shared_ptr<T> Object::asHostObject(Runtime& runtime) const {
   if (!isHostObject<T>(runtime)) {
-    detail::throwJSError(runtime, "Object is not a HostObject of desired type");
+    detail::throwOrDie<JSINativeException>(
+        "Object is not a HostObject of desired type");
   }
   return std::static_pointer_cast<T>(runtime.getHostObject(*this));
 }
@@ -196,16 +207,42 @@ inline std::shared_ptr<HostObject> Object::getHostObject<HostObject>(
   return runtime.getHostObject(*this);
 }
 
+#if JSI_VERSION >= 7
+template <typename T>
+inline bool Object::hasNativeState(Runtime& runtime) const {
+  return runtime.hasNativeState(*this) &&
+      std::dynamic_pointer_cast<T>(runtime.getNativeState(*this));
+}
+
+template <>
+inline bool Object::hasNativeState<NativeState>(Runtime& runtime) const {
+  return runtime.hasNativeState(*this);
+}
+
+template <typename T>
+inline std::shared_ptr<T> Object::getNativeState(Runtime& runtime) const {
+  assert(hasNativeState<T>(runtime));
+  return std::static_pointer_cast<T>(runtime.getNativeState(*this));
+}
+
+inline void Object::setNativeState(
+    Runtime& runtime,
+    std::shared_ptr<NativeState> state) const {
+  runtime.setNativeState(*this, state);
+}
+#endif
+
 inline Array Object::getPropertyNames(Runtime& runtime) const {
   return runtime.getPropertyNames(*this);
 }
 
-inline Value WeakObject::lock(Runtime& runtime) {
+inline Value WeakObject::lock(Runtime& runtime) JSI_CONST_10 {
   return runtime.lockWeakObject(*this);
 }
 
 template <typename T>
-void Array::setValueAtIndex(Runtime& runtime, size_t i, T&& value) {
+void Array::setValueAtIndex(Runtime& runtime, size_t i, T&& value)
+    JSI_CONST_10 {
   setValueAtIndexImpl(
       runtime, i, detail::toValue(runtime, std::forward<T>(value)));
 }
@@ -283,7 +320,7 @@ inline std::vector<PropNameID> PropNameID::names(
 
 template <size_t N>
 inline std::vector<PropNameID> PropNameID::names(
-    PropNameID(&&propertyNames)[N]) {
+    PropNameID (&&propertyNames)[N]) {
   std::vector<PropNameID> result;
   result.reserve(N);
   for (auto& name : propertyNames) {
@@ -311,6 +348,12 @@ inline Value Function::callAsConstructor(Runtime& runtime, Args&&... args)
   return callAsConstructor(
       runtime, {detail::toValue(runtime, std::forward<Args>(args))...});
 }
+
+#if JSI_VERSION >= 8
+String BigInt::toString(Runtime& runtime, int radix) const {
+  return runtime.bigintToString(*this, radix);
+}
+#endif
 
 } // namespace jsi
 } // namespace facebook

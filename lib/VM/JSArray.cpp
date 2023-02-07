@@ -28,6 +28,7 @@ void ArrayImplBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addField("elements", &self->indexedStorage_);
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void ArrayImpl::_snapshotAddEdgesImpl(
     GCCell *cell,
     GC &gc,
@@ -58,6 +59,7 @@ void ArrayImpl::_snapshotAddEdgesImpl(
     snap.addIndexedEdge(HeapSnapshot::EdgeType::Element, i, elemID.getValue());
   }
 }
+#endif
 
 bool ArrayImpl::_haveOwnIndexedImpl(
     JSObject *selfObj,
@@ -110,10 +112,14 @@ std::pair<uint32_t, uint32_t> ArrayImpl::_getOwnIndexedRangeImpl(
 }
 
 HermesValue ArrayImpl::_getOwnIndexedImpl(
-    JSObject *selfObj,
+    PseudoHandle<JSObject> selfObj,
     Runtime &runtime,
     uint32_t index) {
-  return vmcast<ArrayImpl>(selfObj)->at(runtime, index).unboxToHV(runtime);
+  NoAllocScope noAllocs{runtime};
+
+  return vmcast<ArrayImpl>(selfObj.get())
+      ->at(runtime, index)
+      .unboxToHV(runtime);
 }
 
 ExecutionStatus ArrayImpl::setStorageEndIndex(
@@ -359,13 +365,15 @@ const ObjectVTable Arguments::vt{
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        VTable::HeapSnapshotMetadata{
-            HeapSnapshot::NodeType::Object,
-            nullptr,
-            Arguments::_snapshotAddEdgesImpl,
-            nullptr,
-            nullptr}),
+        nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+        ,
+        VTable::HeapSnapshotMetadata {
+          HeapSnapshot::NodeType::Object, nullptr,
+              Arguments::_snapshotAddEdgesImpl, nullptr, nullptr
+        }
+#endif
+        ),
     Arguments::_getOwnIndexedRangeImpl,
     Arguments::_haveOwnIndexedImpl,
     Arguments::_getOwnIndexedPropertyFlagsImpl,
@@ -472,13 +480,15 @@ const ObjectVTable JSArray::vt{
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        VTable::HeapSnapshotMetadata{
-            HeapSnapshot::NodeType::Object,
-            nullptr,
-            JSArray::_snapshotAddEdgesImpl,
-            nullptr,
-            nullptr}),
+        nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+        ,
+        VTable::HeapSnapshotMetadata {
+          HeapSnapshot::NodeType::Object, nullptr,
+              JSArray::_snapshotAddEdgesImpl, nullptr, nullptr
+        }
+#endif
+        ),
     JSArray::_getOwnIndexedRangeImpl,
     JSArray::_haveOwnIndexedImpl,
     JSArray::_getOwnIndexedPropertyFlagsImpl,
@@ -522,7 +532,7 @@ Handle<HiddenClass> JSArray::createClass(
   return classHandle;
 }
 
-CallResult<Handle<JSArray>> JSArray::create(
+CallResult<Handle<JSArray>> JSArray::createNoAllocPropStorage(
     Runtime &runtime,
     Handle<JSObject> prototypeHandle,
     Handle<HiddenClass> classHandle,
@@ -530,10 +540,8 @@ CallResult<Handle<JSArray>> JSArray::create(
     size_type length) {
   assert(length <= capacity && "length must be <= capacity");
 
-  // Allocate property storage with size corresponding to number of properties
-  // in the hidden class.
   assert(
-      classHandle->getNumProperties() == jsArrayPropertyCount() &&
+      classHandle->getNumProperties() >= jsArrayPropertyCount() &&
       "invalid number of properties in JSArray hidden class");
 
   auto self = JSObjectInit::initToHandle(
@@ -557,9 +565,30 @@ CallResult<Handle<JSArray>> JSArray::create(
   return self;
 }
 
+CallResult<Handle<JSArray>> JSArray::createAndAllocPropStorage(
+    Runtime &runtime,
+    Handle<JSObject> prototypeHandle,
+    Handle<HiddenClass> classHandle,
+    size_type capacity,
+    size_type length) {
+  CallResult<Handle<JSArray>> res = createNoAllocPropStorage(
+      runtime, prototypeHandle, classHandle, capacity, length);
+  if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+
+  // Allocate property storage with size corresponding to number of properties
+  // in the hidden class.
+  Handle<JSArray> arr = std::move(*res);
+  runtime.ignoreAllocationFailure(JSObject::allocatePropStorage(
+      arr, runtime, classHandle->getNumProperties()));
+
+  return arr;
+}
+
 CallResult<Handle<JSArray>>
 JSArray::create(Runtime &runtime, size_type capacity, size_type length) {
-  return JSArray::create(
+  return JSArray::createNoAllocPropStorage(
       runtime,
       Handle<JSObject>::vmcast(&runtime.arrayPrototype),
       Handle<HiddenClass>::vmcast(&runtime.arrayClass),

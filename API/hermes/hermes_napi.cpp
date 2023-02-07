@@ -327,6 +327,21 @@ size_t copyASCIIToUTF8(
     char *buf,
     size_t maxCharacters) noexcept;
 
+// Return length of UTF-8 string after converting a UTF-16 encoded string \p
+// input to UTF-8, replacing unpaired surrogates halves with the Unicode
+// replacement character. The length does not include the terminating '\0'
+// character.
+size_t utf8LengthWithReplacements(llvh::ArrayRef<char16_t> input);
+
+// Convert a UTF-16 encoded string \p input to UTF-8 stored in \p buf,
+// replacing unpaired surrogates halves with the Unicode replacement character.
+// The terminating '\0' is not written.
+// \return number of bytes written to \p buf.
+size_t convertUTF16ToUTF8WithReplacements(
+    llvh::ArrayRef<char16_t> input,
+    char *buf,
+    size_t bufSize);
+
 //=============================================================================
 // Definitions of classes and structs.
 //=============================================================================
@@ -1259,7 +1274,7 @@ class NapiEnvironment final {
   // Internal function to add non-finalizing reference.
   void addReference(NapiReference *reference) noexcept;
 
-  // Internal function to add inalizing reference.
+  // Internal function to add finalizing reference.
   void addFinalizingReference(NapiReference *reference) noexcept;
 
   //-----------------------------------------------------------------------------
@@ -1909,9 +1924,6 @@ class NapiCallbackInfo final {
       reinterpret_cast<NapiHostFunctionContext *>(context);
   NapiEnvironment &env = hfc->env_;
   assert(&runtime == &env.runtime());
-  vm::instrumentation::RuntimeStats &stats = env.runtime().getRuntimeStats();
-  const vm::instrumentation::RAIITimer timer{
-      "Host Function", stats, stats.hostFunction};
 
   NapiHandleScope scope{env};
   NapiCallbackInfo callbackInfo{*hfc, hvArgs};
@@ -2908,6 +2920,87 @@ size_t copyASCIIToUTF8(
   size_t size = std::min(input.size(), maxCharacters);
   std::char_traits<char>::copy(buf, input.data(), size);
   return size;
+}
+
+size_t utf8LengthWithReplacements(llvh::ArrayRef<char16_t> input) {
+  size_t length{0};
+  for (const char16_t *cur = input.begin(), *end = input.end(); cur < end;) {
+    char16_t c = *cur++;
+    if (LLVM_LIKELY(c <= 0x7F)) {
+      ++length;
+    } else if (c <= 0x7FF) {
+      length += 2;
+    } else if (isLowSurrogate(c)) {
+      // Unpaired low surrogate.
+      length += 3; // replacement char is 0xFFFD
+    } else if (isHighSurrogate(c)) {
+      // Leading high surrogate. See if the next character is a low surrogate.
+      if (LLVM_UNLIKELY(cur == end || !isLowSurrogate(*cur))) {
+        // Trailing or unpaired high surrogate.
+        length += 3; // replacement char is 0xFFFD
+      } else {
+        // The surrogate pair encodes a code point in range 0x10000-0x10FFFF
+        // which is encoded as four UTF-8 characters.
+        cur++; // to get the low surrogate char
+        length += 4;
+      }
+    } else {
+      // Not a surrogate.
+      length += 3;
+    }
+  }
+
+  return length;
+}
+
+size_t convertUTF16ToUTF8WithReplacements(
+    llvh::ArrayRef<char16_t> input,
+    char *buf,
+    size_t bufSize) {
+  char *curBuf = buf;
+  char *endBuf = buf + bufSize;
+  for (const char16_t *cur = input.begin(), *end = input.end();
+       cur < end && curBuf < endBuf;) {
+    char16_t c = *cur++;
+    // ASCII fast-path.
+    if (LLVM_LIKELY(c <= 0x7F)) {
+      *curBuf++ = c;
+      continue;
+    }
+
+    char32_t c32;
+    if (LLVM_LIKELY(c <= 0x7FF)) {
+      c32 = c;
+    } else if (isLowSurrogate(c)) {
+      // Unpaired low surrogate.
+      c32 = UNICODE_REPLACEMENT_CHARACTER;
+    } else if (isHighSurrogate(c)) {
+      // Leading high surrogate. See if the next character is a low surrogate.
+      if (LLVM_UNLIKELY(cur == end || !isLowSurrogate(*cur))) {
+        // Trailing or unpaired high surrogate.
+        c32 = UNICODE_REPLACEMENT_CHARACTER;
+      } else {
+        // Decode surrogate pair and increment, because we consumed two chars.
+        c32 = decodeSurrogatePair(c, *cur++);
+      }
+    } else {
+      // Not a surrogate.
+      c32 = c;
+    }
+
+    char buff[UTF8CodepointMaxBytes];
+    char *ptr = buff;
+    encodeUTF8(ptr, c32);
+    size_t u8Length = static_cast<size_t>(ptr - buff);
+    if (curBuf + u8Length <= endBuf) {
+      std::char_traits<char>::copy(curBuf, buff, u8Length);
+      curBuf += u8Length;
+    } else {
+      break;
+    }
+  }
+
+  return static_cast<size_t>(curBuf - buf);
 }
 
 //=============================================================================
@@ -4098,7 +4191,7 @@ napi_status NapiEnvironment::getProperty(
     napi_value key,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingJSError());
-  NapiHandleScope scope{*this};
+  NapiHandleScope scope{*this, result};
   CHECK_ARG(key);
   napi_value objValue;
   CHECK_NAPI(coerceToObject(object, &objValue));
@@ -4797,8 +4890,8 @@ napi_status NapiEnvironment::strictEquals(
       return setResult(false, result);
     }
     if (lhsETag == vm::HermesValue::ETag::Symbol) {
-    return setResult(phv(lhs)->getSymbol() == phv(rhs)->getSymbol(), result);
-  } else {
+      return setResult(phv(lhs)->getSymbol() == phv(rhs)->getSymbol(), result);
+    } else {
       return setResult(phv(lhs)->getBool() == phv(rhs)->getBool(), result);
     }
   } else {
@@ -4829,23 +4922,49 @@ napi_status NapiEnvironment::defineClass(
   vm::MutableHandle<vm::SymbolID> nameHandle{runtime_};
   CHECK_NAPI(getUniqueSymbolID(utf8Name, length, &nameHandle));
 
-  vm::Handle<vm::JSObject> prototypeHandle{
-      makeHandle(vm::JSObject::create(runtime_))};
+  vm::Handle<vm::JSObject> parentHandle =
+      vm::Handle<vm::JSObject>::vmcast(&runtime_.functionPrototype);
 
   std::unique_ptr<NapiHostFunctionContext> context =
       std::make_unique<NapiHostFunctionContext>(
           *this, constructor, callbackData);
-  vm::CallResult<vm::Handle<vm::FinalizableNativeConstructor>> ctorRes =
-      vm::FinalizableNativeConstructor::create(
+  vm::PseudoHandle<vm::NativeConstructor> ctorRes =
+      vm::NativeConstructor::create(
           runtime_,
-          context.release(),
+          parentHandle,
+          context.get(),
           &NapiHostFunctionContext::func,
-          &NapiHostFunctionContext::finalize,
-          prototypeHandle,
-          nameHandle.get(),
-          /*paramCount:*/ 0);
-  CHECK_NAPI(checkJSErrorStatus(ctorRes));
-  vm::Handle<vm::JSObject> classHandle = makeHandle<vm::JSObject>(*ctorRes);
+          /*paramCount:*/ 0,
+          vm::NativeConstructor::creatorFunction<vm::JSObject>,
+          vm::CellKind::JSObjectKind);
+  vm::Handle<vm::JSObject> classHandle =
+      makeHandle<vm::JSObject>(std::move(ctorRes));
+
+  vm::NativeState *ns = vm::NativeState::create(
+      runtime_, context.release(), &NapiHostFunctionContext::finalize);
+
+  vm::CallResult<bool> res = vm::JSObject::defineOwnProperty(
+      classHandle,
+      runtime_,
+      vm::Predefined::getSymbolID(
+          vm::Predefined::InternalPropertyArrayBufferExternalFinalizer),
+      vm::DefinePropertyFlags::getDefaultNewPropertyFlags(),
+      runtime_.makeHandle(ns));
+  CHECK_NAPI(checkJSErrorStatus(res));
+  RETURN_STATUS_IF_FALSE_WITH_MESSAGE(
+      *res, napi_generic_failure, "Cannot set external finalizer for a class");
+
+  vm::Handle<vm::JSObject> prototypeHandle{
+      makeHandle(vm::JSObject::create(runtime_))};
+  vm::ExecutionStatus st = vm::Callable::defineNameLengthAndPrototype(
+      vm::Handle<vm::Callable>::vmcast(classHandle),
+      runtime_,
+      nameHandle.get(),
+      /*paramCount:*/ 0,
+      prototypeHandle,
+      vm::Callable::WritablePrototype::Yes,
+      /*strictMode*/ false);
+  CHECK_NAPI(checkJSErrorStatus(st));
 
   for (size_t i = 0; i < propertyCount; ++i) {
     const napi_property_descriptor *p = properties + i;
@@ -5017,7 +5136,7 @@ napi_status NapiEnvironment::checkObjectTypeTag(
   }
 
   const uint8_t *source = reinterpret_cast<const uint8_t *>(typeTag);
-  const uint8_t *tagBufferData = tagBuffer->getDataBlock();
+  const uint8_t *tagBufferData = tagBuffer->getDataBlock(runtime_);
   return setResult(
       std::equal(
           source,
@@ -5419,9 +5538,10 @@ napi_status NapiEnvironment::createArrayBuffer(
   NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       runtime_, makeHandle<vm::JSObject>(runtime_.arrayBufferPrototype)));
-  CHECK_NAPI(checkJSErrorStatus(buffer->createDataBlock(runtime_, byteLength)));
+  CHECK_NAPI(checkJSErrorStatus(
+      vm::JSArrayBuffer::createDataBlock(runtime_, buffer, byteLength, true)));
   if (data != nullptr) {
-    *data = buffer->getDataBlock();
+    *data = buffer->getDataBlock(runtime_);
   }
   return scope.setResult(std::move(buffer));
 }
@@ -5439,7 +5559,16 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
   if (externalData != nullptr) {
     std::unique_ptr<NapiExternalBuffer> externalBuffer{new NapiExternalBuffer(
         env, externalData, byteLength, finalizeCallback, finalizeHint)};
-    buffer->setExternalBuffer(runtime_, std::move(externalBuffer));
+    vm::JSArrayBuffer::setExternalDataBlock(
+        runtime_,
+        buffer,
+        reinterpret_cast<uint8_t *>(externalData),
+        byteLength,
+        externalBuffer.release(),
+        [](void *context) {
+          std::unique_ptr<NapiExternalBuffer> externalBuffer(
+              reinterpret_cast<NapiExternalBuffer *>(context));
+        });
   }
   return scope.setResult(std::move(buffer));
 }
@@ -5461,7 +5590,7 @@ napi_status NapiEnvironment::getArrayBufferInfo(
 
   vm::JSArrayBuffer *buffer = vm::vmcast<vm::JSArrayBuffer>(*phv(arrayBuffer));
   if (data != nullptr) {
-    *data = buffer->attached() ? buffer->getDataBlock() : nullptr;
+    *data = buffer->attached() ? buffer->getDataBlock(runtime_) : nullptr;
   }
 
   if (byteLength != nullptr) {
@@ -5474,11 +5603,10 @@ napi_status NapiEnvironment::getArrayBufferInfo(
 napi_status NapiEnvironment::detachArrayBuffer(
     napi_value arrayBuffer) noexcept {
   CHECK_ARG(arrayBuffer);
-  vm::JSArrayBuffer *buffer =
-      vm::dyn_vmcast_or_null<vm::JSArrayBuffer>(*phv(arrayBuffer));
+  vm::Handle<vm::JSArrayBuffer> buffer =
+      makeHandle<vm::JSArrayBuffer>(arrayBuffer);
   RETURN_STATUS_IF_FALSE(buffer, napi_arraybuffer_expected);
-  buffer->detach(runtime_.getHeap());
-  return clearLastNativeError();
+  return checkJSErrorStatus(vm::JSArrayBuffer::detach(runtime_, buffer));
 }
 
 napi_status NapiEnvironment::isDetachedArrayBuffer(
@@ -5650,7 +5778,8 @@ napi_status NapiEnvironment::getTypedArrayInfo(
 
   if (data != nullptr) {
     *data = array->attached(runtime_)
-        ? array->getBuffer(runtime_)->getDataBlock() + array->getByteOffset()
+        ? array->getBuffer(runtime_)->getDataBlock(runtime_) +
+            array->getByteOffset()
         : nullptr;
   }
 
@@ -5717,7 +5846,7 @@ napi_status NapiEnvironment::getDataViewInfo(
 
   if (data != nullptr) {
     *data = view->attached(runtime_)
-        ? view->getBuffer(runtime_)->getDataBlock() + view->byteOffset()
+        ? view->getBuffer(runtime_)->getDataBlock(runtime_) + view->byteOffset()
         : nullptr;
   }
 
@@ -6093,7 +6222,7 @@ napi_status NapiEnvironment::serializeScript(
           napiEnv(this),
           napi_ext_buffer{
               buffer.release(),
-              sourceSize + 1,
+              sourceSize,
               [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
                 std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
               },

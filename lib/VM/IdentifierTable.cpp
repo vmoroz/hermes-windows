@@ -15,7 +15,11 @@
 #include "hermes/VM/StringView.h"
 
 #include "llvh/Support/Debug.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -175,6 +179,7 @@ void IdentifierTable::markIdentifiers(RootAcceptor &acceptor, GC &gc) {
   }
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void IdentifierTable::snapshotAddNodes(HeapSnapshot &snap) {
   snap.beginNode();
   snap.endNode(
@@ -221,6 +226,7 @@ void IdentifierTable::snapshotAddEdges(HeapSnapshot &snap) {
       GCBase::IDTracker::reserved(
           GCBase::IDTracker::ReservedObjectID::IdentifierTableMarkedSymbols));
 }
+#endif // HERMES_MEMORY_INSTRUMENTATION
 
 void IdentifierTable::visitIdentifiers(
     const std::function<void(SymbolID, const StringPrimitive *)> &acceptor) {

@@ -9,9 +9,12 @@
 #define HERMES_AST_CONTEXT_H
 
 #include "hermes/Parser/PreParser.h"
+#include "hermes/Regex/RegexSerialization.h"
 #include "hermes/Support/Allocator.h"
 #include "hermes/Support/SourceErrorManager.h"
 #include "hermes/Support/StringTable.h"
+
+#include "llvh/ADT/StringRef.h"
 
 namespace hermes {
 
@@ -34,6 +37,10 @@ struct CodeGenerationSettings {
   bool dumpOperandRegisters{false};
   /// Print source location information in IR dumps.
   bool dumpSourceLocation{false};
+  /// Print the original scope for each instruction.
+  bool dumpSourceLevelScope{false};
+  /// Print the textified callee of call instructions.
+  bool dumpTextifiedCallee{false};
   /// Print the use list if the instruction has any users.
   bool dumpUseList{false};
   /// Dump IR after every pass.
@@ -151,6 +158,9 @@ class Context {
   /// The global string table.
   StringTable stringTable_{identifierAllocator_};
 
+  std::map<std::pair<UniqueString *, UniqueString *>, CompiledRegExp>
+      compiledRegExps_{};
+
   /// If an external SourceErrorManager was not supplied to us, we allocate out
   /// private one here.
   std::unique_ptr<SourceErrorManager> ownSm_;
@@ -257,6 +267,22 @@ class Context {
     return stringTable_;
   }
 
+  void addCompiledRegExp(
+      UniqueString *pattern,
+      UniqueString *flags,
+      CompiledRegExp &&compiled) {
+    compiledRegExps_.emplace(
+        std::make_pair(pattern, flags), std::move(compiled));
+  }
+
+  CompiledRegExp &getCompiledRegExp(
+      UniqueString *pattern,
+      UniqueString *flags) {
+    auto it = compiledRegExps_.find(std::make_pair(pattern, flags));
+    assert(it != compiledRegExps_.end() && "Regex hasn't been compiled");
+    return it->second;
+  }
+
   parser::PreParsedBufferInfo *getPreParsedBufferInfo(uint32_t bufferId) {
     if (!preParsed_)
       preParsed_ = std::make_unique<parser::PreParsedData>();
@@ -288,7 +314,7 @@ class Context {
   }
 
   /// Return the textual representation of the identifier.
-  StringRef toString(Identifier iden) {
+  llvh::StringRef toString(Identifier iden) {
     return iden.str();
   }
 

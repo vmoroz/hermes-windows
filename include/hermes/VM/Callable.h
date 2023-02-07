@@ -14,7 +14,11 @@
 #include "hermes/VM/JSObject.h"
 #include "hermes/VM/NativeArgs.h"
 #include "hermes/VM/Runtime-inline.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -312,7 +316,9 @@ class Callable : public JSObject {
   Callable(Runtime &runtime, JSObject *parent, HiddenClass *clazz)
       : JSObject(runtime, parent, clazz), environment_() {}
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
+#endif
 
   /// Create a an instance of Object to be passed as the 'this' argument when
   /// invoking the constructor.
@@ -650,7 +656,9 @@ class NativeFunction : public Callable {
         functionPtr_(functionPtr) {}
 
  protected:
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
+#endif
 
   /// Call the native function with arguments already on the stack.
   static CallResult<PseudoHandle<>> _callImpl(
@@ -667,7 +675,7 @@ class NativeFunction : public Callable {
 
 /// A NativeFunction to be used as a constructor for native objects other than
 /// Object.
-class NativeConstructor : public NativeFunction {
+class NativeConstructor final : public NativeFunction {
  public:
   /// A CreatorFunction is responsible for creating the 'this' object that the
   /// constructor function sees.
@@ -693,10 +701,7 @@ class NativeConstructor : public NativeFunction {
     return CellKind::NativeConstructorKind;
   }
   static bool classof(const GCCell *cell) {
-    return kindInRange(
-        cell->getKind(),
-        CellKind::NativeConstructorKind_first,
-        CellKind::NativeConstructorKind_last);
+    return cell->getKind() == CellKind::NativeConstructorKind;
   }
 
   /// Create an instance of NativeConstructor.
@@ -803,7 +808,7 @@ class NativeConstructor : public NativeFunction {
         creator_(creator) {
   }
 
- protected:
+ private:
   /// Create a an instance of an object from \c creator_ to be passed as the
   /// 'this' argument when invoking the constructor.
   static CallResult<PseudoHandle<JSObject>> _newObjectImpl(
@@ -830,7 +835,7 @@ class JSFunction : public Callable {
   friend void JSFunctionBuildMeta(const GCCell *cell, Metadata::Builder &mb);
 
   /// CodeBlock to execute when called.
-  CodeBlock *codeBlock_;
+  XorPtr<CodeBlock, XorPtrKeyID::JSFunctionCodeBlock> codeBlock_;
 
   static constexpr auto kHasFinalizer = HasFinalizer::No;
 
@@ -846,7 +851,7 @@ class JSFunction : public Callable {
       Handle<Environment> environment,
       CodeBlock *codeBlock)
       : Callable(runtime, *parent, *clazz, environment),
-        codeBlock_(codeBlock),
+        codeBlock_(runtime, codeBlock),
         domain_(runtime, *domain, runtime.getHeap()) {
     assert(
         !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
@@ -898,18 +903,21 @@ class JSFunction : public Callable {
   }
 
   /// \return the code block containing the function code.
-  CodeBlock *getCodeBlock() const {
-    return codeBlock_;
+  CodeBlock *getCodeBlock(Runtime &runtime) const {
+    return codeBlock_.get(runtime);
   }
 
-  RuntimeModule *getRuntimeModule() const {
-    return codeBlock_->getRuntimeModule();
+  RuntimeModule *getRuntimeModule(Runtime &runtime) const {
+    return getCodeBlock(runtime)->getRuntimeModule();
   }
 
   /// Add a source location for a function in a heap snapshot.
   /// \param snap The snapshot to add a location to.
   /// \param id The object id to annotate with the location.
-  void addLocationToSnapshot(HeapSnapshot &snap, HeapSnapshot::NodeID id) const;
+  void addLocationToSnapshot(
+      HeapSnapshot &snap,
+      HeapSnapshot::NodeID id,
+      GC &gc) const;
 
  protected:
   /// Call the JavaScript function with arguments already on the stack.
@@ -917,10 +925,12 @@ class JSFunction : public Callable {
       Handle<Callable> selfHandle,
       Runtime &runtime);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
   static void
   _snapshotAddLocationsImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
   static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 };
 
 /// A function which interprets code and returns a Async Function when called.
@@ -1157,12 +1167,12 @@ class GeneratorInnerFunction final : public JSFunction {
   /// state, and places them in an internal property.
   void saveStack(Runtime &runtime);
 
-  void setNextIP(const Inst *ip) {
-    nextIPOffset_ = getCodeBlock()->getOffsetOf(ip);
+  void setNextIP(Runtime &runtime, const Inst *ip) {
+    nextIPOffset_ = getCodeBlock(runtime)->getOffsetOf(ip);
   }
 
-  const Inst *getNextIP() const {
-    return getCodeBlock()->getOffsetPtr(nextIPOffset_);
+  const Inst *getNextIP(Runtime &runtime) const {
+    return getCodeBlock(runtime)->getOffsetPtr(nextIPOffset_);
   }
 
  public:
@@ -1243,5 +1253,6 @@ class GeneratorInnerFunction final : public JSFunction {
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_CALLABLE_H
