@@ -86,6 +86,42 @@ inline const Runtime::PointerValue* Runtime::getPointerValue(
   return value.data_.pointer.ptr_;
 }
 
+#if JSI_VERSION < 6
+inline Runtime::PointerValue* Runtime::cloneBigInt(const Runtime::PointerValue* /*pv*/) {
+  std::abort(); // Not implemented yet
+}
+
+inline bool Runtime::strictEquals(const BigInt& /*a*/, const BigInt& /*b*/) const {
+  std::abort(); // Not implemented yet
+}
+#endif
+
+#if JSI_VERSION < 8
+inline BigInt Runtime::createBigIntFromInt64(int64_t) {
+  std::abort(); // Not implemented yet
+}
+
+inline BigInt Runtime::createBigIntFromUint64(uint64_t) {
+  std::abort(); // Not implemented yet
+}
+
+inline bool Runtime::bigintIsInt64(const BigInt&) {
+  std::abort(); // Not implemented yet
+}
+
+inline bool Runtime::bigintIsUint64(const BigInt&) {
+  std::abort(); // Not implemented yet
+}
+
+inline uint64_t Runtime::truncate(const BigInt&) {
+  std::abort(); // Not implemented yet
+}
+
+inline String Runtime::bigintToString(const BigInt&, int) {
+  std::abort(); // Not implemented yet
+}
+#endif
+
 inline Value Object::getProperty(Runtime& runtime, const char* name) const {
   return getProperty(runtime, String::createFromAscii(runtime, name));
 }
@@ -349,11 +385,9 @@ inline Value Function::callAsConstructor(Runtime& runtime, Args&&... args)
       runtime, {detail::toValue(runtime, std::forward<Args>(args))...});
 }
 
-#if JSI_VERSION >= 8
 String BigInt::toString(Runtime& runtime, int radix) const {
   return runtime.bigintToString(*this, radix);
 }
-#endif
 
 } // namespace jsi
 } // namespace facebook

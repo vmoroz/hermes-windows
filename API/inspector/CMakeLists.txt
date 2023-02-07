@@ -11,17 +11,17 @@ add_subdirectory(react-native)
 
 include(CMakePrintHelpers)
 cmake_print_variables(BOOST_INCLUDES)
+cmake_print_variables(FMT_SOURCE)
 cmake_print_variables(FOLLY_SOURCE)
 cmake_print_variables(REACT_NATIVE_SOURCE)
 
 set(inspector_sources
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/InspectorState.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/RuntimeAdapter.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/Thread.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/SerialExecutor.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/CallbackOStream.cpp
+  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/SerialExecutor.cpp
+  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/Thread.cpp
 )
 
 list(APPEND inspector_sources
@@ -31,7 +31,6 @@ list(APPEND inspector_sources
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/MessageTypes.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/Registration.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/RemoteObjectsTable.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/AutoAttachUtils.cpp
 )
 
 list(APPEND inspector_sources

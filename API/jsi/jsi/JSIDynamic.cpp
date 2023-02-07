@@ -58,6 +58,7 @@ Value valueFromDynamicShallow(
       return Value(String::createFromUtf8(runtime, dyn.getString()));
   }
   CHECK(false);
+  std::abort();
 }
 
 } // namespace

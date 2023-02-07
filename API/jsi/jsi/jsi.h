@@ -104,9 +104,7 @@ class Runtime;
 class Pointer;
 class PropNameID;
 class Symbol;
-#if JSI_VERSION >= 6
 class BigInt;
-#endif
 class String;
 class Object;
 class WeakObject;
@@ -290,9 +288,7 @@ class JSI_EXPORT Runtime {
   friend class Pointer;
   friend class PropNameID;
   friend class Symbol;
-#if JSI_VERSION >= 6
   friend class BigInt;
-#endif
   friend class String;
   friend class Object;
   friend class WeakObject;
@@ -315,13 +311,15 @@ class JSI_EXPORT Runtime {
     virtual ~PointerValue() = default;
   };
 
-  virtual PointerValue* cloneSymbol(const Runtime::PointerValue* pv) = 0;
+  virtual PointerValue* cloneSymbol(const PointerValue* pv) = 0;
 #if JSI_VERSION >= 6
-  virtual PointerValue* cloneBigInt(const Runtime::PointerValue* pv) = 0;
+  virtual PointerValue* cloneBigInt(const PointerValue* pv) = 0;
+#else
+  PointerValue* cloneBigInt(const PointerValue* pv);
 #endif
-  virtual PointerValue* cloneString(const Runtime::PointerValue* pv) = 0;
-  virtual PointerValue* cloneObject(const Runtime::PointerValue* pv) = 0;
-  virtual PointerValue* clonePropNameID(const Runtime::PointerValue* pv) = 0;
+  virtual PointerValue* cloneString(const PointerValue* pv) = 0;
+  virtual PointerValue* cloneObject(const PointerValue* pv) = 0;
+  virtual PointerValue* clonePropNameID(const PointerValue* pv) = 0;
 
   virtual PropNameID createPropNameIDFromAscii(
       const char* str,
@@ -345,6 +343,13 @@ class JSI_EXPORT Runtime {
   virtual bool bigintIsUint64(const BigInt&) = 0;
   virtual uint64_t truncate(const BigInt&) = 0;
   virtual String bigintToString(const BigInt&, int) = 0;
+#else
+  BigInt createBigIntFromInt64(int64_t);
+  BigInt createBigIntFromUint64(uint64_t);
+  bool bigintIsInt64(const BigInt&);
+  bool bigintIsUint64(const BigInt&);
+  uint64_t truncate(const BigInt&);
+  String bigintToString(const BigInt&, int);
 #endif
 
   virtual String createStringFromAscii(const char* str, size_t length) = 0;
@@ -425,6 +430,8 @@ class JSI_EXPORT Runtime {
   virtual bool strictEquals(const Symbol& a, const Symbol& b) const = 0;
 #if JSI_VERSION >= 6
   virtual bool strictEquals(const BigInt& a, const BigInt& b) const = 0;
+#else
+  bool strictEquals(const BigInt& a, const BigInt& b) const;
 #endif
   virtual bool strictEquals(const String& a, const String& b) const = 0;
   virtual bool strictEquals(const Object& a, const Object& b) const = 0;
@@ -575,7 +582,6 @@ class JSI_EXPORT Symbol : public Pointer {
   friend class Value;
 };
 
-#if JSI_VERSION >= 6
 /// Represents a JS BigInt.  Movable, not copyable.
 class JSI_EXPORT BigInt : public Pointer {
  public:
@@ -584,7 +590,6 @@ class JSI_EXPORT BigInt : public Pointer {
   BigInt(BigInt&& other) = default;
   BigInt& operator=(BigInt&& other) = default;
 
-#if JSI_VERSION >= 8
   /// Create a BigInt representing the signed 64-bit \p value.
   static BigInt fromInt64(Runtime& runtime, int64_t value) {
     return runtime.createBigIntFromInt64(value);
@@ -631,12 +636,10 @@ class JSI_EXPORT BigInt : public Pointer {
   /// \returns this BigInt converted to a String in base \p radix. Throws a
   /// JSIException if radix is not in the [2, 36] range.
   inline String toString(Runtime& runtime, int radix = 10) const;
-#endif
 
   friend class Runtime;
   friend class Value;
 };
-#endif
 
 /// Represents a JS String.  Movable, not copyable.
 class JSI_EXPORT String : public Pointer {
@@ -1160,9 +1163,7 @@ class JSI_EXPORT Value {
   /* implicit */ Value(T&& other) : Value(kindOf(other)) {
     static_assert(
         std::is_base_of<Symbol, T>::value ||
-#if JSI_VERSION >= 6
             std::is_base_of<BigInt, T>::value ||
-#endif
             std::is_base_of<String, T>::value ||
             std::is_base_of<Object, T>::value,
         "Value cannot be implicitly move-constructed from this type");
@@ -1185,10 +1186,14 @@ class JSI_EXPORT Value {
     new (&data_.pointer) Symbol(runtime.cloneSymbol(sym.ptr_));
   }
 
-#if JSI_VERSION >= 6
   /// Copies a BigInt lvalue into a new JS value.
+#if JSI_VERSION >= 6
   Value(Runtime& runtime, const BigInt& bigint) : Value(BigIntKind) {
     new (&data_.pointer) BigInt(runtime.cloneBigInt(bigint.ptr_));
+  }
+#else
+  Value(Runtime& /*runtime*/, const BigInt& /*bigint*/) {
+    std::abort(); // Not implemented yet
   }
 #endif
 
@@ -1266,11 +1271,13 @@ class JSI_EXPORT Value {
     return kind_ == StringKind;
   }
 
-#if JSI_VERSION >= 6
   bool isBigInt() const {
+#if JSI_VERSION >= 6
     return kind_ == BigIntKind;
-  }
+#else
+    return false;
 #endif
+  }
 
   bool isSymbol() const {
     return kind_ == SymbolKind;
@@ -1320,7 +1327,6 @@ class JSI_EXPORT Value {
   Symbol asSymbol(Runtime& runtime) const&;
   Symbol asSymbol(Runtime& runtime) &&;
 
-#if JSI_VERSION >= 6
   /// \return the BigInt value, or asserts if not a bigint.
   BigInt getBigInt(Runtime& runtime) const& {
     assert(isBigInt());
@@ -1340,7 +1346,6 @@ class JSI_EXPORT Value {
   /// bigint
   BigInt asBigInt(Runtime& runtime) const&;
   BigInt asBigInt(Runtime& runtime) &&;
-#endif
 
   /// \return the String value, or asserts if not a string.
   String getString(Runtime& runtime) const& {
@@ -1426,6 +1431,10 @@ class JSI_EXPORT Value {
 #if JSI_VERSION >= 6
   constexpr static ValueKind kindOf(const BigInt&) {
     return BigIntKind;
+  }
+#else
+  static ValueKind kindOf(const BigInt&) {
+    std::abort(); // Not implemented yet
   }
 #endif
   constexpr static ValueKind kindOf(const String&) {

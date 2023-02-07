@@ -32,10 +32,8 @@ std::string kindToString(const Value& v, Runtime* rt = nullptr) {
     return "a string";
   } else if (v.isSymbol()) {
     return "a symbol";
-#if JSI_VERSION >= 6
   } else if (v.isBigInt()) {
     return "a bigint";
-#endif
   } else {
     assert(v.isObject() && "Expecting object.");
     return rt != nullptr && v.getObject(*rt).isFunction(*rt) ? "a function"
@@ -364,7 +362,6 @@ Symbol Value::asSymbol(Runtime& rt) && {
   return std::move(*this).getSymbol(rt);
 }
 
-#if JSI_VERSION >= 6
 BigInt Value::asBigInt(Runtime& rt) const& {
   if (!isBigInt()) {
     throw JSError(
@@ -382,7 +379,6 @@ BigInt Value::asBigInt(Runtime& rt) && {
 
   return std::move(*this).getBigInt(rt);
 }
-#endif
 
 String Value::asString(Runtime& rt) const& {
   if (!isString()) {
@@ -407,7 +403,6 @@ String Value::toString(Runtime& runtime) const {
   return toString.call(runtime, *this).getString(runtime);
 }
 
-#if JSI_VERSION >= 8
 uint64_t BigInt::asUint64(Runtime& runtime) const {
   if (!isUint64(runtime)) {
     throw JSError(runtime, "Lossy truncation in BigInt64::asUint64");
@@ -421,7 +416,6 @@ int64_t BigInt::asInt64(Runtime& runtime) const {
   }
   return getInt64(runtime);
 }
-#endif
 
 Array Array::createWithElements(
     Runtime& rt,
