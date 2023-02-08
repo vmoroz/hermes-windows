@@ -70,11 +70,9 @@ inline T Runtime::make(Runtime::PointerValue* pv) {
   return T(pv);
 }
 
-#if JSI_VERSION >= 3
 inline Runtime::PointerValue* Runtime::getPointerValue(jsi::Pointer& pointer) {
   return pointer.ptr_;
 }
-#endif
 
 inline const Runtime::PointerValue* Runtime::getPointerValue(
     const jsi::Pointer& pointer) {
@@ -86,12 +84,42 @@ inline const Runtime::PointerValue* Runtime::getPointerValue(
   return value.data_.pointer.ptr_;
 }
 
+#if JSI_VERSION < 4
+bool Runtime::drainMicrotasks(int /*maxMicrotasksHint*/) {
+  std::abort(); // Not implemented yet
+}
+#endif
+
+#if JSI_VERSION < 5
+PropNameID Runtime::createPropNameIDFromSymbol(const Symbol& /*sym*/) {
+  std::abort(); // Not implemented yet
+}
+#endif
+
 #if JSI_VERSION < 6
-inline Runtime::PointerValue* Runtime::cloneBigInt(const Runtime::PointerValue* /*pv*/) {
+inline Runtime::PointerValue* Runtime::cloneBigInt(
+    const Runtime::PointerValue* /*pv*/) {
   std::abort(); // Not implemented yet
 }
 
-inline bool Runtime::strictEquals(const BigInt& /*a*/, const BigInt& /*b*/) const {
+inline bool Runtime::strictEquals(const BigInt& /*a*/, const BigInt& /*b*/)
+    const {
+  std::abort(); // Not implemented yet
+}
+#endif
+
+#if JSI_VERSION < 7
+bool Runtime::hasNativeState(const jsi::Object&) {
+  std::abort(); // Not implemented yet
+}
+
+std::shared_ptr<NativeState> Runtime::getNativeState(const jsi::Object&) {
+  std::abort(); // Not implemented yet
+}
+
+void Runtime::setNativeState(
+    const jsi::Object&,
+    std::shared_ptr<NativeState> /*state*/) {
   std::abort(); // Not implemented yet
 }
 #endif
@@ -118,6 +146,12 @@ inline uint64_t Runtime::truncate(const BigInt&) {
 }
 
 inline String Runtime::bigintToString(const BigInt&, int) {
+  std::abort(); // Not implemented yet
+}
+#endif
+
+#if JSI_VERSION < 9
+ArrayBuffer createArrayBuffer(std::shared_ptr<MutableBuffer> buffer) {
   std::abort(); // Not implemented yet
 }
 #endif
@@ -243,7 +277,6 @@ inline std::shared_ptr<HostObject> Object::getHostObject<HostObject>(
   return runtime.getHostObject(*this);
 }
 
-#if JSI_VERSION >= 7
 template <typename T>
 inline bool Object::hasNativeState(Runtime& runtime) const {
   return runtime.hasNativeState(*this) &&
@@ -266,7 +299,6 @@ inline void Object::setNativeState(
     std::shared_ptr<NativeState> state) const {
   runtime.setNativeState(*this, state);
 }
-#endif
 
 inline Array Object::getPropertyNames(Runtime& runtime) const {
   return runtime.getPropertyNames(*this);

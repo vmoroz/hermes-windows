@@ -74,19 +74,17 @@ class JSI_EXPORT StringBuffer : public Buffer {
   std::string s_;
 };
 
-#if JSI_VERSION >= 9
 /// Base class for buffers of data that need to be passed to the runtime. The
 /// result of size() and data() must not change after construction. However, the
 /// region pointed to by data() may be modified by the user or the runtime. The
 /// user must ensure that access to the contents of the buffer is properly
-/// synchronised.
+/// synchronized.
 class JSI_EXPORT MutableBuffer {
  public:
   virtual ~MutableBuffer();
   virtual size_t size() const = 0;
   virtual uint8_t* data() = 0;
 };
-#endif
 
 /// PreparedJavaScript is a base class representing JavaScript which is in a
 /// form optimized for execution, in a runtime-specific way. Construct one via
@@ -164,14 +162,12 @@ class JSI_EXPORT HostObject {
   virtual std::vector<PropNameID> getPropertyNames(Runtime& rt);
 };
 
-#if JSI_VERSION >= 7
 /// Native state (and destructor) that can be attached to any JS object
 /// using setNativeState.
 class JSI_EXPORT NativeState {
  public:
   virtual ~NativeState();
 };
-#endif
 
 /// Represents a JS runtime.  Movable, but not copyable.  Note that
 /// this object may not be thread-aware, but cannot be used safely from
@@ -260,6 +256,8 @@ class JSI_EXPORT Runtime {
   /// the time this is written, An implementation may swallow exceptions (JSC),
   /// may not pause (V8), and may not support bounded executions.
   virtual bool drainMicrotasks(int maxMicrotasksHint = -1) = 0;
+#else
+  bool drainMicrotasks(int maxMicrotasksHint = -1);
 #endif
 
   /// \return the global object
@@ -330,6 +328,8 @@ class JSI_EXPORT Runtime {
   virtual PropNameID createPropNameIDFromString(const String& str) = 0;
 #if JSI_VERSION >= 5
   virtual PropNameID createPropNameIDFromSymbol(const Symbol& sym) = 0;
+#else
+  PropNameID createPropNameIDFromSymbol(const Symbol& sym);
 #endif
   virtual std::string utf8(const PropNameID&) = 0;
   virtual bool compare(const PropNameID&, const PropNameID&) = 0;
@@ -360,6 +360,8 @@ class JSI_EXPORT Runtime {
   // implementation creates a \c String and invokes JSON.parse.
 #if JSI_VERSION >= 2
   virtual Value createValueFromJsonUtf8(const uint8_t* json, size_t length);
+#else
+  Value createValueFromJsonUtf8(const uint8_t* json, size_t length);
 #endif
 
   virtual Object createObject() = 0;
@@ -373,6 +375,10 @@ class JSI_EXPORT Runtime {
   virtual void setNativeState(
       const jsi::Object&,
       std::shared_ptr<NativeState> state) = 0;
+#else
+  bool hasNativeState(const jsi::Object&);
+  std::shared_ptr<NativeState> getNativeState(const jsi::Object&);
+  void setNativeState(const jsi::Object&, std::shared_ptr<NativeState> state);
 #endif
 
   virtual Value getProperty(const Object&, const PropNameID& name) = 0;
@@ -402,6 +408,8 @@ class JSI_EXPORT Runtime {
 #if JSI_VERSION >= 9
   virtual ArrayBuffer createArrayBuffer(
       std::shared_ptr<MutableBuffer> buffer) = 0;
+#else
+  ArrayBuffer createArrayBuffer(std::shared_ptr<MutableBuffer> buffer);
 #endif
   virtual size_t size(const Array&) = 0;
   virtual size_t size(const ArrayBuffer&) = 0;
@@ -442,9 +450,7 @@ class JSI_EXPORT Runtime {
   // Value, Symbol, String, and Object, which are all friends of Runtime.
   template <typename T>
   static T make(PointerValue* pv);
-#if JSI_VERSION >= 3
   static PointerValue* getPointerValue(Pointer& pointer);
-#endif
   static const PointerValue* getPointerValue(const Pointer& pointer);
   static const PointerValue* getPointerValue(const Value& value);
 
@@ -524,12 +530,10 @@ class JSI_EXPORT PropNameID : public Pointer {
     return runtime.createPropNameIDFromString(str);
   }
 
-#if JSI_VERSION >= 5
   /// Create a PropNameID from a JS symbol.
   static PropNameID forSymbol(Runtime& runtime, const jsi::Symbol& sym) {
     return runtime.createPropNameIDFromSymbol(sym);
   }
-#endif
 
   // Creates a vector of PropNameIDs constructed from given arguments.
   template <typename... Args>
@@ -856,7 +860,6 @@ class JSI_EXPORT Object : public Pointer {
   template <typename T = HostObject>
   std::shared_ptr<T> asHostObject(Runtime& runtime) const;
 
-#if JSI_VERSION >= 7
   /// \return whether this object has native state of type T previously set by
   /// \c setNativeState.
   template <typename T = NativeState>
@@ -875,7 +878,6 @@ class JSI_EXPORT Object : public Pointer {
   /// Throws a type error if this object is a proxy or host object.
   void setNativeState(Runtime& runtime, std::shared_ptr<NativeState> state)
       const;
-#endif
 
   /// \return same as \c getProperty(name).asObject(), except with
   /// a better exception message.
@@ -998,10 +1000,8 @@ class JSI_EXPORT ArrayBuffer : public Object {
   ArrayBuffer(ArrayBuffer&&) = default;
   ArrayBuffer& operator=(ArrayBuffer&&) = default;
 
-#if JSI_VERSION >= 9
   ArrayBuffer(Runtime& runtime, std::shared_ptr<MutableBuffer> buffer)
       : ArrayBuffer(runtime.createArrayBuffer(std::move(buffer))) {}
-#endif
 
   /// \return the size of the ArrayBuffer, according to its byteLength property.
   /// (C++ naming convention)
@@ -1232,14 +1232,9 @@ class JSI_EXPORT Value {
 
   // \return a \c Value created from a utf8-encoded JSON string.
   static Value
-  createFromJsonUtf8(Runtime& runtime, const uint8_t* json, size_t length)
-#if JSI_VERSION >= 2
-  {
+  createFromJsonUtf8(Runtime& runtime, const uint8_t* json, size_t length) {
     return runtime.createValueFromJsonUtf8(json, length);
   }
-#else
-      ;
-#endif
 
   /// \return according to the Strict Equality Comparison algorithm, see:
   /// https://262.ecma-international.org/11.0/#sec-strict-equality-comparison

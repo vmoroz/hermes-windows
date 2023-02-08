@@ -66,9 +66,7 @@ Value callGlobalFunction(Runtime& runtime, const char* name, const Value& arg) {
 
 Buffer::~Buffer() = default;
 
-#if JSI_VERSION >= 9
 MutableBuffer::~MutableBuffer() = default;
-#endif
 
 PreparedJavaScript::~PreparedJavaScript() = default;
 
@@ -85,9 +83,7 @@ void HostObject::set(Runtime& rt, const PropNameID& name, const Value&) {
 
 HostObject::~HostObject() {}
 
-#if JSI_VERSION >= 7
 NativeState::~NativeState() {}
-#endif
 
 Runtime::~Runtime() {}
 
@@ -140,24 +136,12 @@ Instrumentation& Runtime::instrumentation() {
   return sharedInstance;
 }
 
-#if JSI_VERSION >= 2
 Value Runtime::createValueFromJsonUtf8(const uint8_t* json, size_t length) {
   Function parseJson = global()
                            .getPropertyAsObject(*this, "JSON")
                            .getPropertyAsFunction(*this, "parse");
   return parseJson.call(*this, String::createFromUtf8(*this, json, length));
 }
-#else
-Value Value::createFromJsonUtf8(
-    Runtime& runtime,
-    const uint8_t* json,
-    size_t length) {
-  Function parseJson = runtime.global()
-                           .getPropertyAsObject(runtime, "JSON")
-                           .getPropertyAsFunction(runtime, "parse");
-  return parseJson.call(runtime, String::createFromUtf8(runtime, json, length));
-}
-#endif
 
 Pointer& Pointer::operator=(Pointer&& other) {
   if (ptr_) {
