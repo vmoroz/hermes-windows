@@ -16,7 +16,11 @@
 #include "hermes/VM/StringBuilder.h"
 #include "hermes/VM/StringView.h"
 #include "llvh/Support/ConvertUTF.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -93,7 +97,15 @@ CallResult<HermesValue> StringPrimitive::createEfficientImpl(
     }
     auto output = runtime.makeHandle<StringPrimitive>(*result);
     // Copy directly into the StringPrimitive storage.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4244)
+#endif
+
     std::copy(str.begin(), str.end(), output->castToASCIIPointerForWrite());
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
     return output.getHermesValue();
   }
 
@@ -196,8 +208,15 @@ CallResult<HermesValue> StringPrimitive::createDynamic(
       return ExecutionStatus::EXCEPTION;
     }
     // Copy directly into the StringPrimitive storage.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4244)
+#endif
     std::copy(
         str.begin(), str.end(), res->getString()->castToASCIIPointerForWrite());
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
     return res;
   } else {
     return DynamicUTF16StringPrimitive::create(runtime, str);
@@ -354,6 +373,7 @@ StringView StringPrimitive::createStringViewMustBeFlat(
   return StringView(self);
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 std::string StringPrimitive::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = vmcast<StringPrimitive>(cell);
   // Only convert up to EXTERNAL_STRING_THRESHOLD characters, because large
@@ -378,6 +398,7 @@ std::string StringPrimitive::_snapshotNameImpl(GCCell *cell, GC &gc) {
   }
   return out;
 }
+#endif
 
 template <typename T, bool Uniqued>
 DynamicStringPrimitive<T, Uniqued>::DynamicStringPrimitive(Ref src)
@@ -514,6 +535,7 @@ size_t ExternalStringPrimitive<T>::_mallocSizeImpl(GCCell *cell) {
   return self->calcExternalMemorySize();
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 template <typename T>
 void ExternalStringPrimitive<T>::_snapshotAddEdgesImpl(
     GCCell *cell,
@@ -540,6 +562,7 @@ void ExternalStringPrimitive<T>::_snapshotAddNodesImpl(
       self->contents_.size(),
       0);
 }
+#endif
 
 template class ExternalStringPrimitive<char16_t>;
 template class ExternalStringPrimitive<char>;
@@ -708,6 +731,7 @@ PseudoHandle<StringPrimitive> internalConcatStringPrimitives(
   }
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 template <typename T>
 void BufferedStringPrimitive<T>::_snapshotAddEdgesImpl(
     GCCell *cell,
@@ -719,6 +743,7 @@ void BufferedStringPrimitive<T>::_snapshotAddNodesImpl(
     GCCell *cell,
     GC &gc,
     HeapSnapshot &snap) {}
+#endif
 
 template class BufferedStringPrimitive<char16_t>;
 template class BufferedStringPrimitive<char>;

@@ -5,9 +5,13 @@
 
 set(api_sources
   hermes.cpp
-  hermes_napi.cpp 
+  hermes_napi.cpp
   DebuggerAPI.cpp
   )
+
+if (WIN32)
+  list(APPEND api_sources hermes_win.cpp)
+endif()
 
 file(GLOB api_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
@@ -47,15 +51,12 @@ add_hermes_library(compileJS STATIC CompileJS.cpp LINK_LIBS hermesPublic)
 set(HERMES_ENABLE_EH ON)
 set(HERMES_ENABLE_RTTI ON)
 
-set(HERMES_VER_MAJOR ${PROJECT_VERSION_MAJOR})
-set(HERMES_VER_MINOR ${PROJECT_VERSION_MINOR})
-set(HERMES_VER_BUILD ${PROJECT_VERSION_PATCH})
-set(HERMES_VER_REVISION ${VERSION_SUFFIX})
+add_library(libhermes SHARED ${api_sources})
 
-configure_file(version.rc.in version.rc @ONLY)
-
-add_library(libhermes SHARED ${api_sources}
-  ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+if (WIN32)
+  configure_file(version.rc.in version.rc @ONLY)
+  target_sources(libhermes PRIVATE  ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+endif()
 
 # This is configured using a cmake flag instead of a separate target, because
 # we need the output to be named "libhermes.so".
@@ -65,6 +66,7 @@ if(HERMES_BUILD_LEAN_LIBHERMES)
 endif()
 
 target_link_libraries(libhermes
+  PRIVATE
   jsi
   hermesNapi
   ${LIBHERMES_VM_DEP}
@@ -72,7 +74,7 @@ target_link_libraries(libhermes
 target_link_options(libhermes PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
 
 # Export the required header directory
-target_include_directories(libhermes PUBLIC ..)
+target_include_directories(libhermes PUBLIC .. ../../public ${HERMES_JSI_DIR})
 
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.

@@ -1,8 +1,8 @@
 #include <verrsrc.h>
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION @HERMES_VER_MAJOR@,@HERMES_VER_MINOR@,@HERMES_VER_BUILD@,0
-PRODUCTVERSION @HERMES_VER_MAJOR@,@HERMES_VER_MINOR@,@HERMES_VER_BUILD@,0
+FILEVERSION @HERMES_FILE_VERSION_BIN@
+PRODUCTVERSION @HERMES_FILE_VERSION_BIN@
 FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -17,13 +17,12 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Hermes JavaScript Engine"
-            VALUE "FileVersion", "@HERMES_VER_MAJOR@.@HERMES_VER_MINOR@.@HERMES_VER_BUILD@.@HERMES_VER_REVISION@"
+            VALUE "FileDescription", "Hermes JavaScript Engine Library"
+            VALUE "FileVersion", "@HERMES_FILE_VERSION@"
             VALUE "InternalName", "hermes.dll"
             VALUE "OriginalFilename", "hermes.dll"
             VALUE "ProductName", "Hermes JavaScript Engine"
-            VALUE "ProductVersion", "@HERMES_VER_MAJOR@.@HERMES_VER_MINOR@.@HERMES_VER_BUILD@.@HERMES_VER_REVISION@"
-            VALUE "ProductShortName", "Hermes"
+            VALUE "ProductVersion", "@HERMES_RELEASE_VERSION@"
         END
     END
     BLOCK "VarFileInfo"

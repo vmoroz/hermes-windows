@@ -19,12 +19,18 @@
 
 #include "llvh/ADT/simple_ilist.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
 class CodeBlock;
 class Runtime;
 
+using BigIntID = uint32_t;
 using StringID = uint32_t;
 
 namespace detail {
@@ -255,6 +261,9 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// Does no JS heap allocation.
   std::string getStringFromStringID(StringID stringID);
 
+  /// \return the bigint bytes for a given \p bigIntId.
+  llvh::ArrayRef<uint8_t> getBigIntBytesFromBigIntId(BigIntID bigIntId) const;
+
   /// \return the RegExp bytecode for a given regexp ID.
   llvh::ArrayRef<uint8_t> getRegExpBytecodeFromRegExpID(
       uint32_t regExpId) const;
@@ -357,9 +366,11 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// RuntimeModule.
   size_t additionalMemorySize() const;
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Add native nodes and edges to heap snapshots.
   void snapshotAddNodes(GC &gc, HeapSnapshot &snap) const;
   void snapshotAddEdges(GC &gc, HeapSnapshot &snap) const;
+#endif
 
   /// Find the cached hidden class for an object literal, if one exists.
   /// \param keyBufferIndex value of NewObjectWithBuffer instruction.
@@ -464,5 +475,6 @@ using RuntimeModuleList = llvh::simple_ilist<RuntimeModule>;
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif

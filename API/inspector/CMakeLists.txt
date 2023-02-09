@@ -16,22 +16,21 @@ cmake_print_variables(REACT_NATIVE_SOURCE)
 
 set(inspector_sources
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/Inspector.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/InspectorState.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/RuntimeAdapter.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/Thread.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/SerialExecutor.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/CallbackOStream.cpp
+  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/SerialExecutor.cpp
+  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/detail/Thread.cpp
 )
 
 list(APPEND inspector_sources
+  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/AutoAttachUtils.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/Connection.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/ConnectionDemux.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/MessageConverters.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/MessageTypes.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/Registration.cpp
   ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/RemoteObjectsTable.cpp
-  ${REACT_NATIVE_SOURCE}/ReactCommon/hermes/inspector/chrome/AutoAttachUtils.cpp
 )
 
 list(APPEND inspector_sources
@@ -108,8 +107,18 @@ file(GLOB inspector_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.
 set(HERMES_ENABLE_EH ON)
 set(HERMES_ENABLE_RTTI ON)
 
-add_library(hermesinspector SHARED ${inspector_sources} ${inspector_headers} ${folly_sources} ${inspector_public_headers})
+configure_file(version.rc.in version.rc @ONLY)
+
+add_library(hermesinspector SHARED
+  ${inspector_sources}
+  ${inspector_headers}
+  ${folly_sources}
+  ${inspector_public_headers}
+  ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+
 target_link_libraries(hermesinspector
+  hermesPublic
+  jsi
   libhermes
 )
 hermes_link_icu(hermesinspector)
@@ -139,9 +148,6 @@ endif()
 set_target_properties(hermesinspector PROPERTIES
   COMPILE_FLAGS "${compile_flags}"
   LINK_OPTIONS "$<IF:$<CONFIG:Debug>,${link_flags_debug},${link_flags_release}>"
-  # Declare our dependency on std::make_unique
-  CXX_STANDARD 17
-  CXX_STANDARD_REQUIRED 17
   OUTPUT_NAME hermesinspector
 )
 

@@ -62,7 +62,7 @@ endif()
 # - npm/package.json
 # - hermes-engine.podspec
 project(Hermes
-        VERSION 0.69.0
+        VERSION 0.12.0
         LANGUAGES C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
@@ -77,6 +77,15 @@ include(Lit)
 if(NOT DEFINED HERMES_RELEASE_VERSION)
   set(HERMES_RELEASE_VERSION ${PROJECT_VERSION})
 endif()
+
+# The version that we put inside of DLL files
+if(NOT DEFINED HERMES_FILE_VERSION)
+  set(HERMES_FILE_VERSION "${PROJECT_VERSION}.0")
+endif()
+
+# The file version convertible to number representation.
+# We must replace dots with commas.
+string(REPLACE "." "," HERMES_FILE_VERSION_BIN ${HERMES_FILE_VERSION})
 
 find_package(Python COMPONENTS Interpreter)
 if (NOT Python_Interpreter_FOUND)
@@ -127,7 +136,7 @@ set(HERMESVM_INDIRECT_THREADING ${DEFAULT_INTERPRETER_THREADING} CACHE BOOL
 set(HERMESVM_ALLOW_COMPRESSED_POINTERS ON CACHE BOOL
   "Enable compressed pointers. If this is on and the target is a 64-bit build, compressed pointers will be used.")
 
-if(APPLE OR WIN32)
+if(APPLE)
     set(DEFAULT_CONTIGUOUS_HEAP OFF)
 else()
     set(DEFAULT_CONTIGUOUS_HEAP ON)
@@ -213,12 +222,11 @@ set(HERMES_USE_STATIC_ICU OFF CACHE BOOL
 set(HERMES_UNICODE_LITE OFF CACHE BOOL
   "Enable to use internal no-op unicode functionality instead of relying on underlying system libraries")
 
-set(HERMES_ENABLE_DEBUGGER_DEFAULT OFF)
-if (NOT HERMES_IS_MOBILE_BUILD)
-    set(HERMES_ENABLE_DEBUGGER_DEFAULT ON)
-endif()
-set(HERMES_ENABLE_DEBUGGER ${HERMES_ENABLE_DEBUGGER_DEFAULT} CACHE BOOL
+set(HERMES_ENABLE_DEBUGGER ON CACHE BOOL
   "Build with debugger support")
+
+set(HERMES_MEMORY_INSTRUMENTATION ${HERMES_ENABLE_DEBUGGER} CACHE BOOL
+  "Build with memory instrumentation support")
 
 set(HERMES_ENABLE_IR_INSTRUMENTATION OFF CACHE BOOL
     "Build IR instrumentation support")
@@ -231,9 +239,6 @@ set(HERMESVM_EXCEPTION_ON_OOM OFF CACHE BOOL
 
 set(HERMESVM_PLATFORM_LOGGING OFF CACHE BOOL
     "hermesLog(...) is enabled, using the platform's logging mechanism")
-
-set(HERMESJSI_DISABLE_STATS_TIMER OFF CACHE BOOL
-    "Record timing stats for every JS<->C++ transition")
 
 set(HERMES_RUN_WASM OFF CACHE BOOL
     "Emit Asm.js/Wasm unsafe compiler intrinsics")
@@ -330,6 +335,11 @@ if(HERMES_RELEASE_VERSION)
     add_definitions(-DHERMES_RELEASE_VERSION="${HERMES_RELEASE_VERSION}")
 endif()
 
+# Make the HERMES_FILE_VERSION accessible for version printing in C++.
+if(HERMES_FILE_VERSION)
+    add_definitions(-DHERMES_FILE_VERSION="${HERMES_FILE_VERSION}")
+endif()
+
 if(HERMES_ENABLE_IR_INSTRUMENTATION)
     add_definitions(-DHERMES_ENABLE_IR_INSTRUMENTATION)
 endif()
@@ -413,9 +423,6 @@ if(HERMESVM_EXCEPTION_ON_OOM)
 endif()
 if(HERMESVM_PLATFORM_LOGGING)
     add_definitions(-DHERMESVM_PLATFORM_LOGGING)
-endif()
-if(HERMESJSI_DISABLE_STATS_TIMER)
-    add_definitions(-DHERMESJSI_DISABLE_STATS_TIMER)
 endif()
 if(HERMES_RUN_WASM)
     add_definitions(-DHERMES_RUN_WASM)
@@ -556,7 +563,7 @@ endif()
 # This adds the correct -rpath link flag as necessary.
 function(hermes_link_icu target_name)
   get_target_property(target_type ${target_name} TYPE)
-#  target_link_libraries(${target_name} ${ICU_LIBRARIES})
+  # target_link_libraries(${target_name} ${ICU_LIBRARIES})
 
   if (HERMES_USE_STATIC_ICU)
     if ((NOT EMSCRIPTEN) AND target_type MATCHES "EXECUTABLE|STATIC_LIBRARY")
@@ -601,12 +608,23 @@ if (HERMES_ENABLE_DEBUGGER)
   add_definitions(-DHERMES_ENABLE_DEBUGGER)
 endif()
 
+if (HERMES_MEMORY_INSTRUMENTATION)
+  add_definitions(-DHERMES_MEMORY_INSTRUMENTATION)
+endif()
+
 if (HERMES_MSVC_CHECKED_ITERATORS)
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=1)
 endif()
 
 if (HERMES_MSVC_USE_PLATFORM_UNICODE_WINGLOB)
   add_definitions(-DUSE_PLATFORM_UNICODE_WINGLOB)
+endif()
+
+# Disables the GCC 64-to-32 bit truncation diagnostic if the compiler supports
+# -Wshorten-64-to-32.
+check_cxx_compiler_flag("-Wshorten-64-to-32" CXX_SUPPORTS_SHORTEN_64_TO_32)
+if (${CXX_SUPPORTS_SHORTEN_64_TO_32})
+  add_definitions(-DHERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32)
 endif()
 
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++17")
@@ -707,7 +725,7 @@ if(HERMES_ENABLE_TEST_SUITE)
     set(coverage_directory ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/coverage)
   endif()
 
-  set(HERMES_LIT_TEST_PARAMS
+  set(HERMES_LIT_TEST_PARAMS_BASE
     test_exec_root=${CMAKE_CURRENT_BINARY_DIR}/test
     unittests_dir=${CMAKE_CURRENT_BINARY_DIR}/unittests
     debugger_enabled=${HERMES_ENABLE_DEBUGGER}
@@ -715,7 +733,7 @@ if(HERMES_ENABLE_TEST_SUITE)
     use_flowparser=${HERMES_USE_FLOWPARSER}
     hbc_deltaprep=${HERMES_TOOLS_OUTPUT_DIR}/hbc-deltaprep
     dependency_extractor=${HERMES_TOOLS_OUTPUT_DIR}/dependency-extractor
-    FileCheck=${HERMES_TOOLS_OUTPUT_DIR}//FileCheck
+    FileCheck=${HERMES_TOOLS_OUTPUT_DIR}/FileCheck
     hermes=${HERMES_TOOLS_OUTPUT_DIR}/hermes
     hermesc=${HERMES_TOOLS_OUTPUT_DIR}/hermesc
     hdb=${HERMES_TOOLS_OUTPUT_DIR}/hdb
@@ -732,6 +750,16 @@ if(HERMES_ENABLE_TEST_SUITE)
     coverage=${coverage_directory}
     )
 
+  set(HERMES_LIT_TEST_PARAMS
+    ${HERMES_LIT_TEST_PARAMS_BASE}
+    FileCheckOrRegen=${HERMES_TOOLS_OUTPUT_DIR}/FileCheck
+    )
+
+  set(HERMES_LIT_UPDATE_PARAMS
+    ${HERMES_LIT_TEST_PARAMS_BASE}
+    "FileCheckOrRegen=${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/utils/lit-expect-gen/generate.py"
+    )
+
   set(LLVH_LIT_ARGS "-sv")
 
   add_lit_testsuite(check-hermes "Running the Hermes regression tests"
@@ -742,48 +770,15 @@ if(HERMES_ENABLE_TEST_SUITE)
     ARGS ${HERMES_TEST_EXTRA_ARGS}
     )
   set_target_properties(check-hermes PROPERTIES FOLDER "Hermes regression tests")
-endif()
 
-# This is how github release files are built.
-
-set(HERMES_GITHUB_DIR ${CMAKE_CURRENT_BINARY_DIR}/github)
-file(MAKE_DIRECTORY ${HERMES_GITHUB_DIR})
-string(TOLOWER ${CMAKE_SYSTEM_NAME} HERMES_GITHUB_SYSTEM_NAME)
-
-if(HERMES_ENABLE_TOOLS)
-  set(HERMES_CLI_GITHUB_FILE hermes-cli-${HERMES_GITHUB_SYSTEM_NAME}-v${HERMES_RELEASE_VERSION}.tar.gz)
-  set(HERMES_GITHUB_BUNDLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/bundle)
-
-  # If the github release should include extra files (like dlls)
-  if (HERMES_GITHUB_RESOURCE_DIR STREQUAL "")
-    set(HERMES_GITHUB_EXTRAS "")
-  else()
-    if (IS_DIRECTORY ${HERMES_GITHUB_RESOURCE_DIR})
-      file(GLOB HERMES_GITHUB_EXTRAS "${HERMES_GITHUB_RESOURCE_DIR}/*")
-    else()
-      message(FATAL_ERROR "Extra resource dir not found: ${HERMES_GITHUB_RESOURCE_DIR}")
-    endif()
-  endif()
-
-  # We need this as a separate target because Ninja doesn't run PRE_BUILD/PRE_LINKs in time
-  add_custom_command(
-    OUTPUT ${HERMES_GITHUB_BUNDLE_DIR}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${HERMES_GITHUB_BUNDLE_DIR})
-  add_custom_target(make_bundle_dir DEPENDS ${HERMES_GITHUB_BUNDLE_DIR})
-
-  add_custom_command(
-    OUTPUT ${HERMES_GITHUB_DIR}/${HERMES_CLI_GITHUB_FILE}
-    WORKING_DIRECTORY ${HERMES_GITHUB_BUNDLE_DIR}
-    DEPENDS hermes hermesc hdb hbcdump make_bundle_dir
-    VERBATIM
-    COMMAND
-      # We need bin/hermes or Release/bin/hermes.exe in a predictable location
-      ${CMAKE_COMMAND} -E copy $<TARGET_FILE:hermes> $<TARGET_FILE:hermesc> $<TARGET_FILE:hdb> $<TARGET_FILE:hbcdump> ${HERMES_GITHUB_EXTRAS} .
-    COMMAND
-      ${CMAKE_COMMAND} -E tar zcf ${HERMES_GITHUB_DIR}/${HERMES_CLI_GITHUB_FILE} .
-  )
-
-  add_custom_target(
-    github-cli-release
-    DEPENDS ${HERMES_GITHUB_DIR}/${HERMES_CLI_GITHUB_FILE})
+  # update-lit will regenerate the expectations for all tests that are verified with FileCheckOrRegen.
+  # All other tests are run normally.
+  add_lit_testsuite(update-lit "Running the Hermes regression tests, and updating auto-generated expectations."
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unittests
+    PARAMS ${HERMES_LIT_UPDATE_PARAMS}
+    DEPENDS ${HERMES_TEST_DEPS}
+    ARGS ${HERMES_TEST_EXTRA_ARGS}
+    )
+  set_target_properties(update-lit PROPERTIES FOLDER "Hermes regression tests")
 endif()

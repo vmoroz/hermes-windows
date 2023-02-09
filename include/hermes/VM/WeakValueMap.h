@@ -63,12 +63,11 @@ class WeakValueMap {
     return internalFind(key) != map_.end();
   }
 
-  /// Look for a key and return the value as Handle<T> if found or llvh::None if
-  /// not found.
-  llvh::Optional<Handle<ValueT>> lookup(Runtime &runtime, const KeyT &key) {
+  /// Look for \p key and return the value if found or nullptr otherwise.
+  ValueT *lookup(Runtime &runtime, const KeyT &key) {
     auto it = internalFind(key);
     if (it == map_.end())
-      return llvh::None;
+      return nullptr;
     return it->second.get(runtime);
   }
 
@@ -102,15 +101,6 @@ class WeakValueMap {
     }
     pruneInvalid(runtime.getHeap());
     return true;
-  }
-
-  /// Insert key/value into the map. Used by deserialization.
-  /// Use WeakRefSlot* to initialize WeakRefs directly. Don't prune entries.
-  void insertUnsafe(const KeyT &key, WeakRefSlot *ptr) {
-    auto res = map_.try_emplace(key, WeakRef<ValueT>(ptr)).second;
-    if (!res) {
-      hermes_fatal("shouldn't fail to insert during deserialization");
-    }
   }
 
   /// This method should be invoked during garbage collection. It calls

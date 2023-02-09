@@ -526,15 +526,6 @@ void MallocGC::updateWeakReferences() {
   }
 }
 
-WeakRefSlot *MallocGC::allocWeakSlot(CompressedPointer ptr) {
-  weakSlots_.push_back({ptr});
-  return &weakSlots_.back();
-}
-
-void MallocGC::freeWeakSlot(WeakRefSlot *slot) {
-  slot->free(nullptr);
-}
-
 #ifndef NDEBUG
 bool MallocGC::validPointer(const void *p) const {
   return dbgContains(p) && static_cast<const GCCell *>(p)->isValid();
@@ -547,12 +538,18 @@ bool MallocGC::dbgContains(const void *p) const {
   isValid = isValid || newPointers_.find(header) != newPointers_.end();
   return isValid;
 }
+
+bool MallocGC::needsWriteBarrier(void *loc, GCCell *value) {
+  return false;
+}
 #endif
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void MallocGC::createSnapshot(llvh::raw_ostream &os) {
   GCCycle cycle{*this};
   GCBase::createSnapshot(*this, os);
 }
+#endif
 
 void MallocGC::creditExternalMemory(GCCell *, uint32_t size) {
   externalBytes_ += size;

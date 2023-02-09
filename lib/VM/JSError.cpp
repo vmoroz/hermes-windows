@@ -19,7 +19,11 @@
 #include "hermes/VM/StringView.h"
 
 #include "llvh/ADT/ScopeExit.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 //===----------------------------------------------------------------------===//
@@ -385,7 +389,7 @@ ExecutionStatus JSError::recordStackTrace(
   // Check if the top frame is a JSFunction and we don't have the current
   // CodeBlock, do nothing.
   if (!skipTopFrame && !codeBlock && frames.begin() != frames.end() &&
-      frames.begin()->getCalleeCodeBlock()) {
+      frames.begin()->getCalleeCodeBlock(runtime)) {
     return ExecutionStatus::RETURNED;
   }
 
@@ -437,7 +441,7 @@ ExecutionStatus JSError::recordStackTrace(
     // the interpreter.
     StackFramePtr prev = cf->getPreviousFrame();
     if (prev != framesEnd) {
-      if (CodeBlock *parentCB = prev->getCalleeCodeBlock()) {
+      if (CodeBlock *parentCB = prev->getCalleeCodeBlock(runtime)) {
         savedCodeBlock = parentCB;
       }
     }
@@ -731,7 +735,7 @@ static const CodeBlock *getLeafCodeBlock(
   const Callable *callable = callableHandle.get();
   while (callable) {
     if (auto *asFunction = dyn_vmcast<const JSFunction>(callable)) {
-      return asFunction->getCodeBlock();
+      return asFunction->getCodeBlock(runtime);
     }
     if (auto *asBoundFunction = dyn_vmcast<const BoundFunction>(callable)) {
       callable = asBoundFunction->getTarget(runtime);

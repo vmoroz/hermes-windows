@@ -11,7 +11,11 @@
 #include "hermes/VM/GCPointer-inline.h"
 #include "hermes/VM/JSLib.h"
 #include "hermes/VM/Profiler/SamplingProfiler.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -21,13 +25,17 @@ const VTable Domain::vt{
     _finalizeImpl,
     nullptr,
     _mallocSizeImpl,
-    nullptr,
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::Code,
         nullptr,
         Domain::_snapshotAddEdgesImpl,
         Domain::_snapshotAddNodesImpl,
-        nullptr}};
+        nullptr}
+#endif
+};
 
 void DomainBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const Domain *>(cell);
@@ -72,6 +80,7 @@ size_t Domain::_mallocSizeImpl(GCCell *cell) {
       self->runtimeModules_.capacity_in_bytes() + rmSize;
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void Domain::_snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
   auto *const self = vmcast<Domain>(cell);
   for (RuntimeModule *rm : self->runtimeModules_)
@@ -94,6 +103,7 @@ void Domain::_snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
         0);
   }
 }
+#endif
 
 ExecutionStatus Domain::importCJSModuleTable(
     Handle<Domain> self,

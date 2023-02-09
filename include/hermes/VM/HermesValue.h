@@ -109,7 +109,11 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace llvh {
 class raw_ostream;
 }
@@ -117,6 +121,7 @@ class raw_ostream;
 namespace hermes {
 namespace vm {
 
+class BigIntPrimitive;
 class StringPrimitive;
 template <typename T>
 class PseudoHandle;
@@ -146,6 +151,7 @@ class HermesValue {
     /// Pointer tags start here.
     FirstPointer,
     Str = FirstPointer,
+    BigInt,
     Object,
     Last = llvh::SignExtend32<8>(0xff),
   };
@@ -167,6 +173,8 @@ class HermesValue {
     Native2 = (TagType)Tag::NativeValue * 2 + 1,
     Str1 = (TagType)Tag::Str * 2,
     Str2 = (TagType)Tag::Str * 2 + 1,
+    BigInt1 = (TagType)Tag::BigInt * 2,
+    BigInt2 = (TagType)Tag::BigInt * 2 + 1,
     Object1 = (TagType)Tag::Object * 2,
     Object2 = (TagType)Tag::Object * 2 + 1,
 
@@ -248,6 +256,14 @@ class HermesValue {
     return RV;
   }
 
+  inline static HermesValue encodeBigIntValueUnsafe(
+      const BigIntPrimitive *val) {
+    validatePointer(val);
+    HermesValue RV(reinterpret_cast<uintptr_t>(val), Tag::BigInt);
+    assert(RV.isBigInt());
+    return RV;
+  }
+
   inline static HermesValue encodeObjectValue(void *val) {
     assert(val && "Null pointers require special handling.");
     return encodeObjectValueUnsafe(val);
@@ -256,6 +272,11 @@ class HermesValue {
   inline static HermesValue encodeStringValue(const StringPrimitive *val) {
     assert(val && "Null pointers require special handling.");
     return encodeStringValueUnsafe(val);
+  }
+
+  inline static HermesValue encodeBigIntValue(const BigIntPrimitive *val) {
+    assert(val && "Null pointers require special handling.");
+    return encodeBigIntValueUnsafe(val);
   }
 
   inline static HermesValue encodeNativeUInt32(uint32_t val) {
@@ -379,6 +400,9 @@ class HermesValue {
   inline bool isString() const {
     return getTag() == Tag::Str;
   }
+  inline bool isBigInt() const {
+    return getTag() == Tag::BigInt;
+  }
   inline bool isDouble() const {
     return raw_ < ((uint64_t)Tag::First << kNumDataBits);
   }
@@ -428,6 +452,11 @@ class HermesValue {
   inline StringPrimitive *getString() const {
     assert(isString());
     return static_cast<StringPrimitive *>(getPointer());
+  }
+
+  inline BigIntPrimitive *getBigInt() const {
+    assert(isBigInt());
+    return static_cast<BigIntPrimitive *>(getPointer());
   }
 
   inline void *getObject() const {
@@ -683,5 +712,6 @@ struct SafeNumericEncoder<T, true> {
 
 } // end namespace vm
 } // end namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_HERMESVALUE_H

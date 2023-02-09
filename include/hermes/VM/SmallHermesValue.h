@@ -23,10 +23,18 @@
 namespace hermes {
 namespace vm {
 
+class BigIntPrimitive;
 class StringPrimitive;
 class GCCell;
 class Runtime;
 
+/// If compressed pointers are allowed, then we should also compress
+/// HermesValues. This means that when compressed pointers are allowed,
+/// SmallHermesValue will almost always be 32 bits, except with MallocGC, which
+/// does not support compressed pointers. Depending on the compressed pointers
+/// flag, SmallHermesValue will alias SmallHermesValueAdaptor or HermesValue32.
+
+#ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
 /// An adaptor class that provides the API of a SmallHermesValue is internally
 /// just a HermesValue.
 class SmallHermesValueAdaptor : protected HermesValue {
@@ -49,6 +57,7 @@ class SmallHermesValueAdaptor : protected HermesValue {
 
   using HermesValue::getBool;
   using HermesValue::getSymbol;
+  using HermesValue::isBigInt;
   using HermesValue::isBool;
   using HermesValue::isEmpty;
   using HermesValue::isNull;
@@ -81,6 +90,9 @@ class SmallHermesValueAdaptor : protected HermesValue {
   }
   StringPrimitive *getString(PointerBase &) const {
     return HermesValue::getString();
+  }
+  BigIntPrimitive *getBigInt(PointerBase &) const {
+    return HermesValue::getBigInt();
   }
   double getNumber(PointerBase &) const {
     return HermesValue::getNumber();
@@ -118,6 +130,11 @@ class SmallHermesValueAdaptor : protected HermesValue {
       Runtime &) {
     return SmallHermesValueAdaptor{hv};
   }
+  static SmallHermesValueAdaptor encodeBigIntValue(
+      BigIntPrimitive *ptr,
+      PointerBase *) {
+    return SmallHermesValueAdaptor{HermesValue::encodeBigIntValue(ptr)};
+  }
   static SmallHermesValueAdaptor
   encodeNumberValue(double d, GC &, PointerBase &) {
     return SmallHermesValueAdaptor{HermesValue::encodeNumberValue(d)};
@@ -154,6 +171,9 @@ class SmallHermesValueAdaptor : protected HermesValue {
     return SmallHermesValueAdaptor{HermesValue::encodeEmptyValue()};
   }
 };
+using SmallHermesValue = SmallHermesValueAdaptor;
+
+#else // #ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
 
 /// A compressed HermesValue that is always equal to the size of a
 /// CompressedPointer. It uses the least significant bits (guaranteed to be zero
@@ -178,6 +198,7 @@ class HermesValue32 {
   /// types are distinguished using an additional bit found in the "ETag".
   enum class Tag : uint8_t {
     Object,
+    BigInt,
     String,
     BoxedDouble,
     SmallInt,
@@ -206,6 +227,8 @@ class HermesValue32 {
   enum class ETag : uint8_t {
     Object1 = static_cast<uint8_t>(Tag::Object),
     Object2 = static_cast<uint8_t>(Tag::Object) + kETagOffset,
+    BigInt1 = static_cast<uint8_t>(Tag::BigInt),
+    BigInt2 = static_cast<uint8_t>(Tag::BigInt) + kETagOffset,
     String1 = static_cast<uint8_t>(Tag::String),
     String2 = static_cast<uint8_t>(Tag::String) + kETagOffset,
     BoxedDouble1 = static_cast<uint8_t>(Tag::BoxedDouble),
@@ -287,9 +310,21 @@ class HermesValue32 {
     return fromRaw(p | static_cast<RawType>(tag));
   }
 
-  static constexpr SmiType doubleToSmi(double d)
+  static SmiType truncateDouble(double d)
       LLVM_NO_SANITIZE("float-cast-overflow") {
     return d;
+  }
+
+  /// Truncate \p d to an integer that fits in kNumSmiBits.
+  static SmiType doubleToSmi(double d) {
+    // Use a generic lambda here so the inactive case of the if constexpr does
+    // not need to compile.
+    return [](auto d) {
+      if constexpr (kNumSmiBits <= 32)
+        return llvh::SignExtend32<kNumSmiBits>(truncateDouble(d));
+      else
+        return llvh::SignExtend64<kNumSmiBits>(truncateDouble(d));
+    }(d);
   }
 
  public:
@@ -309,6 +344,9 @@ class HermesValue32 {
   }
   bool isObject() const {
     return getTag() == Tag::Object;
+  }
+  bool isBigInt() const {
+    return getTag() == Tag::BigInt;
   }
   bool isString() const {
     return getTag() == Tag::String;
@@ -357,6 +395,7 @@ class HermesValue32 {
     return CompressedPointer::fromRaw(raw_).get(pb);
   }
 
+  inline BigIntPrimitive *getBigInt(PointerBase &pb) const;
   inline StringPrimitive *getString(PointerBase &pb) const;
   inline double getNumber(PointerBase &pb) const;
 
@@ -406,6 +445,12 @@ class HermesValue32 {
     return encodePointerImpl(cp, Tag::Object);
   }
 
+  static HermesValue32 encodeBigIntValue(
+      BigIntPrimitive *ptr,
+      PointerBase &pb) {
+    return encodePointerImpl(reinterpret_cast<GCCell *>(ptr), Tag::BigInt, pb);
+  }
+
   static HermesValue32 encodeStringValue(
       StringPrimitive *ptr,
       PointerBase &pb) {
@@ -437,18 +482,9 @@ class HermesValue32 {
     raw_ = other.raw_;
   }
 };
+using SmallHermesValue = HermesValue32;
 
-/// If compressed pointers are allowed, then we should also compress
-/// HermesValues. This means that when compressed pointers are allowed,
-/// SmallHermesValue will almost always be 32 bits, except with MallocGC, which
-/// does not support compressed pointers.
-using SmallHermesValue =
-#ifdef HERMESVM_ALLOW_COMPRESSED_POINTERS
-    HermesValue32
-#else
-    SmallHermesValueAdaptor
-#endif
-    ;
+#endif // #ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
 
 static_assert(
     std::is_trivial<SmallHermesValue>::value,

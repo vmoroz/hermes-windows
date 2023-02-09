@@ -15,7 +15,11 @@
 
 #include <cassert>
 #include <cstdint>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -160,7 +164,11 @@ inline void *PointerBase::basedToPointerNonNull(BasedPointer ptr) const {
   return reinterpret_cast<void *>(addr);
 }
 
-inline PointerBase::PointerBase() {}
+inline PointerBase::PointerBase() {
+  // The PointerBase must be segment aligned, so that the compressed pointer
+  // corresponding to the start of a segment is also segment aligned.
+  assert(llvh::alignmentAdjustment(this, AlignedStorage::size()) == 0);
+}
 
 inline void *PointerBase::basedToPointer(BasedPointer ptr) const {
   return ptr ? basedToPointerNonNull(ptr) : nullptr;
@@ -254,5 +262,5 @@ inline void PointerBase::setSegment(unsigned idx, void *segStart) {
 
 } // namespace vm
 } // namespace hermes
-
+#pragma GCC diagnostic pop
 #endif

@@ -50,7 +50,11 @@ class WeakRefSlot {
   inline GCCell *get(PointerBase &base, GC &gc) const;
 
   /// Same as get, but without a read barrier
-  inline GCCell *getNoBarrierUnsafe(PointerBase &base) const;
+  GCCell *getNoBarrierUnsafe(PointerBase &base) const {
+    // Cannot check state() here because it can race with marking code.
+    assert(hasValue() && "tried to access collected referent");
+    return value_.root.getNonNullNoBarrierUnsafe(base);
+  }
 
   CompressedPointer getNoBarrierUnsafe() const {
     assert(hasValue() && "tried to access collected referent");
@@ -83,7 +87,7 @@ class WeakRefSlot {
   }
 
   void mark() {
-    assert(state() == Unmarked && "already marked");
+    assert(state() != Free && "Cannot mark a free slot.");
     state_ = Marked;
   }
 
@@ -108,10 +112,8 @@ class WeakRefSlot {
 
   /// Re-initialize a freed slot.
   void reset(CompressedPointer ptr) {
-    static_assert(Unmarked == 0, "unmarked state should not need tagging");
-    state_ = Unmarked;
+    state_ = Marked;
     value_.root = ptr;
-    assert(state() == Unmarked && "initial state should be unmarked");
   }
 
  private:
