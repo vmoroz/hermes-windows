@@ -108,7 +108,7 @@ set(HERMES_ENABLE_RTTI ON)
 
 configure_file(version.rc.in version.rc @ONLY)
 
-add_library(hermesinspector SHARED
+add_hermes_library(hermesinspector
   ${inspector_sources}
   ${inspector_headers}
   ${folly_sources}
@@ -118,7 +118,6 @@ add_library(hermesinspector SHARED
 target_link_libraries(hermesinspector
   hermesPublic
   jsi
-  libhermes
 )
 hermes_link_icu(hermesinspector)
 

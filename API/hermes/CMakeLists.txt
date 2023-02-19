@@ -18,7 +18,7 @@ file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 
 add_hermes_library(hermesapi
         ${api_sources}
-        LINK_LIBS jsi hermesVMRuntime hermesNapi)
+        LINK_LIBS jsi hermesVMRuntime hermesNapi hermesinspector)
 target_include_directories(hermesapi PUBLIC ..)
 
 add_hermes_library(hermesapiLean
@@ -69,6 +69,7 @@ target_link_libraries(libhermes
   PRIVATE
   jsi
   hermesNapi
+  hermesinspector
   ${LIBHERMES_VM_DEP}
 )
 target_link_options(libhermes PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
