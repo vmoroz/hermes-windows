@@ -25,6 +25,10 @@
     return hermes_error; \
   }
 
+napi_status napi_create_hermes_env(
+    ::hermes::vm::Runtime &runtime,
+    napi_env *env);
+
 namespace facebook::hermes {
 
 // Forward declaration
@@ -184,7 +188,14 @@ class RuntimeWrapper {
  public:
   explicit RuntimeWrapper(bool withWER = false)
       : hermesRuntime_(
-            withWER ? makeHermesRuntimeWithWER() : makeHermesRuntime()) {}
+            withWER ? makeHermesRuntimeWithWER() : makeHermesRuntime()) {
+    ::hermes::vm::Runtime &vmRuntime = getVMRuntime(*hermesRuntime_);
+    napi_create_hermes_env(vmRuntime, &env_);
+  }
+
+  ~RuntimeWrapper() {
+    napi_ext_env_unref(env_);
+  }
 
   hermes_status getNonAbiSafeRuntime(void **nonAbiSafeRuntime) {
     CHECK_ARG(nonAbiSafeRuntime);
@@ -207,8 +218,14 @@ class RuntimeWrapper {
     return hermes_ok;
   }
 
+  hermes_status getNodeApi(napi_env *env) {
+    *env = env_;
+    return hermes_ok;
+  }
+
  private:
   std::unique_ptr<HermesRuntime> hermesRuntime_;
+  napi_env env_;
 };
 
 } // namespace facebook::hermes
@@ -262,4 +279,8 @@ hermes_status hermes_sampling_profiler_remove(hermes_runtime runtime) {
 hermes_status hermes_sampling_profiler_dump_to_file(const char *filename) {
   facebook::hermes::HermesRuntime::dumpSampledTraceToFile(filename);
   return hermes_ok;
+}
+
+hermes_status hermes_get_napi_env(hermes_runtime runtime, napi_env *env) {
+  return CHECKED_RUNTIME(runtime)->getNodeApi(env);
 }

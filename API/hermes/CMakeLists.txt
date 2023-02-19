@@ -108,9 +108,6 @@ set_target_properties(libhermes PROPERTIES
   OUTPUT_NAME hermes
 )
 
-set_property(TARGET libhermes APPEND_STRING PROPERTY
-  COMPILE_DEFINITIONS "CREATE_SHARED_LIBRARY")
-
 if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)
   set_target_properties(libhermes PROPERTIES
     FRAMEWORK TRUE

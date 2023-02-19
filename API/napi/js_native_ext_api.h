@@ -90,11 +90,6 @@ typedef struct _napi_ext_env_settings {
 
 } napi_ext_env_settings;
 
-// Creates a new napi_env with ref count 1.
-NAPI_EXTERN napi_status __cdecl napi_ext_create_env(
-    napi_ext_env_settings *settings,
-    napi_env *env);
-
 // Increments the napi_env ref count by 1.
 NAPI_EXTERN napi_status __cdecl napi_ext_env_ref(napi_env env);
 

@@ -148,6 +148,3 @@ set_target_properties(hermesinspector PROPERTIES
   LINK_OPTIONS "$<IF:$<CONFIG:Debug>,${link_flags_debug},${link_flags_release}>"
   OUTPUT_NAME hermesinspector
 )
-
-set_property(TARGET hermesinspector APPEND_STRING PROPERTY
-  COMPILE_DEFINITIONS "CREATE_SHARED_LIBRARY")

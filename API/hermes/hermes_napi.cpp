@@ -73,7 +73,7 @@
 #define NAPI_VERSION 8
 #define NAPI_EXPERIMENTAL
 
-#include "napi/hermes_napi.h"
+#include "hermes_api.h"
 
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/DebuggerAPI.h"
@@ -533,6 +533,7 @@ class NapiEnvironment final {
  public:
   // Initializes a new instance of NapiEnvironment.
   explicit NapiEnvironment(
+      vm::Runtime &runtime,
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
 
  private:
@@ -1682,7 +1683,6 @@ class NapiEnvironment final {
   std::atomic<int> refCount_{1};
 
   // Reference to the wrapped Hermes runtime.
-  std::shared_ptr<vm::Runtime> rt_;
   vm::Runtime &runtime_;
 
   // Reference to itself for convenient use in macros.
@@ -1721,7 +1721,7 @@ class NapiEnvironment final {
 
   // Helps to change the behaviour of finalizers when the environment is
   // shutting down.
-  bool isShuttingdown_{false};
+  bool isShuttingDown_{false};
 
   // Temporary GC roots for ordered sets used to collect property names.
   llvh::SmallVector<NapiOrderedSet<vm::HermesValue> *, 16> orderedSets_;
@@ -3008,12 +3008,9 @@ size_t convertUTF16ToUTF8WithReplacements(
 //=============================================================================
 
 NapiEnvironment::NapiEnvironment(
+    vm::Runtime &runtime,
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    : rt_(vm::Runtime::create(runtimeConfig.rebuild()
-                                  .withRegisterStack(nullptr)
-                                  .withMaxNumRegisters(kMaxNumRegisters)
-                                  .build())),
-      runtime_(*rt_) {
+    : runtime_(runtime) {
   switch (runtimeConfig.getCompilationMode()) {
     case vm::SmartCompilation:
       compileFlags_.lazy = true;
@@ -3122,7 +3119,7 @@ NapiEnvironment::NapiEnvironment(
 }
 
 NapiEnvironment::~NapiEnvironment() {
-  isShuttingdown_ = true;
+  isShuttingDown_ = true;
   if (instanceData_) {
     instanceData_->finalize(*this);
     instanceData_ = nullptr;
@@ -5303,7 +5300,7 @@ napi_status NapiEnvironment::createReference(
 
 napi_status NapiEnvironment::deleteReference(napi_ref ref) noexcept {
   CHECK_ARG(ref);
-  if (isShuttingdown_) {
+  if (isShuttingDown_) {
     // During shutdown all references are going to be deleted by finalizers.
     return clearLastNativeError();
   }
@@ -7606,23 +7603,19 @@ napi_status __cdecl napi_object_seal(napi_env env, napi_value object) {
 // Hermes specific API
 //=============================================================================
 
-napi_status __cdecl napi_create_hermes_env(napi_env *env) {
+napi_status napi_create_hermes_env(
+    ::hermes::vm::Runtime &runtime,
+    napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = hermes::napi::napiEnv(new hermes::napi::NapiEnvironment());
+  *env = hermes::napi::napiEnv(new hermes::napi::NapiEnvironment(runtime));
   return napi_status::napi_ok;
 }
 
 //=============================================================================
 // Node-API extensions to host JS engine and to implement JSI
 //=============================================================================
-
-napi_status __cdecl napi_ext_create_env(
-    napi_ext_env_settings *settings,
-    napi_env *env) {
-  return napi_create_hermes_env(env);
-}
 
 napi_status __cdecl napi_ext_env_ref(napi_env env) {
   return CHECKED_ENV(env)->incRefCount();
