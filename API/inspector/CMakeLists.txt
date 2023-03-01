@@ -33,10 +33,6 @@ list(APPEND inspector_sources
 )
 
 list(APPEND inspector_sources
-  ${REACT_NATIVE_SOURCE}/ReactCommon/jsinspector/InspectorInterfaces.cpp
-)
-
-list(APPEND inspector_sources
    ../jsi/jsi/JSIDynamic.cpp
 )
 

@@ -24,15 +24,20 @@ class HermesRuntimeHolder {
 };
 
 std::vector<NapiTestData> NapiEnvFactories() {
-  return {{"../js", [runtimeHolder = std::shared_ptr<HermesRuntimeHolder>()]() mutable {
-             hermes_runtime runtime{};
-             hermes_create_runtime(&runtime);
-             runtimeHolder = std::make_shared<HermesRuntimeHolder>(runtime);
+  return {
+      {"../js",
+       [runtimeHolder = std::shared_ptr<HermesRuntimeHolder>()]() mutable {
+         hermes_config config{};
+         hermes_create_config(&config);
 
-             napi_env env{};
-             hermes_get_napi_env(runtime, &env);
-             return env;
-           }}};
+         hermes_runtime runtime{};
+         hermes_create_runtime(config, &runtime);
+         runtimeHolder = std::make_shared<HermesRuntimeHolder>(runtime);
+
+         napi_env env{};
+         hermes_get_node_api_env(runtime, &env);
+         return env;
+       }}};
 }
 
 } // namespace napitest
