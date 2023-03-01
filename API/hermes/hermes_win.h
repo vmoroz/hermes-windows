@@ -11,11 +11,4 @@
 #include "hermes.h"
 #include "hermes_api.h"
 
-namespace facebook::hermes {
-
-HERMES_EXPORT std::unique_ptr<HermesRuntime> __cdecl makeHermesRuntimeWithWER();
-HERMES_EXPORT void __cdecl hermesCrashHandler(HermesRuntime &runtime, int fd);
-
-} // namespace facebook::hermes
-
 #endif // HERMES_HERMES_WIN_H

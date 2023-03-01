@@ -20,6 +20,11 @@
       ? hermes_error             \
       : reinterpret_cast<facebook::hermes::RuntimeWrapper *>(runtime)
 
+#define CHECKED_CONFIG(config) \
+  (config == nullptr)          \
+      ? hermes_error           \
+      : reinterpret_cast<facebook::hermes::ConfigWrapper *>(config)
+
 #define CHECK_ARG(arg)   \
   if (arg == nullptr) {  \
     return hermes_error; \
@@ -184,6 +189,234 @@ void hermesCrashHandler(HermesRuntime &runtime, int fd) {
   json.endJSONL();
 }
 
+class Task {
+ public:
+  virtual void invoke() noexcept = 0;
+
+  static void run(void *task) {
+    reinterpret_cast<Task *>(task)->invoke();
+  }
+
+  static void deleteTask(void *task, void * /*deleterData*/) {
+    delete reinterpret_cast<Task *>(task);
+  }
+};
+
+template <typename TLambda>
+class LambdaTask : public Task {
+ public:
+  template <typename T>
+  LambdaTask(T &&lambda) : lambda_(std::forward<T>(lambda)) {}
+
+  void invoke() noexcept override {
+    lambda_();
+  }
+
+ private:
+  TLambda lambda_;
+};
+
+class TaskRunner {
+ public:
+  TaskRunner(
+      void *data,
+      hermes_task_runner_post_task_cb postTaskCallback,
+      hermes_data_delete_cb deleteCallback,
+      void *deleterData)
+      : data_(data),
+        postTaskCallback_(postTaskCallback),
+        deleteCallback_(deleteCallback),
+        deleterData_(deleterData) {}
+
+  ~TaskRunner() {
+    if (deleteCallback_ != nullptr) {
+      deleteCallback_(data_, deleterData_);
+    }
+  }
+
+  void post(std::unique_ptr<Task> task) {
+    postTaskCallback_(
+        this, task.release(), &Task::run, &Task::deleteTask, nullptr);
+  }
+
+ private:
+  void *data_;
+  hermes_task_runner_post_task_cb postTaskCallback_;
+  hermes_data_delete_cb deleteCallback_;
+  void *deleterData_;
+};
+
+class ScriptBuffer {
+ public:
+  ScriptBuffer(
+      const uint8_t *data,
+      size_t size,
+      hermes_data_delete_cb deleteCallback,
+      void *deleterData)
+      : data_(data),
+        size_(size),
+        deleteCallback_(deleteCallback),
+        deleterData_(deleterData) {}
+
+  ~ScriptBuffer() {
+    if (deleteCallback_ != nullptr) {
+      deleteCallback_(const_cast<uint8_t *>(data_), deleterData_);
+    }
+  }
+
+  const uint8_t *data() {
+    return data_;
+  }
+
+  size_t size() {
+    return size_;
+  }
+
+  static void deleteBuffer(void * /*data*/, void *scriptBuffer) {
+    delete reinterpret_cast<ScriptBuffer *>(scriptBuffer);
+  }
+
+ private:
+  const uint8_t *data_{};
+  size_t size_{};
+  hermes_data_delete_cb deleteCallback_{};
+  void *deleterData_{};
+};
+
+class ScriptCache {
+ public:
+  ScriptCache(
+      void *data,
+      hermes_script_cache_load_cb loadCallback,
+      hermes_script_cache_store_cb storeCallback,
+      hermes_data_delete_cb deleteCallback,
+      void *deleterData)
+      : data_(data),
+        loadCallback_(loadCallback),
+        storeCallback_(storeCallback),
+        deleteCallback_(deleteCallback),
+        deleterData_(deleterData) {}
+
+  ~ScriptCache() {
+    if (deleteCallback_ != nullptr) {
+      deleteCallback_(data_, deleterData_);
+    }
+  }
+
+  std::unique_ptr<ScriptBuffer> load(hermes_script_cache_metadata *metadata) {
+    const uint8_t *buffer{};
+    size_t size{};
+    hermes_data_delete_cb deleteCallback{};
+    void *deleterData{};
+    loadCallback_(
+        this, metadata, &buffer, &size, &deleteCallback, &deleterData);
+    return std::make_unique<ScriptBuffer>(
+        buffer, size, deleteCallback, deleterData);
+  }
+
+  void store(
+      hermes_script_cache_metadata *metadata,
+      std::unique_ptr<ScriptBuffer> scriptBuffer) {
+    storeCallback_(
+        this,
+        metadata,
+        scriptBuffer->data(),
+        scriptBuffer->size(),
+        &ScriptBuffer::deleteBuffer,
+        scriptBuffer.get());
+    scriptBuffer.release();
+  }
+
+ private:
+  void *data_;
+  hermes_script_cache_load_cb loadCallback_;
+  hermes_script_cache_store_cb storeCallback_;
+  hermes_data_delete_cb deleteCallback_;
+  void *deleterData_;
+};
+
+class ConfigWrapper {
+ public:
+  ConfigWrapper() = default;
+  ConfigWrapper(ConfigWrapper &&) = default;
+  ConfigWrapper &operator=(ConfigWrapper &&) = default;
+
+  ConfigWrapper(const ConfigWrapper &) = delete;
+  ConfigWrapper &operator=(const ConfigWrapper &) = delete;
+
+  hermes_status enableDefaultCrashHandler(bool value) {
+    enableDefaultCrashHandler_ = value;
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status enableDebugger(bool value) {
+    enableDebugger_ = value;
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status setDebuggerRuntimeName(std::string name) {
+    debuggerRuntimeName_ = std::move(name);
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status setDebuggerPort(uint16_t port) {
+    debuggerPort_ = port;
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status setDebuggerBreakOnStart(bool value) {
+    debuggerBreakOnStart_ = value;
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status setTaskRunner(std::unique_ptr<TaskRunner> taskRunner) {
+    taskRunner_ = std::move(taskRunner);
+    return hermes_status::hermes_ok;
+  }
+
+  hermes_status setScriptCache(std::unique_ptr<ScriptCache> scriptCache) {
+    scriptCache_ = std::move(scriptCache);
+    return hermes_status::hermes_ok;
+  }
+
+  bool enableDefaultCrashHandler() {
+    return enableDefaultCrashHandler_;
+  }
+
+  bool enableDebugger() {
+    return enableDebugger_;
+  }
+
+  const std::string &debuggerRuntimeName() {
+    return debuggerRuntimeName_;
+  }
+
+  uint16_t debuggerPort() {
+    return debuggerPort_;
+  }
+
+  bool debuggerBreakOnStart() {
+    return debuggerBreakOnStart_;
+  }
+
+  TaskRunner *taskRunner() {
+    return taskRunner_.get();
+  }
+
+  ScriptCache *scriptCache() {
+    return scriptCache_.get();
+  }
+
+ private:
+  bool enableDefaultCrashHandler_{};
+  bool enableDebugger_{};
+  std::string debuggerRuntimeName_;
+  uint16_t debuggerPort_{};
+  bool debuggerBreakOnStart_{};
+  std::unique_ptr<TaskRunner> taskRunner_;
+  std::unique_ptr<ScriptCache> scriptCache_;
+};
+
 class RuntimeWrapper {
  public:
   explicit RuntimeWrapper(bool withWER = false)
@@ -230,57 +463,119 @@ class RuntimeWrapper {
 
 } // namespace facebook::hermes
 
-hermes_status hermes_create_runtime(hermes_runtime *runtime) {
+HERMES_API hermes_create_runtime(
+    hermes_config config,
+    hermes_runtime *runtime) {
   CHECK_ARG(runtime);
   *runtime =
       reinterpret_cast<hermes_runtime>(new facebook::hermes::RuntimeWrapper());
   return hermes_ok;
 }
 
-hermes_status hermes_create_runtime_with_wer(hermes_runtime *runtime) {
+HERMES_API hermes_delete_runtime(hermes_runtime runtime) {
   CHECK_ARG(runtime);
-  *runtime = reinterpret_cast<hermes_runtime>(
-      new facebook::hermes::RuntimeWrapper(/*withWER*/ true));
+  delete reinterpret_cast<facebook::hermes::RuntimeWrapper *>(runtime);
   return hermes_ok;
 }
 
-hermes_status hermes_delete_runtime(hermes_runtime runtime) {
-  return hermes_ok;
+HERMES_API hermes_get_node_api_env(hermes_runtime runtime, napi_env *env) {
+  return CHECKED_RUNTIME(runtime)->getNodeApi(env);
 }
 
-hermes_status hermes_get_non_abi_safe_runtime(
-    hermes_runtime runtime,
-    void **non_abi_safe_runtime) {
-  return CHECKED_RUNTIME(runtime)->getNonAbiSafeRuntime(non_abi_safe_runtime);
-}
-
-hermes_status hermes_dump_crash_data(hermes_runtime runtime, int32_t fd) {
+HERMES_API hermes_dump_crash_data(hermes_runtime runtime, int32_t fd) {
   return CHECKED_RUNTIME(runtime)->dumpCrashData(fd);
 }
 
-hermes_status hermes_sampling_profiler_enable() {
+HERMES_API hermes_sampling_profiler_enable() {
   facebook::hermes::HermesRuntime::enableSamplingProfiler();
   return hermes_ok;
 }
 
-hermes_status hermes_sampling_profiler_disable() {
+HERMES_API hermes_sampling_profiler_disable() {
   facebook::hermes::HermesRuntime::disableSamplingProfiler();
   return hermes_ok;
 }
 
-hermes_status hermes_sampling_profiler_add(hermes_runtime runtime) {
+HERMES_API hermes_sampling_profiler_add(hermes_runtime runtime) {
   return CHECKED_RUNTIME(runtime)->addToProfiler();
 }
 
-hermes_status hermes_sampling_profiler_remove(hermes_runtime runtime) {
+HERMES_API hermes_sampling_profiler_remove(hermes_runtime runtime) {
   return CHECKED_RUNTIME(runtime)->removeFromProfiler();
 }
 
-hermes_status hermes_sampling_profiler_dump_to_file(const char *filename) {
+HERMES_API hermes_sampling_profiler_dump_to_file(const char *filename) {
   facebook::hermes::HermesRuntime::dumpSampledTraceToFile(filename);
   return hermes_ok;
 }
 
-hermes_status hermes_get_napi_env(hermes_runtime runtime, napi_env *env) {
-  return CHECKED_RUNTIME(runtime)->getNodeApi(env);
+HERMES_API hermes_create_config(hermes_config *config) {
+  CHECK_ARG(config);
+  *config =
+      reinterpret_cast<hermes_config>(new facebook::hermes::ConfigWrapper());
+  return hermes_ok;
+}
+
+HERMES_API hermes_delete_config(hermes_config config) {
+  CHECK_ARG(config);
+  delete reinterpret_cast<facebook::hermes::ConfigWrapper *>(config);
+  return hermes_ok;
+}
+
+HERMES_API hermes_config_enable_default_crash_handler(
+    hermes_config config,
+    bool value) {
+  return CHECKED_CONFIG(config)->enableDefaultCrashHandler(value);
+}
+
+HERMES_API hermes_config_enable_debugger(hermes_config config, bool value) {
+  return CHECKED_CONFIG(config)->enableDebugger(value);
+}
+
+HERMES_API hermes_config_set_debugger_runtime_name(
+    hermes_config config,
+    const char *name) {
+  return CHECKED_CONFIG(config)->setDebuggerRuntimeName(name);
+}
+
+HERMES_API hermes_config_set_debugger_port(
+    hermes_config config,
+    uint16_t port) {
+  return CHECKED_CONFIG(config)->setDebuggerPort(port);
+}
+
+HERMES_API hermes_config_set_debugger_break_on_start(
+    hermes_config config,
+    bool value) {
+  return CHECKED_CONFIG(config)->setDebuggerBreakOnStart(value);
+}
+
+HERMES_API hermes_config_set_task_runner(
+    hermes_config config,
+    void *task_runner_data,
+    hermes_task_runner_post_task_cb task_runner_post_task_cb,
+    hermes_data_delete_cb task_runner_data_delete_cb,
+    void *deleter_data) {
+  return CHECKED_CONFIG(config)->setTaskRunner(
+      std::make_unique<facebook::hermes::TaskRunner>(
+          task_runner_data,
+          task_runner_post_task_cb,
+          task_runner_data_delete_cb,
+          deleter_data));
+}
+
+HERMES_API hermes_config_set_script_cache(
+    hermes_config config,
+    void *script_cache_data,
+    hermes_script_cache_load_cb script_cache_load_cb,
+    hermes_script_cache_store_cb script_cache_store_cb,
+    hermes_data_delete_cb script_cache_data_delete_cb,
+    void *deleter_data) {
+  return CHECKED_CONFIG(config)->setScriptCache(
+      std::make_unique<facebook::hermes::ScriptCache>(
+          script_cache_data,
+          script_cache_load_cb,
+          script_cache_store_cb,
+          script_cache_data_delete_cb,
+          deleter_data));
 }
