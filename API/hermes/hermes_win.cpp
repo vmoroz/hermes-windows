@@ -7,6 +7,7 @@
 
 #include "hermes_win.h"
 #include "hermes/VM/Runtime.h"
+#include "hermes/inspector/RuntimeAdapter.h"
 #include "llvh/Support/raw_os_ostream.h"
 
 #define NOMINMAX
@@ -205,8 +206,7 @@ class Task {
 template <typename TLambda>
 class LambdaTask : public Task {
  public:
-  template <typename T>
-  LambdaTask(T &&lambda) : lambda_(std::forward<T>(lambda)) {}
+  LambdaTask(TLambda &&lambda) : lambda_(std::move(lambda)) {}
 
   void invoke() noexcept override {
     lambda_();
@@ -459,6 +459,37 @@ class RuntimeWrapper {
  private:
   std::unique_ptr<HermesRuntime> hermesRuntime_;
   napi_env env_;
+};
+
+class HermesExecutorRuntimeAdapter final
+    : public facebook::hermes::inspector::RuntimeAdapter {
+ public:
+  HermesExecutorRuntimeAdapter(
+      std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime,
+      std::shared_ptr<TaskRunner> taskRunner)
+      : hermesRuntime_(std::move(hermesRuntime)),
+        taskRunner_(std::move(taskRunner)) {}
+
+  virtual ~HermesExecutorRuntimeAdapter() = default;
+
+  HermesRuntime &getRuntime() override {
+    return *hermesRuntime_;
+  }
+
+  void tickleJs() override {
+    // The queue will ensure that hermesRuntime_ is still valid when this gets
+    // invoked.
+    taskRunner_->post(
+        std::unique_ptr<Task>(new LambdaTask([&runtime = *hermesRuntime_]() {
+          auto func =
+              runtime.global().getPropertyAsFunction(runtime, "__tickleJs");
+          func.call(runtime);
+        })));
+  }
+
+ private:
+  std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime_;
+  std::shared_ptr<TaskRunner> taskRunner_;
 };
 
 } // namespace facebook::hermes

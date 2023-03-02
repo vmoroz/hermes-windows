@@ -93,6 +93,8 @@ include_directories(${FOLLY_SOURCE})
 include_directories(${REACT_NATIVE_SOURCE}/ReactCommon)
 include_directories(stubs)
 
+set(REACT_NATIVE_SOURCE ${REACT_NATIVE_SOURCE} PARENT_SCOPE)
+
 file(GLOB inspector_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 file(GLOB inspector_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 

@@ -19,12 +19,12 @@ file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 add_hermes_library(hermesapi
         ${api_sources}
         LINK_LIBS jsi hermesVMRuntime hermesNapi hermesinspector)
-target_include_directories(hermesapi PUBLIC ..)
+target_include_directories(hermesapi PUBLIC .. ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 add_hermes_library(hermesapiLean
         ${api_sources}
         LINK_LIBS jsi hermesVMRuntimeLean hermesNapi)
-target_include_directories(hermesapiLean PUBLIC ..)
+target_include_directories(hermesapiLean PUBLIC .. ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 add_hermes_library(synthTrace hermes_tracing.cpp SynthTrace.cpp TracingRuntime.cpp
   LINK_LIBS hermesapi)
@@ -75,7 +75,7 @@ target_link_libraries(libhermes
 target_link_options(libhermes PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
 
 # Export the required header directory
-target_include_directories(libhermes PUBLIC .. ../../public ${HERMES_JSI_DIR})
+target_include_directories(libhermes PUBLIC .. ../../public ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
