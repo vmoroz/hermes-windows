@@ -8,6 +8,7 @@
 #include "hermes_win.h"
 #include "hermes/VM/Runtime.h"
 #include "hermes/inspector/RuntimeAdapter.h"
+#include "hermes/inspector/chrome/Registration.h"
 #include "llvh/Support/raw_os_ostream.h"
 
 #define NOMINMAX
@@ -163,12 +164,6 @@ class CrashManagerImpl : public ::hermes::vm::CrashManager {
   std::map<CallbackKey, CallbackFunc> _callbacks;
   std::map<intptr_t, size_t> _largeMemBlocks;
 };
-
-std::unique_ptr<HermesRuntime> makeHermesRuntimeWithWER() {
-  auto cm = std::make_shared<CrashManagerImpl>();
-  return makeHermesRuntime(
-      ::hermes::vm::RuntimeConfig::Builder().withCrashMgr(cm).build());
-}
 
 void hermesCrashHandler(HermesRuntime &runtime, int fd) {
   ::hermes::vm::Runtime &vmRuntime = getVMRuntime(runtime);
@@ -337,13 +332,6 @@ class ScriptCache {
 
 class ConfigWrapper {
  public:
-  ConfigWrapper() = default;
-  ConfigWrapper(ConfigWrapper &&) = default;
-  ConfigWrapper &operator=(ConfigWrapper &&) = default;
-
-  ConfigWrapper(const ConfigWrapper &) = delete;
-  ConfigWrapper &operator=(const ConfigWrapper &) = delete;
-
   hermes_status enableDefaultCrashHandler(bool value) {
     enableDefaultCrashHandler_ = value;
     return hermes_status::hermes_ok;
@@ -383,11 +371,11 @@ class ConfigWrapper {
     return enableDefaultCrashHandler_;
   }
 
-  bool enableDebugger() {
+  bool enableDebugger() const {
     return enableDebugger_;
   }
 
-  const std::string &debuggerRuntimeName() {
+  const std::string &debuggerRuntimeName() const {
     return debuggerRuntimeName_;
   }
 
@@ -399,12 +387,21 @@ class ConfigWrapper {
     return debuggerBreakOnStart_;
   }
 
-  TaskRunner *taskRunner() {
-    return taskRunner_.get();
+  std::shared_ptr<TaskRunner> taskRunner() const {
+    return taskRunner_;
   }
 
   ScriptCache *scriptCache() {
     return scriptCache_.get();
+  }
+
+  ::hermes::vm::RuntimeConfig getRuntimeConfig() const {
+    ::hermes::vm::RuntimeConfig::Builder config;
+    if (enableDefaultCrashHandler_) {
+      auto crashManager = std::make_shared<CrashManagerImpl>();
+      config.withCrashMgr(crashManager);
+    }
+    return config.build();
   }
 
  private:
@@ -413,17 +410,45 @@ class ConfigWrapper {
   std::string debuggerRuntimeName_;
   uint16_t debuggerPort_{};
   bool debuggerBreakOnStart_{};
-  std::unique_ptr<TaskRunner> taskRunner_;
-  std::unique_ptr<ScriptCache> scriptCache_;
+  std::shared_ptr<TaskRunner> taskRunner_;
+  std::shared_ptr<ScriptCache> scriptCache_;
+};
+
+class HermesRuntime;
+
+class HermesExecutorRuntimeAdapter final
+    : public facebook::hermes::inspector::RuntimeAdapter {
+ public:
+  HermesExecutorRuntimeAdapter(
+      std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime,
+      std::shared_ptr<TaskRunner> taskRunner);
+
+  virtual ~HermesExecutorRuntimeAdapter() = default;
+  HermesRuntime &getRuntime() override;
+  void tickleJs() override;
+
+ private:
+  std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime_;
+  std::shared_ptr<TaskRunner> taskRunner_;
 };
 
 class RuntimeWrapper {
  public:
-  explicit RuntimeWrapper(bool withWER = false)
-      : hermesRuntime_(
-            withWER ? makeHermesRuntimeWithWER() : makeHermesRuntime()) {
-    ::hermes::vm::Runtime &vmRuntime = getVMRuntime(*hermesRuntime_);
-    napi_create_hermes_env(vmRuntime, &env_);
+  explicit RuntimeWrapper(const ConfigWrapper &config)
+      : hermesRuntime_(makeHermesRuntime(config.getRuntimeConfig())),
+        vmRuntime_(getVMRuntime(*hermesRuntime_)) {
+    napi_create_hermes_env(vmRuntime_, &env_);
+
+    if (config.enableDebugger()) {
+      auto adapter = std::make_unique<HermesExecutorRuntimeAdapter>(
+          hermesRuntime_, config.taskRunner());
+      std::string debuggerRuntimeName = config.debuggerRuntimeName();
+      if (debuggerRuntimeName.empty()) {
+        debuggerRuntimeName = "Hermes";
+      }
+      facebook::hermes::inspector::chrome::enableDebugging(
+          std::move(adapter), debuggerRuntimeName);
+    }
   }
 
   ~RuntimeWrapper() {
@@ -457,40 +482,32 @@ class RuntimeWrapper {
   }
 
  private:
-  std::unique_ptr<HermesRuntime> hermesRuntime_;
+  ConfigWrapper config_;
+  std::shared_ptr<HermesRuntime> hermesRuntime_;
+  ::hermes::vm::Runtime &vmRuntime_;
   napi_env env_;
 };
 
-class HermesExecutorRuntimeAdapter final
-    : public facebook::hermes::inspector::RuntimeAdapter {
- public:
-  HermesExecutorRuntimeAdapter(
-      std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime,
-      std::shared_ptr<TaskRunner> taskRunner)
-      : hermesRuntime_(std::move(hermesRuntime)),
-        taskRunner_(std::move(taskRunner)) {}
+HermesExecutorRuntimeAdapter::HermesExecutorRuntimeAdapter(
+    std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime,
+    std::shared_ptr<TaskRunner> taskRunner)
+    : hermesRuntime_(std::move(hermesRuntime)),
+      taskRunner_(std::move(taskRunner)) {}
 
-  virtual ~HermesExecutorRuntimeAdapter() = default;
+HermesRuntime &HermesExecutorRuntimeAdapter::getRuntime() {
+  return *hermesRuntime_;
+}
 
-  HermesRuntime &getRuntime() override {
-    return *hermesRuntime_;
-  }
-
-  void tickleJs() override {
-    // The queue will ensure that hermesRuntime_ is still valid when this gets
-    // invoked.
-    taskRunner_->post(
-        std::unique_ptr<Task>(new LambdaTask([&runtime = *hermesRuntime_]() {
-          auto func =
-              runtime.global().getPropertyAsFunction(runtime, "__tickleJs");
-          func.call(runtime);
-        })));
-  }
-
- private:
-  std::shared_ptr<facebook::hermes::HermesRuntime> hermesRuntime_;
-  std::shared_ptr<TaskRunner> taskRunner_;
-};
+void HermesExecutorRuntimeAdapter::tickleJs() {
+  // The queue will ensure that hermesRuntime_ is still valid when this gets
+  // invoked.
+  taskRunner_->post(
+      std::unique_ptr<Task>(new LambdaTask([&runtime = *hermesRuntime_]() {
+        auto func =
+            runtime.global().getPropertyAsFunction(runtime, "__tickleJs");
+        func.call(runtime);
+      })));
+}
 
 } // namespace facebook::hermes
 
@@ -499,7 +516,8 @@ HERMES_API hermes_create_runtime(
     hermes_runtime *runtime) {
   CHECK_ARG(runtime);
   *runtime =
-      reinterpret_cast<hermes_runtime>(new facebook::hermes::RuntimeWrapper());
+      reinterpret_cast<hermes_runtime>(new facebook::hermes::RuntimeWrapper(
+          *reinterpret_cast<facebook::hermes::ConfigWrapper *>(config)));
   return hermes_ok;
 }
 
