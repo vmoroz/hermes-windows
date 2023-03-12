@@ -36,6 +36,8 @@ napi_status napi_create_hermes_env(
     ::hermes::vm::Runtime &runtime,
     napi_env *env);
 
+napi_status napi_ext_env_unref(napi_env env);
+
 namespace facebook::hermes {
 
 // Forward declaration

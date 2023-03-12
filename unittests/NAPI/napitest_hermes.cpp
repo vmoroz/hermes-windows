@@ -8,9 +8,13 @@
 
 namespace napitest {
 
-class HermesRuntimeHolder {
+class HermesRuntimeHolder : public IEnvHolder {
  public:
-  HermesRuntimeHolder(hermes_runtime runtime) noexcept : runtime_(runtime) {}
+  HermesRuntimeHolder() noexcept {
+    hermes_config config{};
+    hermes_create_config(&config);
+    hermes_create_runtime(config, &runtime_);
+  }
 
   ~HermesRuntimeHolder() {
     hermes_delete_runtime(runtime_);
@@ -19,25 +23,20 @@ class HermesRuntimeHolder {
   HermesRuntimeHolder(const HermesRuntimeHolder &) = delete;
   HermesRuntimeHolder &operator=(const HermesRuntimeHolder &) = delete;
 
+  napi_env getEnv() override {
+    napi_env env{};
+    hermes_get_node_api_env(runtime_, &env);
+    return env;
+  }
+
  private:
   hermes_runtime runtime_{};
 };
 
 std::vector<NapiTestData> NapiEnvFactories() {
-  return {
-      {"../js",
-       [runtimeHolder = std::shared_ptr<HermesRuntimeHolder>()]() mutable {
-         hermes_config config{};
-         hermes_create_config(&config);
-
-         hermes_runtime runtime{};
-         hermes_create_runtime(config, &runtime);
-         runtimeHolder = std::make_shared<HermesRuntimeHolder>(runtime);
-
-         napi_env env{};
-         hermes_get_node_api_env(runtime, &env);
-         return env;
-       }}};
+  return {{"../js", [] {
+             return std::unique_ptr<IEnvHolder>(new HermesRuntimeHolder());
+           }}};
 }
 
 } // namespace napitest

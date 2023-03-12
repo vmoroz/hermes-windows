@@ -73,10 +73,15 @@ struct NapiTestContext;
 struct NapiTestErrorHandler;
 struct NapiTestException;
 
+struct IEnvHolder {
+  virtual ~IEnvHolder() {}
+  virtual napi_env getEnv() = 0;
+};
+
 // Use for test parameterization.
 struct NapiTestData {
   std::string TestJSPath;
-  std::function<napi_env()> EnvFactory;
+  std::function<std::unique_ptr<IEnvHolder>()> EnvHolderFactory;
 };
 
 std::vector<NapiTestData> NapiEnvFactories();
@@ -193,20 +198,6 @@ struct NapiHandleScope {
   napi_handle_scope m_scope{nullptr};
 };
 
-struct NapiEnvScope {
-  NapiEnvScope(napi_env env) noexcept : m_env{env} {
-    CRASH_IF_FALSE(napi_ext_open_env_scope(env, &m_scope) == napi_ok);
-  }
-
-  ~NapiEnvScope() noexcept {
-    CRASH_IF_FALSE(napi_ext_close_env_scope(m_env, m_scope) == napi_ok);
-  }
-
- private:
-  napi_env m_env{};
-  napi_ext_env_scope m_scope{};
-};
-
 // The context to run a NAPI test.
 // Some tests require interaction of multiple JS environments.
 // Thus, it is more convenient to have a special NapiTestContext instead of
@@ -253,7 +244,6 @@ struct NapiTestContext {
  private:
   napi_env env;
   std::string m_testJSPath;
-  NapiEnvScope m_envScope;
   NapiHandleScope m_handleScope;
   std::map<std::string, NapiRef, std::less<>> m_modules;
   std::map<std::string, TestScriptInfo, std::less<>> m_scriptModules;

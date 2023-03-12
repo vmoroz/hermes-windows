@@ -304,8 +304,6 @@ const vm::PinnedHermesValue *phv(napi_value value) noexcept;
 // Useful in templates and macros
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept;
 
-// Reinterpret cast napi_ext_ref to NapiReference pointer
-NapiReference *asReference(napi_ext_ref ref) noexcept;
 // Reinterpret cast napi_ref to NapiReference pointer
 NapiReference *asReference(napi_ref ref) noexcept;
 // Reinterpret cast void* to NapiReference pointer
@@ -767,17 +765,6 @@ class NapiEnvironment final {
       const char *utf8,
       size_t length,
       std::u16string &out) noexcept;
-
-  // Exported function to get or create unique UTF-8 string reference.
-  napi_status getUniqueStringRef(
-      const char *utf8,
-      size_t length,
-      napi_ext_ref *result) noexcept;
-
-  // Exported function to get or create unique UTF-8 string reference.
-  napi_status getUniqueStringRef(
-      napi_value strValue,
-      napi_ext_ref *result) noexcept;
 
   // Internal function to get or create unique UTF-8 string SymbolID.
   // Note that unique SymbolID is used by Hermes for string-based identifiers,
@@ -1243,34 +1230,6 @@ class NapiEnvironment final {
 
   // Exported function to get JS value from a complex reference.
   napi_status getReferenceValue(napi_ref ref, napi_value *result) noexcept;
-
-  // Exported function to create a strong reference.
-  napi_status createStrongReference(
-      napi_value value,
-      napi_ext_ref *result) noexcept;
-
-  // Exported function to create a strong reference with native data.
-  napi_status createStrongReferenceWithData(
-      napi_value value,
-      void *nativeData,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
-      napi_ext_ref *result) noexcept;
-
-  // Exported function to create a weak reference.
-  napi_status createWeakReference(
-      napi_value value,
-      napi_ext_ref *result) noexcept;
-
-  // Exported function to increment ref count for strong or weak reference.
-  napi_status incReference(napi_ext_ref ref) noexcept;
-
-  // Exported function to decrement ref count for strong or weak reference.
-  // When the ref count becomes zero, the reference is removed.
-  napi_status decReference(napi_ext_ref ref) noexcept;
-
-  // Exported function to get JS value from the strong or weak reference.
-  napi_status getReferenceValue(napi_ext_ref ref, napi_value *result) noexcept;
 
   // Internal function to add non-finalizing reference.
   void addReference(NapiReference *reference) noexcept;
@@ -2414,11 +2373,13 @@ class NapiFinalizingAnonymousReference : public NapiReference,
       napi_finalize finalizeCallback,
       void *finalizeHint,
       /*optional*/ NapiFinalizingAnonymousReference **result) noexcept {
-    CHECK_OBJECT_ARG(value);
     NapiFinalizingAnonymousReference *ref =
         NapiFinalizingReferenceFactory<NapiFinalizingAnonymousReference>::
             create(nativeData, finalizeCallback, finalizeHint);
-    env.addObjectFinalizer(value, ref);
+    if (value != nullptr) {
+      CHECK_OBJECT_ARG(value);
+      env.addObjectFinalizer(value, ref);
+    }
     env.addFinalizingReference(ref);
     return env.setOptionalResult(std::move(ref), result);
   }
@@ -2684,6 +2645,52 @@ class NapiStringBuilder final {
   llvh::raw_string_ostream stream_;
 };
 
+class NapiExternalBufferCore {
+ public:
+  NapiExternalBufferCore(NapiEnvironment &env_, const napi_ext_buffer &buffer)
+      : env_(&env_),
+        finalize_cb_(buffer.finalize_cb),
+        data_(buffer.data),
+        finalize_hint_(buffer.finalize_hint) {}
+
+  void setFinalizer(NapiFinalizer *finalizer) {
+    finalizer_ = finalizer;
+  }
+
+  void onBufferDeleted() {
+    if (finalizer_ != nullptr) {
+      env_->addToFinalizerQueue(finalizer_);
+      env_ = nullptr;
+    } else {
+      delete this;
+    }
+  }
+
+  static void
+  finalize(napi_env env, void * /*finalize_data*/, void *finalize_hint) {
+    NapiExternalBufferCore *core =
+        reinterpret_cast<NapiExternalBufferCore *>(finalize_hint);
+    if (core->finalize_cb_ != nullptr) {
+      core->finalize_cb_(env, core->data_, core->finalize_hint_);
+    }
+
+    core->finalizer_ = nullptr;
+    if (core->env_ == nullptr) {
+      delete core;
+    }
+  }
+
+  NapiExternalBufferCore(const NapiExternalBufferCore &) = delete;
+  NapiExternalBufferCore &operator=(const NapiExternalBufferCore &) = delete;
+
+ private:
+  NapiFinalizer *finalizer_{};
+  NapiEnvironment *env_;
+  napi_finalize finalize_cb_;
+  void *data_;
+  void *finalize_hint_;
+};
+
 // The external buffer that implements hermes::Buffer
 class NapiExternalBuffer final : public hermes::Buffer {
  public:
@@ -2691,33 +2698,31 @@ class NapiExternalBuffer final : public hermes::Buffer {
       napi_env env,
       const napi_ext_buffer &buffer) noexcept {
     return buffer.data ? std::make_unique<NapiExternalBuffer>(
-                             *reinterpret_cast<NapiEnvironment *>(env),
-                             buffer.data,
-                             buffer.byte_length,
-                             buffer.finalize_cb,
-                             buffer.finalize_hint)
+                             *reinterpret_cast<NapiEnvironment *>(env), buffer)
                        : nullptr;
   }
 
   NapiExternalBuffer(
       NapiEnvironment &env,
-      void *externalData,
-      size_t byteLength,
-      napi_finalize finalizeCallback,
-      void *finalizeHint) noexcept
-      : Buffer(reinterpret_cast<uint8_t *>(externalData), byteLength),
-        env_(env),
-        finalizer_(
-            NapiFinalizingReferenceFactory<NapiFinalizingAnonymousReference>::
-                create(externalData, finalizeCallback, finalizeHint)) {}
-
-  ~NapiExternalBuffer() noexcept override {
-    env_.addToFinalizerQueue(finalizer_);
+      const napi_ext_buffer &buffer) noexcept
+      : Buffer(reinterpret_cast<uint8_t *>(buffer.data), buffer.byte_length),
+        core_(new NapiExternalBufferCore(env, buffer)) {
+    NapiFinalizingAnonymousReference *ref =
+        NapiFinalizingReferenceFactory<NapiFinalizingAnonymousReference>::
+            create(nullptr, &NapiExternalBufferCore::finalize, core_);
+    core_->setFinalizer(ref);
+    env.addFinalizingReference(ref);
   }
 
+  ~NapiExternalBuffer() noexcept override {
+    core_->onBufferDeleted();
+  }
+
+  NapiExternalBuffer(const NapiExternalBuffer &) = delete;
+  NapiExternalBuffer &operator=(const NapiExternalBuffer &) = delete;
+
  private:
-  NapiEnvironment &env_;
-  NapiFinalizingAnonymousReference *finalizer_;
+  NapiExternalBufferCore *core_;
 };
 
 // An implementation of PreparedJavaScript that wraps a BytecodeProvider.
@@ -2887,10 +2892,6 @@ const vm::PinnedHermesValue *phv(napi_value value) noexcept {
 
 const vm::PinnedHermesValue *phv(const vm::PinnedHermesValue *value) noexcept {
   return value;
-}
-
-NapiReference *asReference(napi_ext_ref ref) noexcept {
-  return reinterpret_cast<NapiReference *>(ref);
 }
 
 NapiReference *asReference(napi_ref ref) noexcept {
@@ -3749,61 +3750,6 @@ napi_status NapiEnvironment::convertUTF8ToUTF16(
       napi_generic_failure,
       "not enough space allocated for UTF16 conversion");
   out.resize(reinterpret_cast<char16_t *>(targetStart) - &out[0]);
-  return clearLastNativeError();
-}
-
-napi_status NapiEnvironment::getUniqueStringRef(
-    const char *utf8,
-    size_t length,
-    napi_ext_ref *result) noexcept {
-  NapiHandleScope handleScope(*this);
-  CHECK_ARG(utf8);
-  napi_value strValue;
-  CHECK_NAPI(createStringUTF8(utf8, length, &strValue));
-  return getUniqueStringRef(strValue, result);
-}
-
-napi_status NapiEnvironment::getUniqueStringRef(
-    napi_value strValue,
-    napi_ext_ref *result) noexcept {
-  CHECK_STRING_ARG(strValue);
-  CHECK_ARG(result);
-  NapiHandleScope handleScope(*this);
-
-  vm::Handle<vm::StringPrimitive> strPrimitive =
-      makeHandle<vm::StringPrimitive>(strValue);
-  vm::CallResult<vm::Handle<vm::SymbolID>> symbolHandle =
-      runtime_.getIdentifierTable().getSymbolHandleFromPrimitive(
-          runtime_, strPrimitive);
-  CHECK_NAPI(checkJSErrorStatus(symbolHandle));
-  auto it = uniqueStrings_.find(symbolHandle->get().unsafeGetRaw());
-  if (it != uniqueStrings_.end()) {
-    uint32_t refCount;
-    it->second->incRefCount(*this, refCount);
-    *result = reinterpret_cast<napi_ext_ref>(it->second);
-  } else {
-    vm::PinnedHermesValue primitiveStrValue =
-        vm::HermesValue::encodeStringValue(
-            runtime_.getIdentifierTable().getStringPrim(
-                runtime_, symbolHandle->get()));
-    NapiFinalizingStrongReference *ref;
-    CHECK_NAPI(NapiFinalizingStrongReference::create(
-        *this,
-        &primitiveStrValue,
-        reinterpret_cast<void *>(
-            static_cast<size_t>(symbolHandle->get().unsafeGetRaw())),
-        [](napi_env env, void *finalizeData, void *finalizeHint) {
-          vm::SymbolID::RawType symbolRawValue =
-              static_cast<vm::SymbolID::RawType>(
-                  reinterpret_cast<size_t>(finalizeData));
-          NapiEnvironment *napiEnv = reinterpret_cast<NapiEnvironment *>(env);
-          napiEnv->uniqueStrings_.erase(symbolRawValue);
-        },
-        nullptr,
-        &ref));
-    uniqueStrings_.emplace(symbolHandle->get().unsafeGetRaw(), ref);
-    *result = reinterpret_cast<napi_ext_ref>(ref);
-  }
   return clearLastNativeError();
 }
 
@@ -5335,55 +5281,6 @@ napi_status NapiEnvironment::getReferenceValue(
   return clearLastNativeError();
 }
 
-napi_status NapiEnvironment::createStrongReference(
-    napi_value value,
-    napi_ext_ref *result) noexcept {
-  CHECK_ARG(value);
-  return NapiStrongReference::create(
-      *this, *phv(value), reinterpret_cast<NapiStrongReference **>(result));
-}
-
-napi_status NapiEnvironment::createStrongReferenceWithData(
-    napi_value value,
-    void *nativeData,
-    napi_finalize finalizeCallback,
-    void *finalizeHint,
-    napi_ext_ref *result) noexcept {
-  return NapiFinalizingStrongReference::create(
-      *this,
-      phv(value),
-      nativeData,
-      finalizeCallback,
-      finalizeHint,
-      reinterpret_cast<NapiFinalizingStrongReference **>(result));
-}
-
-napi_status NapiEnvironment::createWeakReference(
-    napi_value value,
-    napi_ext_ref *result) noexcept {
-  return NapiWeakReference::create(
-      *this, phv(value), reinterpret_cast<NapiWeakReference **>(result));
-}
-
-napi_status NapiEnvironment::incReference(napi_ext_ref ref) noexcept {
-  CHECK_ARG(ref);
-  uint32_t refCount{};
-  return asReference(ref)->incRefCount(*this, /*ref*/ refCount);
-}
-
-napi_status NapiEnvironment::decReference(napi_ext_ref ref) noexcept {
-  CHECK_ARG(ref);
-  uint32_t refCount{};
-  return asReference(ref)->decRefCount(*this, /*ref*/ refCount);
-}
-
-napi_status NapiEnvironment::getReferenceValue(
-    napi_ext_ref ref,
-    napi_value *result) noexcept {
-  CHECK_ARG(ref);
-  return setResult(asReference(ref)->value(*this), result);
-}
-
 void NapiEnvironment::addReference(NapiReference *reference) noexcept {
   references_.pushBack(reference);
 }
@@ -5555,7 +5452,9 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
       runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
   if (externalData != nullptr) {
     std::unique_ptr<NapiExternalBuffer> externalBuffer{new NapiExternalBuffer(
-        env, externalData, byteLength, finalizeCallback, finalizeHint)};
+        env,
+        napi_ext_buffer{
+            externalData, byteLength, finalizeCallback, finalizeHint})};
     vm::JSArrayBuffer::setExternalDataBlock(
         runtime_,
         buffer,
@@ -7625,20 +7524,6 @@ napi_status __cdecl napi_ext_env_unref(napi_env env) {
   return CHECKED_ENV(env)->decRefCount();
 }
 
-napi_status __cdecl napi_ext_open_env_scope(
-    napi_env env,
-    napi_ext_env_scope *result) {
-  return napi_open_handle_scope(
-      env, reinterpret_cast<napi_handle_scope *>(result));
-}
-
-napi_status __cdecl napi_ext_close_env_scope(
-    napi_env env,
-    napi_ext_env_scope scope) {
-  return napi_close_handle_scope(
-      env, reinterpret_cast<napi_handle_scope>(scope));
-}
-
 napi_status __cdecl napi_ext_collect_garbage(napi_env env) {
   return CHECKED_ENV(env)->collectGarbage();
 }
@@ -7655,66 +7540,11 @@ napi_status __cdecl napi_get_and_clear_last_unhandled_promise_rejection(
   return CHECKED_ENV(env)->getAndClearLastUnhandledPromiseRejection(result);
 }
 
-napi_status __cdecl napi_ext_get_unique_string_utf8_ref(
-    napi_env env,
-    const char *str,
-    size_t length,
-    napi_ext_ref *result) {
-  return CHECKED_ENV(env)->getUniqueStringRef(str, length, result);
-}
-
-napi_status __cdecl napi_ext_get_unique_string_ref(
-    napi_env env,
-    napi_value str_value,
-    napi_ext_ref *result) {
-  return CHECKED_ENV(env)->getUniqueStringRef(str_value, result);
-}
-
 //-----------------------------------------------------------------------------
 // Methods to control object lifespan.
 // The NAPI's napi_ref can be used only for objects.
 // The napi_ext_ref can be used for any value type.
 //-----------------------------------------------------------------------------
-
-napi_status __cdecl napi_ext_create_reference(
-    napi_env env,
-    napi_value value,
-    napi_ext_ref *result) {
-  return CHECKED_ENV(env)->createStrongReference(value, result);
-}
-
-napi_status __cdecl napi_ext_create_reference_with_data(
-    napi_env env,
-    napi_value value,
-    void *native_object,
-    napi_finalize finalize_cb,
-    void *finalize_hint,
-    napi_ext_ref *result) {
-  return CHECKED_ENV(env)->createStrongReferenceWithData(
-      value, native_object, finalize_cb, finalize_hint, result);
-}
-
-napi_status __cdecl napi_ext_create_weak_reference(
-    napi_env env,
-    napi_value value,
-    napi_ext_ref *result) {
-  return CHECKED_ENV(env)->createWeakReference(value, result);
-}
-
-napi_status __cdecl napi_ext_reference_ref(napi_env env, napi_ext_ref ref) {
-  return CHECKED_ENV(env)->incReference(ref);
-}
-
-napi_status __cdecl napi_ext_reference_unref(napi_env env, napi_ext_ref ref) {
-  return CHECKED_ENV(env)->decReference(ref);
-}
-
-napi_status __cdecl napi_ext_get_reference_value(
-    napi_env env,
-    napi_ext_ref ref,
-    napi_value *result) {
-  return CHECKED_ENV(env)->getReferenceValue(ref, result);
-}
 
 //-----------------------------------------------------------------------------
 // Script running, preparing, and serialization.
