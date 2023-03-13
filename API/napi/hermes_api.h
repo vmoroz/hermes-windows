@@ -10,14 +10,7 @@
 
 #include "js_native_ext_api.h"
 
-// TODO: use NAPI_CDECL after we update Node-API files.
-#if _M_IX86
-#define HERMES_CDECL __cdecl
-#else
-#define HERMES_CDECL
-#endif
-
-#define HERMES_API NAPI_EXTERN hermes_status HERMES_CDECL
+#define HERMES_API NAPI_EXTERN hermes_status NAPI_CDECL
 
 EXTERN_C_START
 
@@ -31,8 +24,7 @@ typedef struct hermes_config_s *hermes_config;
 typedef struct hermes_local_connection_s *hermes_local_connection;
 typedef struct hermes_remote_connection_s *hermes_remote_connection;
 
-typedef void(
-    HERMES_CDECL *hermes_data_delete_cb)(void *data, void *deleter_data);
+typedef void(NAPI_CDECL *hermes_data_delete_cb)(void *data, void *deleter_data);
 
 //=============================================================================
 // hermes_runtime
@@ -71,10 +63,10 @@ HERMES_API hermes_config_set_debugger_break_on_start(
 //=============================================================================
 
 // A callback to run task
-typedef void(HERMES_CDECL *hermes_task_run_cb)(void *task_data);
+typedef void(NAPI_CDECL *hermes_task_run_cb)(void *task_data);
 
 // A callback to post task to the task runner
-typedef void(HERMES_CDECL *hermes_task_runner_post_task_cb)(
+typedef void(NAPI_CDECL *hermes_task_runner_post_task_cb)(
     void *task_runner_data,
     void *task_data,
     hermes_task_run_cb task_run_cb,
@@ -100,7 +92,7 @@ typedef struct {
   const char *tag;
 } hermes_script_cache_metadata;
 
-typedef void(HERMES_CDECL *hermes_script_cache_load_cb)(
+typedef void(NAPI_CDECL *hermes_script_cache_load_cb)(
     void *script_cache_data,
     hermes_script_cache_metadata *script_metadata,
     const uint8_t **buffer,
@@ -108,7 +100,7 @@ typedef void(HERMES_CDECL *hermes_script_cache_load_cb)(
     hermes_data_delete_cb *buffer_delete_cb,
     void **deleter_data);
 
-typedef void(HERMES_CDECL *hermes_script_cache_store_cb)(
+typedef void(NAPI_CDECL *hermes_script_cache_store_cb)(
     void *script_cache_data,
     hermes_script_cache_metadata *script_metadata,
     const uint8_t *buffer,
@@ -128,12 +120,12 @@ HERMES_API hermes_config_set_script_cache(
 // Setting inspector singleton
 //=============================================================================
 
-typedef int32_t(HERMES_CDECL *hermes_inspector_add_page_cb)(
+typedef int32_t(NAPI_CDECL *hermes_inspector_add_page_cb)(
     const char *title,
     const char *vm,
     void *connectFunc);
 
-typedef void(HERMES_CDECL *hermes_inspector_remove_page_cb)(int32_t page_id);
+typedef void(NAPI_CDECL *hermes_inspector_remove_page_cb)(int32_t page_id);
 
 HERMES_API hermes_set_inspector(
     hermes_inspector_add_page_cb add_page_cb,
@@ -144,11 +136,11 @@ HERMES_API hermes_set_inspector(
 // Local is defined in Hermes VM, Remote is defined by inspector outside of VM.
 //=============================================================================
 
-typedef void(HERMES_CDECL *hermes_remote_connection_send_message_cb)(
+typedef void(NAPI_CDECL *hermes_remote_connection_send_message_cb)(
     hermes_remote_connection remote_connection,
     const char *message);
 
-typedef void(HERMES_CDECL *hermes_remote_connection_disconnect_cb)(
+typedef void(NAPI_CDECL *hermes_remote_connection_disconnect_cb)(
     hermes_remote_connection remote_connection);
 
 HERMES_API hermes_create_local_connection(

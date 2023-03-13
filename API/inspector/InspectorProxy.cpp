@@ -119,7 +119,7 @@ IInspector &getInspectorInstance() {
 
 } // namespace facebook::react
 
-hermes_status HERMES_CDECL hermes_set_inspector(
+hermes_status NAPI_CDECL hermes_set_inspector(
     hermes_inspector_add_page_cb add_page_cb,
     hermes_inspector_remove_page_cb remove_page_cb) {
   facebook::react::getInspectorProxyInstance().setInspector(
@@ -127,7 +127,7 @@ hermes_status HERMES_CDECL hermes_set_inspector(
   return hermes_status::hermes_ok;
 }
 
-hermes_status HERMES_CDECL hermes_create_local_connection(
+hermes_status NAPI_CDECL hermes_create_local_connection(
     void *connect_func,
     hermes_remote_connection remote_connection,
     hermes_remote_connection_send_message_cb on_send_message_cb,
@@ -152,14 +152,14 @@ hermes_status HERMES_CDECL hermes_create_local_connection(
   return hermes_status::hermes_ok;
 }
 
-hermes_status HERMES_CDECL
+hermes_status NAPI_CDECL
 hermes_delete_local_connection(hermes_local_connection local_connection) {
   delete reinterpret_cast<facebook::react::ILocalConnection *>(
       local_connection);
   return hermes_status::hermes_ok;
 }
 
-hermes_status HERMES_CDECL hermes_local_connection_send_message(
+hermes_status NAPI_CDECL hermes_local_connection_send_message(
     hermes_local_connection local_connection,
     const char *message) {
   reinterpret_cast<facebook::react::ILocalConnection *>(local_connection)
@@ -167,7 +167,7 @@ hermes_status HERMES_CDECL hermes_local_connection_send_message(
   return hermes_status::hermes_ok;
 }
 
-hermes_status HERMES_CDECL
+hermes_status NAPI_CDECL
 hermes_local_connection_disconnect(hermes_local_connection local_connection) {
   reinterpret_cast<facebook::react::ILocalConnection *>(local_connection)
       ->disconnect();

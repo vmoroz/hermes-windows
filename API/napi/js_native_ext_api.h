@@ -54,7 +54,7 @@ typedef struct {
 } napi_ext_buffer;
 
 // A callback to return buffer synchronously.
-typedef void (__cdecl *napi_ext_buffer_callback)(
+typedef void(__cdecl *napi_ext_buffer_callback)(
     napi_env env,
     const uint8_t *buffer,
     size_t buffer_length,
