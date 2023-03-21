@@ -1435,6 +1435,23 @@ CallResult<PseudoHandle<JSArray>> JSProxy::ownPropertyKeys(
                             dupcheck, runtime, valHandle, valHandle) ==
                         ExecutionStatus::EXCEPTION))
                   return ExecutionStatus::RETURNED;
+                if (valHandle->isString()) {
+                  Handle<StringPrimitive> str =
+                      Handle<StringPrimitive>::vmcast(valHandle);
+                  OptValue<uint32_t> strAsIndexOpt = toArrayIndex(runtime, str);
+                  // Convert index keys
+                  if (strAsIndexOpt) {
+                    HermesValue strAsIndexValue =
+                        HermesValue::encodeDoubleValue(
+                            static_cast<double>(strAsIndexOpt.getValue()));
+                    JSArray::setElementAt(
+                        trapResult,
+                        runtime,
+                        index,
+                        runtime.makeHandle(strAsIndexValue));
+                    return ExecutionStatus::RETURNED;
+                  }
+                }
                 JSArray::setElementAt(trapResult, runtime, index, valHandle);
                 return ExecutionStatus::RETURNED;
               }) == ExecutionStatus::EXCEPTION)) {
