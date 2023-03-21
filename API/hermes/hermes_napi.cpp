@@ -4095,11 +4095,11 @@ napi_status NapiEnvironment::convertKeyStorageToArray(
 napi_status NapiEnvironment::convertToStringKeys(
     vm::Handle<vm::JSArray> array) noexcept {
   vm::GCScopeMarkerRAII marker{runtime_};
-  vm::MutableHandle<> strKey{runtime_};
   size_t length = vm::JSArray::getLength(array.get(), runtime_);
   for (size_t i = 0; i < length; ++i) {
     vm::HermesValue key = array->at(runtime_, i).unboxToHV(runtime_);
     if (LLVM_UNLIKELY(key.isNumber())) {
+      vm::MutableHandle<> strKey{runtime_};
       CHECK_NAPI(convertIndexToString(key.getNumber(), &strKey));
       vm::JSArray::setElementAt(array, runtime_, i, strKey);
       marker.flush();
