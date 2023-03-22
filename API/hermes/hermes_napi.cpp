@@ -66,7 +66,6 @@
 // TODO: NativeFunction vs NativeConstructor
 // TODO: Different error messages
 // TODO: Arrays with 2^32-1 elements
-// TODO: BigInt support
 // TODO: How to provide detailed error messages without breaking tests?
 // TODO: Why console.log compiles in V8_JSI?
 
@@ -787,6 +786,32 @@ class NapiEnvironment final {
   napi_status createSymbol(napi_value description, napi_value *result) noexcept;
 
   //-----------------------------------------------------------------------------
+  // Methods to work with BigInt
+  //-----------------------------------------------------------------------------
+ public:
+  napi_status createBigIntFromInt64(int64_t value, napi_value *result);
+
+  napi_status createBigIntFromUint64(uint64_t value, napi_value *result);
+
+  napi_status createBigIntFromWords(
+      int signBit,
+      size_t wordCount,
+      const uint64_t *words,
+      napi_value *result);
+
+  napi_status
+  getBigIntValueInt64(napi_value value, int64_t *result, bool *lossless);
+
+  napi_status
+  getBigIntValueUint64(napi_value value, uint64_t *result, bool *lossless);
+
+  napi_status getBigIntValueWords(
+      napi_value value,
+      int *signBit,
+      size_t *wordCount,
+      uint64_t *words);
+
+  //-----------------------------------------------------------------------------
   // Methods to coerce values using JS coercion rules
   //-----------------------------------------------------------------------------
  public:
@@ -1331,8 +1356,7 @@ class NapiEnvironment final {
 
   // Exported function to create JS TypedArray object instance for the
   // arrayBuffer. The TypedArray is an array-like view of an underlying binary
-  // data buffer. Hermes does not support BigInt and thus cannot create
-  // BigInt64Array and BigUint64Array objects.
+  // data buffer.
   napi_status createTypedArray(
       napi_typedarray_type type,
       size_t length,
@@ -3435,7 +3459,6 @@ napi_status NapiEnvironment::typeOf(
 
   const vm::PinnedHermesValue *hv = phv(value);
 
-  // BigInt is not supported by Hermes yet.
   if (hv->isNumber()) {
     *result = napi_number;
   } else if (hv->isString()) {
@@ -3456,6 +3479,8 @@ napi_status NapiEnvironment::typeOf(
     *result = napi_symbol;
   } else if (hv->isNull()) {
     *result = napi_null;
+  } else if (hv->isBigInt()) {
+    *result = napi_bigint;
   } else {
     // Should not get here unless Hermes has added some new kind of value.
     return ERROR_STATUS(napi_invalid_arg, "Unknown value type");
@@ -3790,6 +3815,88 @@ napi_status NapiEnvironment::createSymbol(
   }
   return scope.setResult(runtime_.getIdentifierTable().createNotUniquedSymbol(
       runtime_, descString));
+}
+
+//-----------------------------------------------------------------------------
+// Methods to work with BigInt
+//-----------------------------------------------------------------------------
+
+napi_status NapiEnvironment::createBigIntFromInt64(
+    int64_t value,
+    napi_value *result) {
+  NapiHandleScope scope{*this, result};
+  return scope.setResult(vm::BigIntPrimitive::fromSigned(runtime_, value));
+}
+
+napi_status NapiEnvironment::createBigIntFromUint64(
+    uint64_t value,
+    napi_value *result) {
+  NapiHandleScope scope{*this, result};
+  return scope.setResult(vm::BigIntPrimitive::fromUnsigned(runtime_, value));
+}
+
+napi_status NapiEnvironment::createBigIntFromWords(
+    int signBit,
+    size_t wordCount,
+    const uint64_t *words,
+    napi_value *result) {
+  NapiHandleScope scope{*this, result};
+  const uint8_t *ptr = reinterpret_cast<const uint8_t *>(words);
+  const uint32_t size = static_cast<uint32_t>(wordCount * sizeof(uint64_t));
+  return scope.setResult(
+      vm::BigIntPrimitive::fromBytes(runtime_, llvh::makeArrayRef(ptr, size)));
+}
+
+napi_status NapiEnvironment::getBigIntValueInt64(
+    napi_value value,
+    int64_t *result,
+    bool *lossless) {
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  CHECK_ARG(lossless);
+  RETURN_STATUS_IF_FALSE(phv(value)->isBigInt(), napi_bigint_expected);
+  vm::BigIntPrimitive *bigInt = phv(value)->getBigInt();
+  *lossless = bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/true);
+  *result = static_cast<int64_t>(bigInt->truncateToSingleDigit());
+  return clearLastNativeError();
+}
+
+napi_status NapiEnvironment::getBigIntValueUint64(
+    napi_value value,
+    uint64_t *result,
+    bool *lossless) {
+  CHECK_ARG(value);
+  CHECK_ARG(result);
+  CHECK_ARG(lossless);
+  RETURN_STATUS_IF_FALSE(phv(value)->isBigInt(), napi_bigint_expected);
+  vm::BigIntPrimitive *bigInt = phv(value)->getBigInt();
+  *lossless = bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/false);
+  *result = bigInt->truncateToSingleDigit();
+  return clearLastNativeError();
+}
+
+napi_status NapiEnvironment::getBigIntValueWords(
+    napi_value value,
+    int *signBit,
+    size_t *wordCount,
+    uint64_t *words) {
+  CHECK_ARG(value);
+  CHECK_ARG(wordCount);
+  RETURN_STATUS_IF_FALSE(phv(value)->isBigInt(), napi_bigint_expected);
+  vm::BigIntPrimitive *bigInt = phv(value)->getBigInt();
+
+  if (signBit == nullptr && words == nullptr) {
+    *wordCount = bigInt->getDigits().size();
+  } else {
+    CHECK_ARG(signBit);
+    CHECK_ARG(words);
+    llvh::ArrayRef<uint64_t> digits = bigInt->getDigits();
+    *wordCount = std::min(*wordCount, digits.size());
+    std::memcpy(words, digits.begin(), *wordCount * sizeof(uint64_t));
+    *signBit = bigInt->sign() ? 1 : 0;
+  }
+
+  return clearLastNativeError();
 }
 
 //-----------------------------------------------------------------------------
@@ -5602,9 +5709,13 @@ napi_status NapiEnvironment::createTypedArray(
           length, buffer, byteOffset, &typedArray));
       break;
     case napi_bigint64_array:
-      return GENERIC_FAILURE("BigInt64Array is not implemented in Hermes yet");
+      CHECK_NAPI(createTypedArray<int64_t, vm::CellKind::BigInt64ArrayKind>(
+          length, buffer, byteOffset, &typedArray));
+      break;
     case napi_biguint64_array:
-      return GENERIC_FAILURE("BigUint64Array is not implemented in Hermes yet");
+      CHECK_NAPI(createTypedArray<uint64_t, vm::CellKind::BigUint64ArrayKind>(
+          length, buffer, byteOffset, &typedArray));
+      break;
     default:
       return ERROR_STATUS(
           napi_invalid_arg, "Unsupported TypedArray type: ", type);
@@ -5663,6 +5774,10 @@ napi_status NapiEnvironment::getTypedArrayInfo(
       *type = napi_float32_array;
     } else if (vm::vmisa<vm::Float64Array>(array)) {
       *type = napi_float64_array;
+    } else if (vm::vmisa<vm::BigInt64Array>(array)) {
+      *type = napi_bigint64_array;
+    } else if (vm::vmisa<vm::BigUint64Array>(array)) {
+      *type = napi_biguint64_array;
     } else {
       return GENERIC_FAILURE("Unknown TypedArray type");
     }
@@ -7363,16 +7478,14 @@ napi_status __cdecl napi_create_bigint_int64(
     napi_env env,
     int64_t value,
     napi_value *result) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->createBigIntFromInt64(value, result);
 }
 
 napi_status __cdecl napi_create_bigint_uint64(
     napi_env env,
     uint64_t value,
     napi_value *result) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->createBigIntFromUint64(value, result);
 }
 
 napi_status __cdecl napi_create_bigint_words(
@@ -7381,8 +7494,8 @@ napi_status __cdecl napi_create_bigint_words(
     size_t word_count,
     const uint64_t *words,
     napi_value *result) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->createBigIntFromWords(
+      sign_bit, word_count, words, result);
 }
 
 napi_status __cdecl napi_get_value_bigint_int64(
@@ -7390,8 +7503,7 @@ napi_status __cdecl napi_get_value_bigint_int64(
     napi_value value,
     int64_t *result,
     bool *lossless) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->getBigIntValueInt64(value, result, lossless);
 }
 
 napi_status __cdecl napi_get_value_bigint_uint64(
@@ -7399,8 +7511,7 @@ napi_status __cdecl napi_get_value_bigint_uint64(
     napi_value value,
     uint64_t *result,
     bool *lossless) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->getBigIntValueUint64(value, result, lossless);
 }
 
 napi_status __cdecl napi_get_value_bigint_words(
@@ -7409,8 +7520,8 @@ napi_status __cdecl napi_get_value_bigint_words(
     int *sign_bit,
     size_t *word_count,
     uint64_t *words) {
-  return CHECKED_ENV_GENERIC_FAILURE(
-      env, "BigInt is not implemented by Hermes");
+  return CHECKED_ENV(env)->getBigIntValueWords(
+      value, sign_bit, word_count, words);
 }
 
 //-----------------------------------------------------------------------------
