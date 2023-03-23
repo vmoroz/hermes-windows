@@ -3841,6 +3841,8 @@ napi_status NapiEnvironment::createBigIntFromWords(
     const uint64_t *words,
     napi_value *result) {
   NapiHandleScope scope{*this, result};
+  CHECK_ARG(words);
+  RETURN_STATUS_IF_FALSE(wordCount <= INT_MAX, napi_invalid_arg);
   const uint8_t *ptr = reinterpret_cast<const uint8_t *>(words);
   const uint32_t size = static_cast<uint32_t>(wordCount * sizeof(uint64_t));
   return scope.setResult(
@@ -3856,7 +3858,8 @@ napi_status NapiEnvironment::getBigIntValueInt64(
   CHECK_ARG(lossless);
   RETURN_STATUS_IF_FALSE(phv(value)->isBigInt(), napi_bigint_expected);
   vm::BigIntPrimitive *bigInt = phv(value)->getBigInt();
-  *lossless = bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/true);
+  *lossless =
+      bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/ true);
   *result = static_cast<int64_t>(bigInt->truncateToSingleDigit());
   return clearLastNativeError();
 }
@@ -3870,7 +3873,8 @@ napi_status NapiEnvironment::getBigIntValueUint64(
   CHECK_ARG(lossless);
   RETURN_STATUS_IF_FALSE(phv(value)->isBigInt(), napi_bigint_expected);
   vm::BigIntPrimitive *bigInt = phv(value)->getBigInt();
-  *lossless = bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/false);
+  *lossless =
+      bigInt->isTruncationToSingleDigitLossless(/*signedTruncation:*/ false);
   *result = bigInt->truncateToSingleDigit();
   return clearLastNativeError();
 }
