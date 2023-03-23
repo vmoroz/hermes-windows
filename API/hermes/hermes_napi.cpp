@@ -4948,6 +4948,8 @@ napi_status NapiEnvironment::strictEquals(
     } else {
       return setResult(phv(lhs)->getBool() == phv(rhs)->getBool(), result);
     }
+  } else if (lhsTag == vm::HermesValue::Tag::BigInt) {
+    return setResult(phv(lhs)->getBigInt()->compare(phv(rhs)->getBigInt()) == 0, result);
   } else {
     return setResult(phv(lhs)->getRaw() == phv(rhs)->getRaw(), result);
   }
