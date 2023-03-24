@@ -2650,15 +2650,17 @@ class NapiStringBuilder final {
   llvh::raw_string_ostream stream_;
 };
 
-// TODO: implement without napi_ext_buffer
-#if 0
 class NapiExternalBufferCore {
  public:
-  NapiExternalBufferCore(NapiEnvironment &env_, const napi_ext_buffer &buffer)
-      : env_(&env_),
-        finalize_cb_(buffer.finalize_cb),
-        data_(buffer.data),
-        finalize_hint_(buffer.finalize_hint) {}
+  NapiExternalBufferCore(
+      NapiEnvironment &env,
+      void *data,
+      napi_finalize finalizeCallback,
+      void *finalizeHint)
+      : env_(&env),
+        finalizeCallback_(finalizeCallback),
+        data_(data),
+        finalizeHint_(finalizeHint) {}
 
   void setFinalizer(NapiFinalizer *finalizer) {
     finalizer_ = finalizer;
@@ -2674,11 +2676,11 @@ class NapiExternalBufferCore {
   }
 
   static void
-  finalize(napi_env env, void * /*finalize_data*/, void *finalize_hint) {
+  finalize(napi_env env, void * /*finalizeData*/, void *finalizeHint) {
     NapiExternalBufferCore *core =
-        reinterpret_cast<NapiExternalBufferCore *>(finalize_hint);
-    if (core->finalize_cb_ != nullptr) {
-      core->finalize_cb_(env, core->data_, core->finalize_hint_);
+        reinterpret_cast<NapiExternalBufferCore *>(finalizeHint);
+    if (core->finalizeCallback_ != nullptr) {
+      core->finalizeCallback_(env, core->data_, core->finalizeHint_);
     }
 
     core->finalizer_ = nullptr;
@@ -2693,9 +2695,9 @@ class NapiExternalBufferCore {
  private:
   NapiFinalizer *finalizer_{};
   NapiEnvironment *env_;
-  napi_finalize finalize_cb_;
+  napi_finalize finalizeCallback_;
   void *data_;
-  void *finalize_hint_;
+  void *finalizeHint_;
 };
 
 // The external buffer that implements hermes::Buffer
@@ -2703,17 +2705,31 @@ class NapiExternalBuffer final : public hermes::Buffer {
  public:
   static std::unique_ptr<NapiExternalBuffer> make(
       napi_env env,
-      const napi_ext_buffer &buffer) noexcept {
-    return buffer.data ? std::make_unique<NapiExternalBuffer>(
-                             *reinterpret_cast<NapiEnvironment *>(env), buffer)
-                       : nullptr;
+      void *bufferData,
+      size_t bufferSize,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept {
+    return bufferData ? std::make_unique<NapiExternalBuffer>(
+                            *reinterpret_cast<NapiEnvironment *>(env),
+                            bufferData,
+                            bufferSize,
+                            finalizeCallback,
+                            finalizeHint)
+                      : nullptr;
   }
 
   NapiExternalBuffer(
       NapiEnvironment &env,
-      const napi_ext_buffer &buffer) noexcept
-      : Buffer(reinterpret_cast<uint8_t *>(buffer.data), buffer.byte_length),
-        core_(new NapiExternalBufferCore(env, buffer)) {
+      void *bufferData,
+      size_t bufferSize,
+      napi_finalize finalizeCallback,
+      void *finalizeHint) noexcept
+      : Buffer(reinterpret_cast<uint8_t*>(bufferData), bufferSize),
+        core_(new NapiExternalBufferCore(
+            env,
+            bufferData,
+            finalizeCallback,
+            finalizeHint)) {
     NapiFinalizingAnonymousReference *ref =
         NapiFinalizingReferenceFactory<NapiFinalizingAnonymousReference>::
             create(nullptr, &NapiExternalBufferCore::finalize, core_);
@@ -2731,7 +2747,6 @@ class NapiExternalBuffer final : public hermes::Buffer {
  private:
   NapiExternalBufferCore *core_;
 };
-#endif
 
 // An implementation of PreparedJavaScript that wraps a BytecodeProvider.
 class NapiScriptModel final {
@@ -5545,16 +5560,14 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
     napi_finalize finalizeCallback,
     void *finalizeHint,
     napi_value *result) noexcept {
-#if 0
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this, result};
   vm::Handle<vm::JSArrayBuffer> buffer = makeHandle(vm::JSArrayBuffer::create(
       runtime_, makeHandle<vm::JSObject>(&runtime_.arrayBufferPrototype)));
   if (externalData != nullptr) {
-    std::unique_ptr<NapiExternalBuffer> externalBuffer{new NapiExternalBuffer(
-        env,
-        napi_ext_buffer{
-            externalData, byteLength, finalizeCallback, finalizeHint})};
+    std::unique_ptr<NapiExternalBuffer> externalBuffer =
+        std::make_unique<NapiExternalBuffer>(
+            env, externalData, byteLength, finalizeCallback, finalizeHint);
     vm::JSArrayBuffer::setExternalDataBlock(
         runtime_,
         buffer,
@@ -5567,9 +5580,6 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
         });
   }
   return scope.setResult(std::move(buffer));
-#endif
-  // TODO: implement
-  return napi_generic_failure;
 }
 
 napi_status NapiEnvironment::isArrayBuffer(
