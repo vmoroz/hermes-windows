@@ -48,7 +48,7 @@
 //   - NapiReference finalizers are run in JS thread by processFinalizerQueue
 //     method which is called by NapiHandleScope::setResult.
 // - Each returned error status is backed up by the extended error message
-//   stored in lastError_ that can be retrived by napi_get_last_error_info.
+//   stored in lastError_ that can be retrieved by napi_get_last_error_info.
 // - We use macros to handle error statuses. It is done to reduce extensive use
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
@@ -2724,7 +2724,7 @@ class NapiExternalBuffer final : public hermes::Buffer {
       size_t bufferSize,
       napi_finalize finalizeCallback,
       void *finalizeHint) noexcept
-      : Buffer(reinterpret_cast<uint8_t*>(bufferData), bufferSize),
+      : Buffer(reinterpret_cast<uint8_t *>(bufferData), bufferSize),
         core_(new NapiExternalBufferCore(
             env,
             bufferData,
@@ -6214,7 +6214,6 @@ napi_status NapiEnvironment::runScript(
     napi_value source,
     const char *sourceURL,
     napi_value *result) noexcept {
-#if 0
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this, result};
 
@@ -6223,101 +6222,33 @@ napi_status NapiEnvironment::runScript(
   std::unique_ptr<char[]> buffer =
       std::unique_ptr<char[]>(new char[sourceSize + 1]);
   CHECK_NAPI(getStringValueUTF8(source, buffer.get(), sourceSize + 1, nullptr));
-  return scope.setResult(runScript(
-      NapiExternalBuffer::make(
-          napiEnv(this),
-          napi_ext_buffer{
-              buffer.release(),
-              sourceSize,
-              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
-                std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
-              },
-              nullptr}),
+
+  napi_ext_prepared_script preparedScript{};
+  CHECK_NAPI(createPreparedScript(
+      reinterpret_cast<uint8_t *>(buffer.release()),
+      sourceSize,
+      [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
+        std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
+      },
       nullptr,
       sourceURL,
-      result));
-#endif
-  // TODO: implement
-  return napi_generic_failure;
+      &preparedScript));
+  // To delete prepared script after execution.
+  std::unique_ptr<NapiScriptModel> scriptModel{
+      reinterpret_cast<NapiScriptModel *>(preparedScript)};
+  return scope.setResult(runPreparedScript(preparedScript, result));
 }
 
-#if 0
-napi_status NapiEnvironment::runSerializedScript(
-    const uint8_t *buffer,
-    size_t bufferLength,
-    napi_value /*source*/,
+napi_status NapiEnvironment::createPreparedScript(
+    uint8_t *scriptData,
+    size_t scriptLength,
+    napi_finalize finalizeCallback,
+    void *finalizeHint,
     const char *sourceURL,
-    napi_value *result) noexcept {
-  CHECK_NAPI(checkPendingJSError());
-  NapiHandleScope scope{*this, result};
+    napi_ext_prepared_script *result) noexcept {
+  std::unique_ptr<NapiExternalBuffer> buffer = NapiExternalBuffer::make(
+      napiEnv(this), scriptData, scriptLength, finalizeCallback, finalizeHint);
 
-  std::unique_ptr<uint8_t[]> bufferCopy =
-      std::unique_ptr<uint8_t[]>(new uint8_t[bufferLength]);
-  std::copy(buffer, buffer + bufferLength, bufferCopy.get());
-  return scope.setResult(runScript(
-      NapiExternalBuffer::make(
-          napiEnv(this),
-          napi_ext_buffer{
-              bufferCopy.release(),
-              bufferLength,
-              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
-                std::unique_ptr<uint8_t[]> buf(
-                    reinterpret_cast<uint8_t *>(data));
-              },
-              nullptr}),
-      nullptr,
-      sourceURL,
-      result));
-}
-
-napi_status NapiEnvironment::serializeScript(
-    napi_value source,
-    const char *sourceURL,
-    napi_ext_buffer_callback bufferCallback,
-    void *bufferHint) noexcept {
-  CHECK_NAPI(checkPendingJSError());
-  NapiHandleScope scope{*this};
-
-  size_t sourceSize{};
-  CHECK_NAPI(getStringValueUTF8(source, nullptr, 0, &sourceSize));
-  std::unique_ptr<char[]> buffer =
-      std::unique_ptr<char[]>(new char[sourceSize + 1]);
-  CHECK_NAPI(getStringValueUTF8(source, buffer.get(), sourceSize + 1, nullptr));
-  napi_ext_prepared_script scriptModel{};
-  CHECK_NAPI(createScriptModel(
-      NapiExternalBuffer::make(
-          napiEnv(this),
-          napi_ext_buffer{
-              buffer.release(),
-              sourceSize,
-              [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
-                std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
-              },
-              nullptr}),
-      nullptr,
-      sourceURL,
-      &scriptModel));
-  return serializeScriptModel(scriptModel, bufferCallback, bufferHint);
-}
-
-napi_status NapiEnvironment::runScript(
-    std::unique_ptr<hermes::Buffer> script,
-    std::unique_ptr<hermes::Buffer> sourceMap,
-    const char *sourceURL,
-    napi_value *result) noexcept {
-  CHECK_NAPI(checkPendingJSError());
-  NapiHandleScope scope{*this, result};
-  napi_ext_prepared_script scriptModel{nullptr};
-  CHECK_NAPI(createScriptModel(
-      std::move(script), std::move(sourceMap), sourceURL, &scriptModel));
-  return scope.setResult(runScriptModel(scriptModel, result));
-}
-
-napi_status NapiEnvironment::createScriptModel(
-    std::unique_ptr<hermes::Buffer> buffer,
-    std::unique_ptr<hermes::Buffer> sourceMapBuf,
-    const char *sourceURL,
-    napi_ext_prepared_script *scriptModel) noexcept {
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this};
 
@@ -6334,35 +6265,16 @@ napi_status NapiEnvironment::createScriptModel(
 
   // Construct the BC provider either from buffer or source.
   if (isBytecode) {
-    if (sourceMapBuf) {
-      return GENERIC_FAILURE("Source map cannot be specified with bytecode");
-    }
     bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
         std::move(buffer));
   } else {
 #if defined(HERMESVM_LEAN)
     bcErr.second = "prepareJavaScript source compilation not supported";
 #else
-    std::unique_ptr<SourceMap> sourceMap{};
-    if (sourceMapBuf) {
-      // Convert the buffer into a form the parser needs.
-      llvh::MemoryBufferRef mbref(
-          llvh::StringRef(
-              (const char *)sourceMapBuf->data(), sourceMapBuf->size()),
-          "");
-      SimpleDiagHandler diag;
-      SourceErrorManager sm;
-      diag.installInto(sm);
-      sourceMap = SourceMapParser::parse(mbref, sm);
-      if (!sourceMap) {
-        return GENERIC_FAILURE(
-            "Error parsing source map: ", diag.getErrorString());
-      }
-    }
     bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
         std::move(buffer),
         std::string(sourceURL ? sourceURL : ""),
-        std::move(sourceMap),
+        nullptr,
         compileFlags_);
 #endif
   }
@@ -6373,7 +6285,7 @@ napi_status NapiEnvironment::createScriptModel(
     }
     return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, sb.str());
   }
-  *scriptModel = reinterpret_cast<napi_ext_prepared_script>(new NapiScriptModel(
+  *result = reinterpret_cast<napi_ext_prepared_script>(new NapiScriptModel(
       std::move(bcErr.first),
       runtimeFlags,
       sourceURL ? sourceURL : "",
@@ -6381,112 +6293,27 @@ napi_status NapiEnvironment::createScriptModel(
   return clearLastNativeError();
 }
 
-napi_status NapiEnvironment::runScriptModel(
-    napi_ext_prepared_script scriptModel,
+napi_status NapiEnvironment::deletePreparedScript(
+    napi_ext_prepared_script preparedScript) noexcept {
+  CHECK_ARG(preparedScript);
+  delete reinterpret_cast<NapiScriptModel *>(preparedScript);
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::runPreparedScript(
+    napi_ext_prepared_script preparedScript,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this, result};
-  CHECK_ARG(scriptModel);
+  CHECK_ARG(preparedScript);
   const NapiScriptModel *hermesPrep =
-      reinterpret_cast<NapiScriptModel *>(scriptModel);
+      reinterpret_cast<NapiScriptModel *>(preparedScript);
   vm::CallResult<vm::HermesValue> res = runtime_.runBytecode(
       hermesPrep->bytecodeProvider(),
       hermesPrep->runtimeFlags(),
       hermesPrep->sourceURL(),
       vm::Runtime::makeNullHandle<vm::Environment>());
   return scope.setResult(std::move(res));
-}
-
-napi_status NapiEnvironment::deleteScriptModel(
-    napi_ext_prepared_script scriptModel) noexcept {
-  CHECK_ARG(scriptModel);
-  delete reinterpret_cast<NapiScriptModel *>(scriptModel);
-  return clearLastNativeError();
-}
-
-napi_status NapiEnvironment::serializeScriptModel(
-    napi_ext_prepared_script scriptModel,
-    napi_ext_buffer_callback bufferCallback,
-    void *bufferHint) noexcept {
-  CHECK_NAPI(checkPendingJSError());
-  NapiHandleScope scope{*this};
-
-  CHECK_ARG(scriptModel);
-  CHECK_ARG(bufferCallback);
-
-  NapiScriptModel *hermesPreparedScript =
-      reinterpret_cast<NapiScriptModel *>(scriptModel);
-
-  if (hermesPreparedScript->isBytecode()) {
-    std::shared_ptr<hbc::BCProviderFromBuffer> bytecodeProvider =
-        std::static_pointer_cast<hbc::BCProviderFromBuffer>(
-            hermesPreparedScript->bytecodeProvider());
-    llvh::ArrayRef<uint8_t> bufferRef = bytecodeProvider->getRawBuffer();
-    bufferCallback(
-        napiEnv(this), bufferRef.data(), bufferRef.size(), bufferHint);
-  } else {
-#if defined(HERMESVM_LEAN)
-    return GENERIC_FAILURE(
-        "serializeScriptModel source compilation not supported");
-#else
-    std::shared_ptr<hbc::BCProviderFromSrc> bytecodeProvider =
-        std::static_pointer_cast<hbc::BCProviderFromSrc>(
-            hermesPreparedScript->bytecodeProvider());
-    hbc::BytecodeModule *bcModule = bytecodeProvider->getBytecodeModule();
-
-    // Serialize/deserialize can't handle lazy compilation as of now. Do a
-    // check to make sure there is no lazy BytecodeFunction in module_.
-    for (uint32_t i = 0; i < bcModule->getNumFunctions(); i++) {
-      if (bytecodeProvider->isFunctionLazy(i)) {
-        hermes_fatal("Cannot serialize lazy functions");
-      }
-    }
-
-    // Serialize the bytecode. Call BytecodeSerializer to do the heavy
-    // lifting. Write to a SmallVector first, so we can know the total bytes
-    // and write it first and make life easier for Deserializer. This is going
-    // to be slower than writing to Serializer directly but it's OK to slow
-    // down serialization if it speeds up Deserializer.
-    BytecodeGenerationOptions bytecodeGenOpts =
-        BytecodeGenerationOptions::defaults();
-    llvh::SmallVector<char, 0> bytecodeVector;
-    llvh::raw_svector_ostream OS(bytecodeVector);
-    hbc::BytecodeSerializer BS{OS, bytecodeGenOpts};
-    BS.serialize(*bcModule, bytecodeProvider->getSourceHash());
-    bufferCallback(
-        napiEnv(this),
-        reinterpret_cast<uint8_t *>(bytecodeVector.data()),
-        bytecodeVector.size(),
-        bufferHint);
-#endif
-  }
-
-  return clearLastNativeError();
-}
-#endif
-
-napi_status NapiEnvironment::createPreparedScript(
-    uint8_t *scriptData,
-    size_t scriptLength,
-    napi_finalize finalizeCallback,
-    void *finalizeHint,
-    const char *sourceURL,
-    napi_ext_prepared_script *result) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
-}
-
-napi_status NapiEnvironment::deletePreparedScript(
-    napi_ext_prepared_script preparedScript) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
-}
-
-napi_status NapiEnvironment::runPreparedScript(
-    napi_ext_prepared_script preparedScript,
-    napi_value *result) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
 }
 
 /*static*/ bool NapiEnvironment::isHermesBytecode(
@@ -7415,9 +7242,7 @@ napi_is_promise(napi_env env, napi_value value, bool *is_promise) {
 
 napi_status NAPI_CDECL
 napi_run_script(napi_env env, napi_value script, napi_value *result) {
-  // TODO:
-  // return CHECKED_ENV(env)->runScript(script, nullptr, result);
-  return napi_generic_failure;
+  return CHECKED_ENV(env)->runScript(script, nullptr, result);
 }
 
 //-----------------------------------------------------------------------------
