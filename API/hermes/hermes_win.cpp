@@ -34,6 +34,8 @@
 
 napi_status napi_create_hermes_env(
     ::hermes::vm::Runtime &runtime,
+    bool isInspectable,
+    const ::hermes::vm::RuntimeConfig &runtimeConfig,
     napi_env *env);
 
 napi_status napi_ext_env_unref(napi_env env);
@@ -439,7 +441,7 @@ class RuntimeWrapper {
   explicit RuntimeWrapper(const ConfigWrapper &config)
       : hermesRuntime_(makeHermesRuntime(config.getRuntimeConfig())),
         vmRuntime_(getVMRuntime(*hermesRuntime_)) {
-    napi_create_hermes_env(vmRuntime_, &env_);
+    napi_create_hermes_env(vmRuntime_, config.enableDebugger(), {}, &env_);
 
     if (config.enableDebugger()) {
       auto adapter = std::make_unique<HermesExecutorRuntimeAdapter>(

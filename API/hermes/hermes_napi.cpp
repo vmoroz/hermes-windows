@@ -53,8 +53,6 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
-// TODO: Add unit tests for the external JSArrayBuffer
-// TODO: Add unit tests for FinalizableNativeConstructor
 // TODO: Add unit tests for the TypedArray length and byteLength changes
 // TODO: Allow DebugBreak in unexpected cases - add functions to indicate
 //       expected errors
@@ -65,7 +63,7 @@
 // TODO: Cannot use functions as a base class
 // TODO: NativeFunction vs NativeConstructor
 // TODO: Different error messages
-// TODO: Arrays with 2^32-1 elements
+// TODO: Arrays with 2^32-1 elements (sparse arrays?)
 // TODO: How to provide detailed error messages without breaking tests?
 // TODO: Why console.log compiles in V8_JSI?
 
@@ -531,6 +529,7 @@ class NapiEnvironment final {
   // Initializes a new instance of NapiEnvironment.
   explicit NapiEnvironment(
       vm::Runtime &runtime,
+      bool isInspectable,
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
 
  private:
@@ -1652,6 +1651,9 @@ class NapiEnvironment final {
 
   // Flags used by byte code compiler.
   hbc::CompileFlags compileFlags_{};
+
+  // Can we run a debugger?
+  bool isInspectable_{};
 
   // Collection of all predefined values.
   std::array<
@@ -3016,8 +3018,9 @@ size_t convertUTF16ToUTF8WithReplacements(
 
 NapiEnvironment::NapiEnvironment(
     vm::Runtime &runtime,
+    bool isInspectable,
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    : runtime_(runtime) {
+    : runtime_(runtime), isInspectable_(isInspectable) {
   switch (runtimeConfig.getCompilationMode()) {
     case vm::SmartCompilation:
       compileFlags_.lazy = true;
@@ -5875,13 +5878,28 @@ napi_status NapiEnvironment::getDescription(
     char *buf,
     size_t bufsize,
     size_t *result) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
+  constexpr const char description[] = "Hermes";
+  const size_t len = sizeof(description) - 1;
+  if (buf == nullptr) {
+    CHECK_ARG(result);
+    *result = len;
+  } else if (bufsize > 0) {
+    const size_t copied = std::min(bufsize - 1, len);
+    std::char_traits<char>::copy(buf, description, std::min(bufsize - 1, len));
+    buf[copied] = '\0';
+    if (result != nullptr) {
+      *result = copied;
+    }
+  } else if (result != nullptr) {
+    *result = 0;
+  }
+  return napi_ok;
 }
 
 napi_status NapiEnvironment::isInspectable(bool *result) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
+  CHECK_ARG(result);
+  *result = isInspectable_;
+  return napi_ok;
 }
 
 //-----------------------------------------------------------------------------
@@ -7578,11 +7596,14 @@ napi_status NAPI_CDECL napi_object_seal(napi_env env, napi_value object) {
 
 napi_status napi_create_hermes_env(
     ::hermes::vm::Runtime &runtime,
+    bool isInspectable,
+    const ::hermes::vm::RuntimeConfig &runtimeConfig,
     napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = hermes::napi::napiEnv(new hermes::napi::NapiEnvironment(runtime));
+  *env = hermes::napi::napiEnv(
+      new hermes::napi::NapiEnvironment(runtime, isInspectable, runtimeConfig));
   return napi_status::napi_ok;
 }
 
