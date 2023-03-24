@@ -6119,8 +6119,14 @@ napi_status NapiEnvironment::getAndClearLastUnhandledPromiseRejection(
 napi_status NapiEnvironment::drainMicrotasks(
     int32_t maxCountHint,
     bool *result) noexcept {
-  // TODO: implement
-  return napi_generic_failure;
+  CHECK_ARG(result);
+  if (runtime_.hasMicrotaskQueue()) {
+    CHECK_NAPI(checkJSErrorStatus(runtime_.drainJobs()));
+  }
+
+  runtime_.clearKeptObjects();
+  *result = true;
+  return napi_ok;
 }
 
 //-----------------------------------------------------------------------------
