@@ -9,24 +9,11 @@
     <PackageRoot Condition="'$(NugetRootOverride)' != ''">$(NugetRootOverride)</PackageRoot>
   </PropertyGroup>
   <ItemDefinitionGroup>
-    <Link>
-      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Debug'">%(AdditionalLibraryDirectories);$(PackageRoot)lib\native\debug\$(HermesPlatform)</AdditionalLibraryDirectories>
-      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' != 'true' ">%(AdditionalLibraryDirectories);$(PackageRoot)lib\native\release\$(HermesPlatform)</AdditionalLibraryDirectories>
-      <AdditionalLibraryDirectories Condition="'$(Configuration)' == 'Release' And '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">%(AdditionalLibraryDirectories);$(PackageRoot)lib\native\release\$(HermesPlatform)\debugger</AdditionalLibraryDirectories>
-      
-      <AdditionalDependencies Condition="'$(HermesNoLink)' == ''">%(AdditionalDependencies);hermes.lib;</AdditionalDependencies>
-      <AdditionalDependencies Condition="'$(HermesNoLink)' == ''">%(AdditionalDependencies);dloadhelper.lib</AdditionalDependencies>
-    </Link>
     <ClCompile>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(PackageRoot)\build\native\include</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="'$(Configuration)' == 'Debug' Or '$(EnableHermesInspectorInReleaseFlavor)' == 'true'">HERMES_ENABLE_DEBUGGER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="$(PackageRoot)\build\native\include\hermes\Public\rtti.cpp" Condition="'$(HermesCompileRtti)' != 'false'">
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-    </ClCompile>
-  </ItemGroup>
   <ItemGroup Condition="'$(Configuration)' == 'Debug' And '$(HermesNoDLLCopy)' == ''">
     <ReferenceCopyLocalPaths Include="$(PackageRoot)lib\native\debug\$(HermesPlatform)\hermes.dll" />
   </ItemGroup>
