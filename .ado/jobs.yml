@@ -12,39 +12,27 @@ jobs:
         - Setup
     strategy:
       matrix:
-        DebugX64:
-          BuildConfiguration: debug
-          BuildPlatform: x64
-          BuildAppPlatform: uwp
-        DebugX86:
-          BuildConfiguration: debug
-          BuildPlatform: x86
-          BuildAppPlatform: uwp
-        DebugARM64:
-          BuildConfiguration: debug
-          BuildPlatform: arm64
-          BuildAppPlatform: uwp
-        ReleaseX64:
+        ReleaseX64Uwp:
           BuildConfiguration: release
           BuildPlatform: x64
           BuildAppPlatform: uwp
-        ReleaseX86:
+        ReleaseX86Uwp:
           BuildConfiguration: release
           BuildPlatform: x86
           BuildAppPlatform: uwp
-        ReleaseARM64:
+        ReleaseARM64Uwp:
           BuildConfiguration: release
           BuildPlatform: arm64
           BuildAppPlatform: uwp
-        ReleaseX64:
+        ReleaseX64Win32:
           BuildConfiguration: release
           BuildPlatform: x64
           BuildAppPlatform: win32
-        ReleaseX86:
+        ReleaseX86Win32:
           BuildConfiguration: release
           BuildPlatform: x86
           BuildAppPlatform: win32
-        ReleaseARM64:
+        ReleaseARM64Win32:
           BuildConfiguration: release
           BuildPlatform: arm64
           BuildAppPlatform: win32
