@@ -162,11 +162,9 @@ function get-CommonArgs($Platform, $Configuration, $AppPlatform, [ref]$genArgs) 
         $genArgs.Value += '-G Ninja'
     }
 
-    $genArgs.Value += ('-DPYTHON_EXECUTABLE={0}' -f $PYTHON_PATH)
     $genArgs.Value += ('-DCMAKE_BUILD_TYPE={0}' -f (Get-CMakeConfiguration $Configuration))
 
     $genArgs.Value += '-DHERMESVM_PLATFORM_LOGGING=On'
-    $genArgs.Value += '-DHERMESJSI_DISABLE_STATS_TIMER=On'
 
     if (![String]::IsNullOrWhiteSpace($FileVersion)) {
         $genArgs.Value += '-DHERMES_FILE_VERSION=' + $FileVersion
@@ -258,9 +256,11 @@ function Invoke-Dll-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath, 
     }
 
     if ($AppPlatform -eq "uwp") {
-        $genArgs += '-DCMAKE_CXX_STANDARD=17'
         $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
         $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.17763.0"'
+        $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
+    } elseif ($Platform -eq "arm64") {
+        $genArgs += '-DHERMES_MSVC_ARM64=On'
         $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 
@@ -274,9 +274,10 @@ function Invoke-Test-Build($SourcesPath, $buildPath, $compilerAndToolsBuildPath,
     $genArgs += '-DHERMES_ENABLE_DEBUGGER=On'
 
     if ($AppPlatform -eq "uwp") {
-        $genArgs += '-DCMAKE_CXX_STANDARD=17'
         $genArgs += '-DCMAKE_SYSTEM_NAME=WindowsStore'
         $genArgs += '-DCMAKE_SYSTEM_VERSION="10.0.17763"'
+    } elseif ($Platform -eq "arm64") {
+        $genArgs += '-DHERMES_MSVC_ARM64=On'
         $genArgs += "-DIMPORT_HERMESC=$compilerAndToolsBuildPath\ImportHermesc.cmake"
     }
 
@@ -376,7 +377,6 @@ function Invoke-PrepareNugetPackage($SourcesPath, $WorkSpacePath, $OutputPath, $
 $StartTime = (Get-Date)
 
 $VCVARS_PATH = Find-VS-Path
-$PYTHON_PATH = Find-Path "python.exe"
 
 if (!(Test-Path -Path $WorkSpacePath)) {
     New-Item -ItemType "directory" -Path $WorkSpacePath | Out-Null
