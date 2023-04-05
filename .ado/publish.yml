@@ -4,7 +4,8 @@
 #
 # The main branch pre-release versions start with "0.0."
 # and follow the date and revision number.
-name: 0.0.$(Date:yyMM.d)$(Rev:rrr)
+# The experimental ABI-safe API branch versions start with "0.12.".
+name: 0.12.$(Rev:r)
 
 pr: none
 trigger:

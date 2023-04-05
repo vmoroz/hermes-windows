@@ -15,21 +15,39 @@ jobs:
         DebugX64:
           BuildConfiguration: debug
           BuildPlatform: x64
+          BuildAppPlatform: uwp
         DebugX86:
           BuildConfiguration: debug
           BuildPlatform: x86
+          BuildAppPlatform: uwp
         DebugARM64:
           BuildConfiguration: debug
           BuildPlatform: arm64
+          BuildAppPlatform: uwp
         ReleaseX64:
           BuildConfiguration: release
           BuildPlatform: x64
+          BuildAppPlatform: uwp
         ReleaseX86:
           BuildConfiguration: release
           BuildPlatform: x86
+          BuildAppPlatform: uwp
         ReleaseARM64:
           BuildConfiguration: release
           BuildPlatform: arm64
+          BuildAppPlatform: uwp
+        ReleaseX64:
+          BuildConfiguration: release
+          BuildPlatform: x64
+          BuildAppPlatform: win32
+        ReleaseX86:
+          BuildConfiguration: release
+          BuildPlatform: x86
+          BuildAppPlatform: win32
+        ReleaseARM64:
+          BuildConfiguration: release
+          BuildPlatform: arm64
+          BuildAppPlatform: win32
     variables:
       semanticVersion: $[ dependencies.Setup.outputs['setVersions.semanticVersion'] ]
       fileVersion: $[ dependencies.Setup.outputs['setVersions.fileVersion'] ]
@@ -44,7 +62,7 @@ jobs:
             -OutputPath:$(Build.ArtifactStagingDirectory)
             -Platform:$(BuildPlatform)
             -Configuration:$(BuildConfiguration)
-            -AppPlatform:uwp
+            -AppPlatform:$(BuildAppPlatform)
             -ReleaseVersion:"$(semanticVersion)"
             -FileVersion:"$(fileVersion)"
 
@@ -124,16 +142,6 @@ jobs:
           buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
           versioningScheme: byEnvVar
           versionEnvVar: Version
-        
-      - task: NuGetCommand@2
-        displayName: 'NuGet Pack'
-        inputs:
-          command: pack
-          packagesToPack: $(System.DefaultWorkingDirectory)\HermesArtifacts\ReactNative.Hermes.Windows.Fat.nuspec
-          packDestination: $(System.DefaultWorkingDirectory)\NugetRootFinal
-          buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
-          versioningScheme: byEnvVar
-          versionEnvVar: Version
 
       - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
         displayName: 📒 Generate Manifest NuGet
@@ -146,4 +154,3 @@ jobs:
         inputs:
           PathtoPublish: $(System.DefaultWorkingDirectory)\NugetRootFinal
           ArtifactName: "Hermes-final-nuget"
-

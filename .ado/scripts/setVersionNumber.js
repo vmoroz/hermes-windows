@@ -40,7 +40,10 @@ function computeVersion() {
     if (sourceBranch.startsWith("refs/heads/rnw/0.")) {
       return computeReleaseVersion();
     }
-
+    if (sourceBranch.startsWith("refs/heads/rnw/abi")) {
+      return computeReleaseVersion();
+    }
+    
     fatalError(`Build script does not support source branch '${sourceBranch}'.`)
 }
 
