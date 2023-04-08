@@ -60,7 +60,7 @@ jobs:
 #        inputs:
 #          ConnectedServiceName: ESRP-JsHost
 #          FolderPath: $(Build.ArtifactStagingDirectory)
-           Recursively finds files matching these patterns:
+#          # Recursively finds files matching these patterns:
 #          Pattern: |
 #            **/hermes.dll
 #            **/hermesc.exe
