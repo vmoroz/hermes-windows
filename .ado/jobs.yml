@@ -54,6 +54,42 @@ jobs:
             -ReleaseVersion:"$(semanticVersion)"
             -FileVersion:"$(fileVersion)"
 
+      - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@2
+        displayName: CodeSign Binaries
+        condition: not(eq(variables['Build.Reason'], 'PullRequest'))
+        inputs:
+          ConnectedServiceName: ESRP-JsHost
+          FolderPath: $(Build.ArtifactStagingDirectory)
+          # Recursively finds files matching these patterns:
+          Pattern: |
+            **/hermes.dll
+            **/hermesc.exe
+          UseMinimatch: true
+          signConfigType: inlineSignParams
+          inlineOperation: |
+            [
+              {
+                "KeyCode" : "CP-230012",
+                "OperationCode" : "SigntoolSign",
+                "Parameters" : {
+                    "OpusName" : "Microsoft",
+                    "OpusInfo" : "http://www.microsoft.com",
+                    "FileDigest" : "/fd \"SHA256\"",
+                    "PageHash" : "/NPH",
+                    "TimeStamp" : "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+                },
+                "ToolName" : "sign",
+                "ToolVersion" : "1.0"
+              },
+              {
+                  "KeyCode" : "CP-230012",
+                  "OperationCode" : "SigntoolVerify",
+                  "Parameters" : {},
+                  "ToolName" : "sign",
+                  "ToolVersion" : "1.0"
+              }
+            ]
+
       - script: echo TODO - Add Tests here
         displayName: '[Test] - To be Added via bug #77'
 
@@ -125,11 +161,39 @@ jobs:
         displayName: 'NuGet Pack'
         inputs:
           command: pack
-          packagesToPack: $(System.DefaultWorkingDirectory)\HermesArtifacts\ReactNative.Hermes.Windows.nuspec
+          packagesToPack: $(System.DefaultWorkingDirectory)\HermesArtifacts\Microsoft.JavaScript.Hermes.nuspec
           packDestination: $(System.DefaultWorkingDirectory)\NugetRootFinal
           buildProperties: CommitId=$(Build.SourceVersion);nugetroot=$(System.DefaultWorkingDirectory)\HermesArtifacts;RepoUri=$(Build.Repository.Uri)
           versioningScheme: byEnvVar
           versionEnvVar: Version
+
+      - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@2
+        displayName: CodeSign NuGets
+        condition: not(eq(variables['Build.Reason'], 'PullRequest'))
+        inputs:
+          ConnectedServiceName: ESRP-JsHost
+          FolderPath: $(System.DefaultWorkingDirectory)\NugetRootFinal
+          Pattern: |
+            **/Microsoft.JavaScript.Hermes.*.nupkg
+          UseMinimatch: true
+          signConfigType: inlineSignParams
+          inlineOperation: |
+            [
+              {
+                  "KeyCode" : "CP-401405",
+                  "OperationCode" : "NuGetSign",
+                  "Parameters" : {},
+                  "ToolName" : "sign",
+                  "ToolVersion" : "1.0"
+              },
+              {
+                  "KeyCode" : "CP-401405",
+                  "OperationCode" : "NuGetVerify",
+                  "Parameters" : {},
+                  "ToolName" : "sign",
+                  "ToolVersion" : "1.0"
+              }
+            ]
 
       - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
         displayName: 📒 Generate Manifest NuGet

@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
   <metadata>
-    <id>ReactNative.Hermes.Windows</id>
+    <id>Microsoft.JavaScript.Hermes</id>
     <version>$Version$</version>
-    <description>Windows implementation of Hermes JavaScript Engine for use with ReactNative (VERSION_DETAILS)</description>
+    <description>Hermes JavaScript engine (VERSION_DETAILS)</description>
     <authors>Facebook, Microsoft</authors>
     <projectUrl>https://github.com/microsoft/hermes-windows</projectUrl>
-    <requireLicenseAcceptance>true</requireLicenseAcceptance>
     <license type="expression">MIT</license>
     <copyright>&#169; Microsoft Corporation. All rights reserved.</copyright>
     <repository type="git" url="$RepoUri$" commit="$CommitId$" />
+    <tags>Hermes JavaScript Node-API NAPI</tags>
   </metadata>
   <files>
     <file src="$nugetroot$\lib\native\uwp\release\arm64\**\*.*"
@@ -33,8 +33,8 @@
 
     <file src="$nugetroot$\build\native\include\**\*.*"
           target="build/native/include" />
-    <file src="$nugetroot$\build\native\ReactNative.Hermes.Windows.targets"
-          target="build/native/ReactNative.Hermes.Windows.targets" />
+    <file src="$nugetroot$\build\native\Microsoft.JavaScript.Hermes.targets"
+          target="build/native/Microsoft.JavaScript.Hermes.targets" />
 
     <file src="$nugetroot$\license\*" target="license"/>
     <file src="$nugetroot$\tools\**\*.*" target="tools"/>
