@@ -359,7 +359,8 @@ function Invoke-PrepareNugetPackage($SourcesPath, $WorkSpacePath, $OutputPath, $
         New-Item -ItemType "directory" -Path "$OutputPath\license" | Out-Null
     }
 
-    Copy-Item "$SourcesPath\LICENSE" -Destination "$OutputPath\license\" -force 
+    Copy-Item "$SourcesPath\LICENSE" -Destination "$OutputPath\license\" -force
+    Copy-Item "$SourcesPath\.ado\NOTICE.txt" -Destination "$OutputPath\license\" -force
     Copy-Item "$SourcesPath\.ado\Microsoft.JavaScript.Hermes.targets" -Destination "$OutputPath\build\native\Microsoft.JavaScript.Hermes.targets" -force
 
     # process version information
