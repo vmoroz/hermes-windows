@@ -144,7 +144,7 @@ typedef void(NAPI_CDECL *hermes_remote_connection_disconnect_cb)(
     hermes_remote_connection remote_connection);
 
 HERMES_API hermes_create_local_connection(
-    void *page_data,
+    void *connect_func,
     hermes_remote_connection remote_connection,
     hermes_remote_connection_send_message_cb on_send_message_cb,
     hermes_remote_connection_disconnect_cb on_disconnect_cb,
