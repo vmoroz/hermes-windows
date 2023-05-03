@@ -531,6 +531,12 @@ HERMES_API hermes_delete_runtime(hermes_runtime runtime) {
   return hermes_ok;
 }
 
+HERMES_API hermes_get_non_abi_safe_runtime(
+    hermes_runtime runtime,
+    void **non_abi_safe_runtime) {
+  return CHECKED_RUNTIME(runtime)->getNonAbiSafeRuntime(non_abi_safe_runtime);
+}
+
 HERMES_API hermes_get_node_api_env(hermes_runtime runtime, napi_env *env) {
   return CHECKED_RUNTIME(runtime)->getNodeApi(env);
 }
