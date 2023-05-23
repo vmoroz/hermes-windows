@@ -2,9 +2,11 @@
 // Licensed under the MIT license.
 
 #include <gtest/gtest.h>
-#include <memory>
 #include "hermes_api.h"
 #include "napitest.h"
+
+#include <memory>
+#include <vector>
 
 namespace napitest {
 

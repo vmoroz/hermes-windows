@@ -235,7 +235,7 @@ class TaskRunner {
 
   void post(std::unique_ptr<Task> task) {
     postTaskCallback_(
-        this, task.release(), &Task::run, &Task::deleteTask, nullptr);
+        data_, task.release(), &Task::run, &Task::deleteTask, nullptr);
   }
 
  private:
@@ -486,7 +486,6 @@ class RuntimeWrapper {
   }
 
  private:
-  ConfigWrapper config_;
   std::shared_ptr<HermesRuntime> hermesRuntime_;
   ::hermes::vm::Runtime &vmRuntime_;
   napi_env env_;

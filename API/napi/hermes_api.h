@@ -40,10 +40,6 @@ HERMES_API hermes_sampling_profiler_add(hermes_runtime runtime);
 HERMES_API hermes_sampling_profiler_remove(hermes_runtime runtime);
 HERMES_API hermes_sampling_profiler_dump_to_file(const char *filename);
 
-HERMES_API hermes_get_non_abi_safe_runtime(
-    hermes_runtime runtime,
-    void **non_abi_safe_runtime);
-
 //=============================================================================
 // hermes_config
 //=============================================================================
