@@ -3904,6 +3904,19 @@ napi_status NapiEnvironment::getBigIntValueWords(
     *wordCount = std::min(*wordCount, digits.size());
     std::memcpy(words, digits.begin(), *wordCount * sizeof(uint64_t));
     *signBit = bigInt->sign() ? 1 : 0;
+    if (*signBit) {
+      // negate negative numbers, and then add a "-" to the output.
+      // a. flip all bits
+      for (size_t i = 0; i < *wordCount; ++i) {
+        words[i] = ~words[i];
+      }
+      // b. add 1
+      for (size_t i = 0; i < *wordCount; ++i) {
+        if (++words[i] >= 1) {
+          break; // No need to carry so exit early.
+        }
+      }
+    }
   }
 
   return clearLastNativeError();
