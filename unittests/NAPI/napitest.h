@@ -15,7 +15,7 @@
 #include <gtest/gtest.h>
 
 #define NAPI_EXPERIMENTAL
-#include "js_native_ext_api.h"
+#include "js_runtime_api.h"
 
 extern "C" {
 #include "js-native-api/common.h"
@@ -198,6 +198,38 @@ struct NapiHandleScope {
   napi_handle_scope m_scope{nullptr};
 };
 
+struct NapiEnvScope {
+  NapiEnvScope(napi_env env) noexcept : m_env{env} {
+    CRASH_IF_FALSE(jsr_open_napi_env_scope(env, &m_scope) == napi_ok);
+  }
+
+  ~NapiEnvScope() noexcept {
+    if (m_env != nullptr) {
+      CRASH_IF_FALSE(jsr_close_napi_env_scope(m_env, m_scope) == napi_ok);
+    }
+  }
+
+  NapiEnvScope(NapiEnvScope &&other)
+      : m_env(std::exchange(other.m_env, nullptr)),
+        m_scope(std::exchange(other.m_scope, nullptr)) {}
+
+  NapiEnvScope &operator=(NapiEnvScope &&other) {
+    if (this != &other) {
+      NapiEnvScope temp(std::move(*this));
+      m_env = std::exchange(other.m_env, nullptr);
+      m_scope = std::exchange(other.m_scope, nullptr);
+    }
+    return *this;
+  }
+
+  NapiEnvScope(const NapiEnvScope &) = delete;
+  NapiEnvScope &operator=(const NapiEnvScope &) = delete;
+
+ private:
+  napi_env m_env{};
+  jsr_napi_env_scope m_scope{};
+};
+
 // The context to run a NAPI test.
 // Some tests require interaction of multiple JS environments.
 // Thus, it is more convenient to have a special NapiTestContext instead of
@@ -244,6 +276,7 @@ struct NapiTestContext {
  private:
   napi_env env;
   std::string m_testJSPath;
+  NapiEnvScope m_envScope;
   NapiHandleScope m_handleScope;
   std::map<std::string, NapiRef, std::less<>> m_modules;
   std::map<std::string, TestScriptInfo, std::less<>> m_scriptModules;

@@ -114,6 +114,7 @@ add_hermes_library(hermesinspector
   ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
 
 target_link_libraries(hermesinspector
+  hermesNapi
   hermesPublic
   jsi
 )

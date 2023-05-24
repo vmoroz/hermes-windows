@@ -1469,6 +1469,10 @@ class NapiEnvironment final {
           int32_t id,
           vm::HermesValue error)) noexcept;
 
+  napi_status openEnvScope(jsr_napi_env_scope *scope) noexcept;
+
+  napi_status closeEnvScope(jsr_napi_env_scope scope) noexcept;
+
   // Exported function to check if there is an unhandled Promise rejection.
   napi_status hasUnhandledPromiseRejection(bool *result) noexcept;
 
@@ -1538,13 +1542,12 @@ class NapiEnvironment final {
       napi_finalize finalizeCallback,
       void *finalizeHint,
       const char *sourceURL,
-      napi_ext_prepared_script *result) noexcept;
+      jsr_prepared_script *result) noexcept;
 
-  napi_status deletePreparedScript(
-      napi_ext_prepared_script preparedScript) noexcept;
+  napi_status deletePreparedScript(jsr_prepared_script preparedScript) noexcept;
 
   napi_status runPreparedScript(
-      napi_ext_prepared_script preparedScript,
+      jsr_prepared_script preparedScript,
       napi_value *result) noexcept;
 
   // Internal function to check if buffer contains Hermes VM bytecode.
@@ -3181,8 +3184,8 @@ vm::Runtime &NapiEnvironment::runtime() noexcept {
   return runtime_;
 }
 
-NapiStableAddressStack<vm::PinnedHermesValue>
-    &NapiEnvironment::napiValueStack() noexcept {
+NapiStableAddressStack<vm::PinnedHermesValue> &
+NapiEnvironment::napiValueStack() noexcept {
   return napiValueStack_;
 }
 
@@ -6114,6 +6117,18 @@ NapiEnvironment::handleRejectionNotification(
   return env->getUndefined();
 }
 
+napi_status NapiEnvironment::openEnvScope(jsr_napi_env_scope *scope) noexcept {
+  CHECK_ARG(scope);
+  *scope = reinterpret_cast<jsr_napi_env_scope>(new int(0));
+  return napi_ok;
+}
+
+napi_status NapiEnvironment::closeEnvScope(jsr_napi_env_scope scope) noexcept {
+  CHECK_ARG(scope);
+  delete reinterpret_cast<int *>(scope);
+  return napi_ok;
+}
+
 napi_status NapiEnvironment::hasUnhandledPromiseRejection(
     bool *result) noexcept {
   return setResult(lastUnhandledRejectionId_ != -1, result);
@@ -6223,7 +6238,7 @@ napi_status NapiEnvironment::runScript(
       std::unique_ptr<char[]>(new char[sourceSize + 1]);
   CHECK_NAPI(getStringValueUTF8(source, buffer.get(), sourceSize + 1, nullptr));
 
-  napi_ext_prepared_script preparedScript{};
+  jsr_prepared_script preparedScript{};
   CHECK_NAPI(createPreparedScript(
       reinterpret_cast<uint8_t *>(buffer.release()),
       sourceSize,
@@ -6245,7 +6260,7 @@ napi_status NapiEnvironment::createPreparedScript(
     napi_finalize finalizeCallback,
     void *finalizeHint,
     const char *sourceURL,
-    napi_ext_prepared_script *result) noexcept {
+    jsr_prepared_script *result) noexcept {
   std::unique_ptr<NapiExternalBuffer> buffer = NapiExternalBuffer::make(
       napiEnv(this), scriptData, scriptLength, finalizeCallback, finalizeHint);
 
@@ -6285,7 +6300,7 @@ napi_status NapiEnvironment::createPreparedScript(
     }
     return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, sb.str());
   }
-  *result = reinterpret_cast<napi_ext_prepared_script>(new NapiScriptModel(
+  *result = reinterpret_cast<jsr_prepared_script>(new NapiScriptModel(
       std::move(bcErr.first),
       runtimeFlags,
       sourceURL ? sourceURL : "",
@@ -6294,14 +6309,14 @@ napi_status NapiEnvironment::createPreparedScript(
 }
 
 napi_status NapiEnvironment::deletePreparedScript(
-    napi_ext_prepared_script preparedScript) noexcept {
+    jsr_prepared_script preparedScript) noexcept {
   CHECK_ARG(preparedScript);
   delete reinterpret_cast<NapiScriptModel *>(preparedScript);
   return napi_ok;
 }
 
 napi_status NapiEnvironment::runPreparedScript(
-    napi_ext_prepared_script preparedScript,
+    jsr_prepared_script preparedScript,
     napi_value *result) noexcept {
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this, result};
@@ -7452,45 +7467,51 @@ napi_status napi_create_hermes_env(
 // Node-API extensions to host JS engine and to implement JSI
 //=============================================================================
 
-napi_status NAPI_CDECL napi_ext_env_ref(napi_env env) {
+napi_status NAPI_CDECL jsr_env_ref(napi_env env) {
   return CHECKED_ENV(env)->incRefCount();
 }
 
-napi_status NAPI_CDECL napi_ext_env_unref(napi_env env) {
+napi_status NAPI_CDECL jsr_env_unref(napi_env env) {
   return CHECKED_ENV(env)->decRefCount();
 }
 
-napi_status NAPI_CDECL napi_ext_collect_garbage(napi_env env) {
+napi_status NAPI_CDECL jsr_collect_garbage(napi_env env) {
   return CHECKED_ENV(env)->collectGarbage();
 }
 
 napi_status NAPI_CDECL
-napi_ext_has_unhandled_promise_rejection(napi_env env, bool *result) {
+jsr_has_unhandled_promise_rejection(napi_env env, bool *result) {
   return CHECKED_ENV(env)->hasUnhandledPromiseRejection(result);
 }
 
-napi_status NAPI_CDECL napi_get_and_clear_last_unhandled_promise_rejection(
+napi_status NAPI_CDECL jsr_get_and_clear_last_unhandled_promise_rejection(
     napi_env env,
     napi_value *result) {
   return CHECKED_ENV(env)->getAndClearLastUnhandledPromiseRejection(result);
 }
 
-napi_status NAPI_CDECL napi_ext_get_description(
-    napi_env env,
-    char *buf,
-    size_t bufsize,
-    size_t *result) {
+napi_status NAPI_CDECL
+jsr_get_description(napi_env env, char *buf, size_t bufsize, size_t *result) {
   return CHECKED_ENV(env)->getDescription(buf, bufsize, result);
 }
 
 napi_status NAPI_CDECL
-napi_ext_drain_microtasks(napi_env env, int32_t max_count_hint, bool *result) {
+jsr_drain_microtasks(napi_env env, int32_t max_count_hint, bool *result) {
   return CHECKED_ENV(env)->drainMicrotasks(max_count_hint, result);
 }
 
-napi_status NAPI_CDECL napi_ext_is_inspectable(napi_env env, bool *result) {
+napi_status NAPI_CDECL jsr_is_inspectable(napi_env env, bool *result) {
   return CHECKED_ENV(env)->isInspectable(result);
 }
+
+JSR_API jsr_open_napi_env_scope(napi_env env, jsr_napi_env_scope *scope) {
+  return CHECKED_ENV(env)->openEnvScope(scope);
+}
+
+JSR_API jsr_close_napi_env_scope(napi_env env, jsr_napi_env_scope scope) {
+  return CHECKED_ENV(env)->closeEnvScope(scope);
+}
+
 //-----------------------------------------------------------------------------
 // Script preparing and running.
 //
@@ -7498,7 +7519,7 @@ napi_status NAPI_CDECL napi_ext_is_inspectable(napi_env env, bool *result) {
 // execution. Then, we can run the prepared script.
 //-----------------------------------------------------------------------------
 
-napi_status NAPI_CDECL napi_ext_run_script(
+napi_status NAPI_CDECL jsr_run_script(
     napi_env env,
     napi_value source,
     const char *source_url,
@@ -7506,14 +7527,14 @@ napi_status NAPI_CDECL napi_ext_run_script(
   return CHECKED_ENV(env)->runScript(source, source_url, result);
 }
 
-napi_status NAPI_CDECL napi_ext_create_prepared_script(
+napi_status NAPI_CDECL jsr_create_prepared_script(
     napi_env env,
     uint8_t *script_data,
     size_t script_length,
     napi_finalize finalize_cb,
     void *finalize_hint,
     const char *source_url,
-    napi_ext_prepared_script *result) {
+    jsr_prepared_script *result) {
   return CHECKED_ENV(env)->createPreparedScript(
       script_data,
       script_length,
@@ -7523,15 +7544,14 @@ napi_status NAPI_CDECL napi_ext_create_prepared_script(
       result);
 }
 
-napi_status NAPI_CDECL napi_ext_delete_prepared_script(
-    napi_env env,
-    napi_ext_prepared_script prepared_script) {
+napi_status NAPI_CDECL
+jsr_delete_prepared_script(napi_env env, jsr_prepared_script prepared_script) {
   return CHECKED_ENV(env)->deletePreparedScript(prepared_script);
 }
 
-napi_status NAPI_CDECL napi_ext_prepared_script_run(
+napi_status NAPI_CDECL jsr_prepared_script_run(
     napi_env env,
-    napi_ext_prepared_script prepared_script,
+    jsr_prepared_script prepared_script,
     napi_value *result) {
   return CHECKED_ENV(env)->runPreparedScript(prepared_script, result);
 }

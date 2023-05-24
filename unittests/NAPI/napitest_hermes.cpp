@@ -13,26 +13,27 @@ namespace napitest {
 class HermesRuntimeHolder : public IEnvHolder {
  public:
   HermesRuntimeHolder() noexcept {
-    hermes_config config{};
-    hermes_create_config(&config);
-    hermes_create_runtime(config, &runtime_);
+    jsr_config config{};
+    jsr_create_config(&config);
+    jsr_create_runtime(config, &runtime_);
+    jsr_delete_config(config);
+    jsr_runtime_get_node_api_env(runtime_, &env_);
   }
 
   ~HermesRuntimeHolder() {
-    hermes_delete_runtime(runtime_);
+    jsr_delete_runtime(runtime_);
   }
 
   HermesRuntimeHolder(const HermesRuntimeHolder &) = delete;
   HermesRuntimeHolder &operator=(const HermesRuntimeHolder &) = delete;
 
   napi_env getEnv() override {
-    napi_env env{};
-    hermes_get_node_api_env(runtime_, &env);
-    return env;
+    return env_;
   }
 
  private:
-  hermes_runtime runtime_{};
+  jsr_runtime runtime_{};
+  napi_env env_{};
 };
 
 std::vector<NapiTestData> NapiEnvFactories() {

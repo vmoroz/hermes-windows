@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include "../napi/hermes_api.h"
+#include "../hermes/hermes_api.h"
 #include "jsinspector/InspectorInterfaces.h"
 
 #include <mutex>
@@ -30,7 +30,7 @@ class RemoteConnectionWrapper : public IRemoteConnection {
       hermes_remote_connection remoteConnection,
       hermes_remote_connection_send_message_cb onSendMessageCallback,
       hermes_remote_connection_disconnect_cb onDisconnectCallback,
-      hermes_data_delete_cb onDeleteCallback,
+      jsr_data_delete_cb onDeleteCallback,
       void *deleterData) {
     RemoteConnectionWrapper *connection = new RemoteConnectionWrapper();
     connection->remoteConnection_ = remoteConnection;
@@ -57,7 +57,7 @@ class RemoteConnectionWrapper : public IRemoteConnection {
   hermes_remote_connection remoteConnection_;
   hermes_remote_connection_send_message_cb onSendMessageCallback_;
   hermes_remote_connection_disconnect_cb onDisconnectCallback_;
-  hermes_data_delete_cb onDeleteCallback_;
+  jsr_data_delete_cb onDeleteCallback_;
   void *deleterData_;
 };
 
@@ -119,20 +119,20 @@ IInspector &getInspectorInstance() {
 
 } // namespace facebook::react
 
-hermes_status NAPI_CDECL hermes_set_inspector(
+JSR_API hermes_set_inspector(
     hermes_inspector_add_page_cb add_page_cb,
     hermes_inspector_remove_page_cb remove_page_cb) {
   facebook::react::getInspectorProxyInstance().setInspector(
       add_page_cb, remove_page_cb);
-  return hermes_status::hermes_ok;
+  return napi_ok;
 }
 
-hermes_status NAPI_CDECL hermes_create_local_connection(
+JSR_API hermes_create_local_connection(
     void *connect_func,
     hermes_remote_connection remote_connection,
     hermes_remote_connection_send_message_cb on_send_message_cb,
     hermes_remote_connection_disconnect_cb on_disconnect_cb,
-    hermes_data_delete_cb on_delete_cb,
+    jsr_data_delete_cb on_delete_cb,
     void *deleter_data,
     hermes_local_connection *local_connection) {
   auto connectFunc =
@@ -149,27 +149,27 @@ hermes_status NAPI_CDECL hermes_create_local_connection(
       (*connectFunc)(std::move(remoteConnection));
   *local_connection =
       reinterpret_cast<hermes_local_connection>(localConnection.release());
-  return hermes_status::hermes_ok;
+  return napi_ok;
 }
 
-hermes_status NAPI_CDECL
+JSR_API
 hermes_delete_local_connection(hermes_local_connection local_connection) {
   delete reinterpret_cast<facebook::react::ILocalConnection *>(
       local_connection);
-  return hermes_status::hermes_ok;
+  return napi_ok;
 }
 
-hermes_status NAPI_CDECL hermes_local_connection_send_message(
+JSR_API hermes_local_connection_send_message(
     hermes_local_connection local_connection,
     const char *message) {
   reinterpret_cast<facebook::react::ILocalConnection *>(local_connection)
       ->sendMessage(message);
-  return hermes_status::hermes_ok;
+  return napi_ok;
 }
 
-hermes_status NAPI_CDECL
+JSR_API
 hermes_local_connection_disconnect(hermes_local_connection local_connection) {
   reinterpret_cast<facebook::react::ILocalConnection *>(local_connection)
       ->disconnect();
-  return hermes_status::hermes_ok;
+  return napi_ok;
 }
