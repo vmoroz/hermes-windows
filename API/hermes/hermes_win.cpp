@@ -616,6 +616,11 @@ JSR_API jsr_config_set_inspector_break_on_start(jsr_config config, bool value) {
   return CHECKED_CONFIG(config)->setInspectorBreakOnStart(value);
 }
 
+JSR_API jsr_config_enable_gc_api(jsr_config /*config*/, bool /*value*/) {
+  // We do nothing for now.
+  return napi_ok;
+}
+
 JSR_API jsr_config_set_task_runner(
     jsr_config config,
     void *task_runner_data,

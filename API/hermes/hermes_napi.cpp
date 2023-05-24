@@ -53,6 +53,9 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
+// TODO: Use prepared script serialization
+// TODO: Fix BigInt serialization to array of words
+
 // TODO: Add unit tests for the TypedArray length and byteLength changes
 // TODO: Allow DebugBreak in unexpected cases - add functions to indicate
 //       expected errors
