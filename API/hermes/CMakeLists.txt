@@ -7,6 +7,7 @@ set(api_sources
   hermes.cpp
   hermes_napi.cpp
   DebuggerAPI.cpp
+  MurmurHash.cpp
   )
 
 if (WIN32)

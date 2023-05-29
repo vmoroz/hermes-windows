@@ -47,7 +47,7 @@ struct PreparedScriptStore {
       const char *prepareTag // Optional tag. For e.g. eagerly evaluated vs lazy cache.
       ) noexcept = 0;
 
-  // Persist the perpared javascript for a given combination of script & runtime.
+  // Persist the prepared javascript for a given combination of script & runtime.
   // scriptSignature : Javascript url and version
   // RuntimeSignature : Javascript engine type and version
   // prepareTag : Custom tag to uniquely identify JS engine specific preparation schemes. It is usually useful while

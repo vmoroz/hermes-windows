@@ -340,6 +340,11 @@ if(HERMES_FILE_VERSION)
     add_definitions(-DHERMES_FILE_VERSION="${HERMES_FILE_VERSION}")
 endif()
 
+# Make the HERMES_FILE_VERSION_BIN accessible for converting to a number.
+if(HERMES_FILE_VERSION_BIN)
+    add_definitions(-DHERMES_FILE_VERSION_BIN=${HERMES_FILE_VERSION_BIN})
+endif()
+
 if(HERMES_ENABLE_IR_INSTRUMENTATION)
     add_definitions(-DHERMES_ENABLE_IR_INSTRUMENTATION)
 endif()

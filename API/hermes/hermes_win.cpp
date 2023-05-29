@@ -33,9 +33,10 @@
     return napi_generic_failure; \
   }
 
-napi_status napi_create_hermes_env(
+napi_status hermes_create_napi_env(
     ::hermes::vm::Runtime &runtime,
     bool isInspectable,
+    std::shared_ptr<facebook::jsi::PreparedScriptStore> preparedScript,
     const ::hermes::vm::RuntimeConfig &runtimeConfig,
     napi_env *env);
 
@@ -412,12 +413,12 @@ class ConfigWrapper {
     return inspectorBreakOnStart_;
   }
 
-  std::shared_ptr<TaskRunner> taskRunner() const {
+  const std::shared_ptr<TaskRunner> &taskRunner() const {
     return taskRunner_;
   }
 
-  ScriptCache *scriptCache() {
-    return scriptCache_.get();
+  const std::shared_ptr<ScriptCache> &scriptCache() const {
+    return scriptCache_;
   }
 
   ::hermes::vm::RuntimeConfig getRuntimeConfig() const {
@@ -462,7 +463,8 @@ class RuntimeWrapper {
   explicit RuntimeWrapper(const ConfigWrapper &config)
       : hermesRuntime_(makeHermesRuntime(config.getRuntimeConfig())),
         vmRuntime_(getVMRuntime(*hermesRuntime_)) {
-    napi_create_hermes_env(vmRuntime_, config.enableInspector(), {}, &env_);
+    hermes_create_napi_env(
+        vmRuntime_, config.enableInspector(), config.scriptCache(), {}, &env_);
 
     if (config.enableInspector()) {
       auto adapter = std::make_unique<HermesExecutorRuntimeAdapter>(

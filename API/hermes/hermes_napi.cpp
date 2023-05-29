@@ -53,16 +53,11 @@
 //   of "if-return" statements, and to report failing expressions along with the
 //   file name and code line number.
 
-// TODO: Use prepared script serialization
-// TODO: Fix BigInt serialization to array of words
-
-// TODO: Add unit tests for the TypedArray length and byteLength changes
 // TODO: Allow DebugBreak in unexpected cases - add functions to indicate
 //       expected errors
 // TODO: Create NapiEnvironment with JSI Runtime
 // TODO: Fix Inspector CMake definitions
 
-// Current issues with Hermes VM vs V8
 // TODO: Cannot use functions as a base class
 // TODO: NativeFunction vs NativeConstructor
 // TODO: Different error messages
@@ -73,6 +68,8 @@
 #define NAPI_VERSION 8
 #define NAPI_EXPERIMENTAL
 
+#include "MurmurHash.h"
+#include "ScriptStore.h"
 #include "hermes_api.h"
 
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
@@ -201,6 +198,18 @@ extern "C" __declspec(dllimport) void __stdcall DebugBreak();
 
 namespace hermes {
 namespace napi {
+
+union HermesBuildVersionInfo {
+  struct {
+    uint16_t major;
+    uint16_t minor;
+    uint16_t patch;
+    uint16_t revision;
+  };
+  uint64_t version;
+};
+
+constexpr HermesBuildVersionInfo HermesBuildVersion = {HERMES_FILE_VERSION_BIN};
 
 //=============================================================================
 // Forward declaration of all classes.
@@ -533,6 +542,7 @@ class NapiEnvironment final {
   explicit NapiEnvironment(
       vm::Runtime &runtime,
       bool isInspectable,
+      std::shared_ptr<facebook::jsi::PreparedScriptStore> preparedScript,
       const vm::RuntimeConfig &runtimeConfig = {}) noexcept;
 
  private:
@@ -1658,6 +1668,9 @@ class NapiEnvironment final {
   // Flags used by byte code compiler.
   hbc::CompileFlags compileFlags_{};
 
+  // Optional prepared script store.
+  std::shared_ptr<facebook::jsi::PreparedScriptStore> scriptCache_{};
+
   // Can we run a debugger?
   bool isInspectable_{};
 
@@ -2754,6 +2767,32 @@ class NapiExternalBuffer final : public hermes::Buffer {
   NapiExternalBufferCore *core_;
 };
 
+class JsiBuffer final : public hermes::Buffer {
+ public:
+  JsiBuffer(std::shared_ptr<const facebook::jsi::Buffer> buffer) noexcept
+      : Buffer(buffer->data(), buffer->size()), buffer_(std::move(buffer)) {}
+
+ private:
+  std::shared_ptr<const facebook::jsi::Buffer> buffer_;
+};
+
+class JsiSmallVectorBuffer final : public facebook::jsi::Buffer {
+ public:
+  JsiSmallVectorBuffer(llvh::SmallVector<char, 0> data) noexcept
+      : data_(std::move(data)) {}
+
+  size_t size() const override {
+    return data_.size();
+  }
+
+  const uint8_t *data() const override {
+    return reinterpret_cast<const uint8_t *>(data_.data());
+  }
+
+ private:
+  llvh::SmallVector<char, 0> data_;
+};
+
 // An implementation of PreparedJavaScript that wraps a BytecodeProvider.
 class NapiScriptModel final {
  public:
@@ -3040,8 +3079,11 @@ size_t convertUTF16ToUTF8WithReplacements(
 NapiEnvironment::NapiEnvironment(
     vm::Runtime &runtime,
     bool isInspectable,
+    std::shared_ptr<facebook::jsi::PreparedScriptStore> scriptCache,
     const vm::RuntimeConfig &runtimeConfig) noexcept
-    : runtime_(runtime), isInspectable_(isInspectable) {
+    : runtime_(runtime),
+      isInspectable_(isInspectable),
+      scriptCache_(std::move(scriptCache)) {
   switch (runtimeConfig.getCompilationMode()) {
     case vm::SmartCompilation:
       compileFlags_.lazy = true;
@@ -3849,6 +3891,24 @@ napi_status NapiEnvironment::createBigIntFromWords(
   NapiHandleScope scope{*this, result};
   CHECK_ARG(words);
   RETURN_STATUS_IF_FALSE(wordCount <= INT_MAX, napi_invalid_arg);
+
+  if (signBit) {
+    // Use 2's complement algorithm to represent negative numbers.
+    llvh::SmallVector<uint64_t, 16> negativeValue{words, words + wordCount};
+
+    // a. flip all bits
+    for (uint64_t &entry : negativeValue) {
+      entry = ~entry;
+    }
+    // b. add 1
+    for (size_t i = 0; i < negativeValue.size(); ++i) {
+      if (++negativeValue[i] >= 1) {
+        break; // No need to carry so exit early.
+      }
+    }
+    words = negativeValue.data();
+  }
+
   const uint8_t *ptr = reinterpret_cast<const uint8_t *>(words);
   const uint32_t size = static_cast<uint32_t>(wordCount * sizeof(uint64_t));
   return scope.setResult(
@@ -6302,11 +6362,72 @@ napi_status NapiEnvironment::createPreparedScript(
 #if defined(HERMESVM_LEAN)
     bcErr.second = "prepareJavaScript source compilation not supported";
 #else
-    bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
-        std::move(buffer),
-        std::string(sourceURL ? sourceURL : ""),
-        nullptr,
-        compileFlags_);
+
+    facebook::jsi::ScriptSignature scriptSignature;
+    facebook::jsi::JSRuntimeSignature runtimeSignature;
+    const char *prepareTag = "perf";
+
+    if (scriptCache_) {
+      uint64_t hash{};
+      bool isAscii = murmurhash(buffer->data(), buffer->size(), /*ref*/ hash);
+      facebook::jsi::JSRuntimeVersion_t runtimeVersion =
+          HermesBuildVersion.version;
+      scriptSignature = {std::string(sourceURL ? sourceURL : ""), hash};
+      runtimeSignature = {"Hermes", runtimeVersion};
+    }
+
+    std::shared_ptr<const facebook::jsi::Buffer> cache;
+    if (scriptCache_) {
+      cache = scriptCache_->tryGetPreparedScript(
+          scriptSignature, runtimeSignature, prepareTag);
+      bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
+          std::make_unique<JsiBuffer>(move(cache)));
+    }
+
+    hbc::BCProviderFromSrc *bytecodeProviderFromSrc{};
+    if (!bcErr.first) {
+      std::pair<std::unique_ptr<hbc::BCProviderFromSrc>, std::string>
+          bcFromSrcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
+              std::move(buffer),
+              std::string(sourceURL ? sourceURL : ""),
+              nullptr,
+              compileFlags_);
+      bytecodeProviderFromSrc = bcFromSrcErr.first.get();
+      bcErr = std::move(bcFromSrcErr);
+    }
+
+    if (scriptCache_ && bytecodeProviderFromSrc) {
+      hbc::BytecodeModule *bcModule =
+          bytecodeProviderFromSrc->getBytecodeModule();
+
+      // Serialize/deserialize can't handle lazy compilation as of now. Do a
+      // check to make sure there is no lazy BytecodeFunction in module_.
+      for (uint32_t i = 0; i < bcModule->getNumFunctions(); i++) {
+        if (bytecodeProviderFromSrc->isFunctionLazy(i)) {
+          goto CannotSerialize;
+        }
+      }
+
+      // Serialize the bytecode. Call BytecodeSerializer to do the heavy
+      // lifting. Write to a SmallVector first, so we can know the total bytes
+      // and write it first and make life easier for Deserializer. This is going
+      // to be slower than writing to Serializer directly but it's OK to slow
+      // down serialization if it speeds up Deserializer.
+      BytecodeGenerationOptions bytecodeGenOpts =
+          BytecodeGenerationOptions::defaults();
+      llvh::SmallVector<char, 0> bytecodeVector;
+      llvh::raw_svector_ostream outStream(bytecodeVector);
+      hbc::BytecodeSerializer bcSerializer{outStream, bytecodeGenOpts};
+      bcSerializer.serialize(
+          *bcModule, bytecodeProviderFromSrc->getSourceHash());
+
+      scriptCache_->persistPreparedScript(
+          std::shared_ptr<const facebook::jsi::Buffer>(
+              new JsiSmallVectorBuffer(std::move(bytecodeVector))),
+          scriptSignature,
+          runtimeSignature,
+          prepareTag);
+    }
 #endif
   }
   if (!bcErr.first) {
@@ -6316,6 +6437,10 @@ napi_status NapiEnvironment::createPreparedScript(
     }
     return GENERIC_FAILURE("Compiling JS failed: ", bcErr.second, sb.str());
   }
+
+#if !defined(HERMESVM_LEAN)
+CannotSerialize:
+#endif
   *result = reinterpret_cast<jsr_prepared_script>(new NapiScriptModel(
       std::move(bcErr.first),
       runtimeFlags,
@@ -7466,16 +7591,17 @@ napi_status NAPI_CDECL napi_object_seal(napi_env env, napi_value object) {
 // Hermes specific API
 //=============================================================================
 
-napi_status napi_create_hermes_env(
+napi_status hermes_create_napi_env(
     ::hermes::vm::Runtime &runtime,
     bool isInspectable,
+    std::shared_ptr<facebook::jsi::PreparedScriptStore> preparedScript,
     const ::hermes::vm::RuntimeConfig &runtimeConfig,
     napi_env *env) {
   if (!env) {
     return napi_status::napi_invalid_arg;
   }
-  *env = hermes::napi::napiEnv(
-      new hermes::napi::NapiEnvironment(runtime, isInspectable, runtimeConfig));
+  *env = hermes::napi::napiEnv(new hermes::napi::NapiEnvironment(
+      runtime, isInspectable, std::move(preparedScript), runtimeConfig));
   return napi_status::napi_ok;
 }
 
