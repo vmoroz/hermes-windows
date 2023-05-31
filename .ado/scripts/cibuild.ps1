@@ -336,22 +336,21 @@ function Copy-Headers($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Con
         New-Item -ItemType "directory" -Path "$OutputPath\build\native\include\jsi" | Out-Null
     }
 
+    if (!(Test-Path -Path "$OutputPath\build\native\include\node-api")) {
+        New-Item -ItemType "directory" -Path "$OutputPath\build\native\include\node-api" | Out-Null
+    }
+
     if (!(Test-Path -Path "$OutputPath\build\native\include\hermes")) {
         New-Item -ItemType "directory" -Path "$OutputPath\build\native\include\hermes" | Out-Null
     }
 
-    Copy-Item "$SourcesPath\include\hermes\BCGen\HBC\BytecodeVersion.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\hermes\hermes.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\hermes\hermes_win.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\hermes\DebuggerAPI.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\public\hermes\*" -Destination "$OutputPath\build\native\include\hermes" -force -Recurse
-
     Copy-Item "$SourcesPath\API\jsi\jsi\*" -Destination "$OutputPath\build\native\include\jsi" -force -Recurse
 
-    Copy-Item "$SourcesPath\API\napi\hermes_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\napi\js_native_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\napi\js_native_api_types.h" -Destination "$OutputPath\build\native\include\hermes" -force
-    Copy-Item "$SourcesPath\API\napi\js_native_ext_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
+    Copy-Item "$SourcesPath\API\node-api\js_native_api.h" -Destination "$OutputPath\build\native\include\node-api" -force
+    Copy-Item "$SourcesPath\API\node-api\js_native_api_types.h" -Destination "$OutputPath\build\native\include\node-api" -force
+    Copy-Item "$SourcesPath\API\node-api\js_runtime_api.h" -Destination "$OutputPath\build\native\include\node-api" -force
+
+    Copy-Item "$SourcesPath\API\hermes\hermes_api.h" -Destination "$OutputPath\build\native\include\hermes" -force
 }
 
 function Invoke-PrepareNugetPackage($SourcesPath, $WorkSpacePath, $OutputPath, $Platform, $Configuration, $AppPlatform) {
