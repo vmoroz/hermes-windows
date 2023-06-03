@@ -315,6 +315,11 @@ function Invoke-BuildAndCopy($SourcesPath, $WorkSpacePath, $OutputPath, $Platfor
     Copy-Item "$buildPath\API\hermes\hermes.lib" -Destination $finalOutputPath -force | Out-Null
     Copy-Item "$buildPath\API\hermes\hermes.pdb" -Destination $finalOutputPath -force | Out-Null
 
+    if (!(Test-Path -Path "$OutputPath\lib\uap\")) {
+        New-Item -ItemType "directory" -Path "$OutputPath\lib\uap\" | Out-Null
+        New-Item -Path "$OutputPath\lib\uap\" -Name "_._" -ItemType File
+    }
+
     $toolsPath = "$OutputPath\tools\native\$toolsConfiguration\$toolsPlatform"
     if (!(Test-Path -Path $toolsPath)) {
         New-Item -ItemType "directory" -Path $toolsPath | Out-Null

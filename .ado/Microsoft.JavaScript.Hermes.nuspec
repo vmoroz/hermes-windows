@@ -13,28 +13,29 @@
   </metadata>
   <files>
     <file src="$nugetroot$\lib\native\uwp\release\arm64\**\*.*"
-          target="build/native/uwp/arm64"
+          target="build\native\uwp\arm64"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
     <file src="$nugetroot$\lib\native\uwp\release\x64\**\*.*"
-          target="build/native/uwp/x64"
+          target="build\native\uwp\x64"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
     <file src="$nugetroot$\lib\native\uwp\release\x86\**\*.*"
-          target="build/native/uwp/x86"
+          target="build\native\uwp\x86"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
     <file src="$nugetroot$\lib\native\win32\release\arm64\**\*.*"
-          target="build/native/win32/arm64"
+          target="build\native\win32\arm64"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
     <file src="$nugetroot$\lib\native\win32\release\x64\**\*.*"
-          target="build/native/win32/x64"
+          target="build\native\win32\x64"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
     <file src="$nugetroot$\lib\native\win32\release\x86\**\*.*"
-          target="build/native/win32/x86"
+          target="build\native\win32\x86"
           exclude="**\*.manifest;**\*.iobj;**\*.ipdb;**\*.pdb;**\*.exp;**\*.ilk" />
+    <file src="$nugetroot$\lib\uap\_._" target="build\uap\_._" />
 
     <file src="$nugetroot$\build\native\include\**\*.*"
-          target="build/native/include" />
+          target="build\native\include" />
     <file src="$nugetroot$\build\native\Microsoft.JavaScript.Hermes.targets"
-          target="build/native/Microsoft.JavaScript.Hermes.targets" />
+          target="build\native\Microsoft.JavaScript.Hermes.targets" />
 
     <file src="$nugetroot$\license\*" target="" />
     <file src="$nugetroot$\tools\**\*.*" target="tools" />
