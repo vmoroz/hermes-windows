@@ -1423,8 +1423,7 @@ class NapiEnvironment final {
   // Runtime info
   //-----------------------------------------------------------------------------
  public:
-  napi_status
-  getDescription(char *buf, size_t bufsize, size_t *result) noexcept;
+  napi_status getDescription(const char **result) noexcept;
 
   napi_status isInspectable(bool *result) noexcept;
 
@@ -1550,10 +1549,10 @@ class NapiEnvironment final {
       napi_value *result) noexcept;
 
   napi_status createPreparedScript(
-      uint8_t *scriptData,
+      const uint8_t *scriptData,
       size_t scriptLength,
-      napi_finalize finalizeCallback,
-      void *finalizeHint,
+      jsr_data_delete_cb scriptDeleteCallback,
+      void *deleterData,
       const char *sourceURL,
       jsr_prepared_script *result) noexcept;
 
@@ -2765,6 +2764,32 @@ class NapiExternalBuffer final : public hermes::Buffer {
 
  private:
   NapiExternalBufferCore *core_;
+};
+
+// Wraps script data as hermes::Buffer
+class ScriptDataBuffer final : public hermes::Buffer {
+ public:
+  ScriptDataBuffer(
+      const uint8_t *scriptData,
+      size_t scriptLength,
+      jsr_data_delete_cb scriptDeleteCallback,
+      void *deleterData) noexcept
+      : Buffer(scriptData, scriptLength),
+        scriptDeleteCallback_(scriptDeleteCallback),
+        deleterData_(deleterData) {}
+
+  ~ScriptDataBuffer() noexcept override {
+    if (scriptDeleteCallback_ != nullptr) {
+      scriptDeleteCallback_(const_cast<uint8_t *>(data()), deleterData_);
+    }
+  }
+
+  ScriptDataBuffer(const ScriptDataBuffer &) = delete;
+  ScriptDataBuffer &operator=(const ScriptDataBuffer &) = delete;
+
+ private:
+  jsr_data_delete_cb scriptDeleteCallback_{};
+  void *deleterData_{};
 };
 
 class JsiBuffer final : public hermes::Buffer {
@@ -5963,25 +5988,9 @@ napi_status NapiEnvironment::getDataViewInfo(
 // Runtime info
 //-----------------------------------------------------------------------------
 
-napi_status NapiEnvironment::getDescription(
-    char *buf,
-    size_t bufsize,
-    size_t *result) noexcept {
-  constexpr const char description[] = "Hermes";
-  const size_t len = sizeof(description) - 1;
-  if (buf == nullptr) {
-    CHECK_ARG(result);
-    *result = len;
-  } else if (bufsize > 0) {
-    const size_t copied = std::min(bufsize - 1, len);
-    std::char_traits<char>::copy(buf, description, std::min(bufsize - 1, len));
-    buf[copied] = '\0';
-    if (result != nullptr) {
-      *result = copied;
-    }
-  } else if (result != nullptr) {
-    *result = 0;
-  }
+napi_status NapiEnvironment::getDescription(const char **result) noexcept {
+  CHECK_ARG(result);
+  *result = "Hermes";
   return napi_ok;
 }
 
@@ -6318,7 +6327,7 @@ napi_status NapiEnvironment::runScript(
   CHECK_NAPI(createPreparedScript(
       reinterpret_cast<uint8_t *>(buffer.release()),
       sourceSize,
-      [](napi_env /*env*/, void *data, void * /*finalizeHint*/) {
+      [](void *data, void * /*deleterData*/) {
         std::unique_ptr<char[]> buf(reinterpret_cast<char *>(data));
       },
       nullptr,
@@ -6331,14 +6340,14 @@ napi_status NapiEnvironment::runScript(
 }
 
 napi_status NapiEnvironment::createPreparedScript(
-    uint8_t *scriptData,
+    const uint8_t *scriptData,
     size_t scriptLength,
-    napi_finalize finalizeCallback,
-    void *finalizeHint,
+    jsr_data_delete_cb scriptDeleteCallback,
+    void *deleterData,
     const char *sourceURL,
     jsr_prepared_script *result) noexcept {
-  std::unique_ptr<NapiExternalBuffer> buffer = NapiExternalBuffer::make(
-      napiEnv(this), scriptData, scriptLength, finalizeCallback, finalizeHint);
+  std::unique_ptr<ScriptDataBuffer> buffer = std::make_unique<ScriptDataBuffer>(
+      scriptData, scriptLength, scriptDeleteCallback, deleterData);
 
   CHECK_NAPI(checkPendingJSError());
   NapiHandleScope scope{*this};
@@ -7632,9 +7641,8 @@ napi_status NAPI_CDECL jsr_get_and_clear_last_unhandled_promise_rejection(
   return CHECKED_ENV(env)->getAndClearLastUnhandledPromiseRejection(result);
 }
 
-napi_status NAPI_CDECL
-jsr_get_description(napi_env env, char *buf, size_t bufsize, size_t *result) {
-  return CHECKED_ENV(env)->getDescription(buf, bufsize, result);
+napi_status NAPI_CDECL jsr_get_description(napi_env env, const char **result) {
+  return CHECKED_ENV(env)->getDescription(result);
 }
 
 napi_status NAPI_CDECL
@@ -7671,17 +7679,17 @@ napi_status NAPI_CDECL jsr_run_script(
 
 napi_status NAPI_CDECL jsr_create_prepared_script(
     napi_env env,
-    uint8_t *script_data,
+    const uint8_t *script_data,
     size_t script_length,
-    napi_finalize finalize_cb,
-    void *finalize_hint,
+    jsr_data_delete_cb script_delete_cb,
+    void *deleter_data,
     const char *source_url,
     jsr_prepared_script *result) {
   return CHECKED_ENV(env)->createPreparedScript(
       script_data,
       script_length,
-      finalize_cb,
-      finalize_hint,
+      script_delete_cb,
+      deleter_data,
       source_url,
       result);
 }
