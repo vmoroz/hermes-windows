@@ -17,7 +17,8 @@
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(PackageRoot)\build\native\include</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
-  <ItemGroup>
+  <ItemGroup Condition="'$(HermesNoDLLCopy)' == ''">
     <ReferenceCopyLocalPaths Include="$(PackageRoot)build\native\$(HermesAppPlatform)\$(HermesPlatform)\hermes.dll" />
+    <None Include="$(PackageRoot)build\native\$(HermesAppPlatform)\$(HermesPlatform)\hermes.dll" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
