@@ -57,6 +57,8 @@
 #include <jsi/instrumentation.h>
 #include <jsi/threadsafe.h>
 
+#include "hermes_jsi.h"
+
 #ifdef HERMESVM_LLVM_PROFILE_DUMP
 extern "C" {
 int __llvm_profile_dump(void);
@@ -153,6 +155,7 @@ void throwHermesNotCompiledWithSamplingProfilerSupport() {
 } // namespace
 
 class HermesRuntimeImpl final : public HermesRuntime,
+                                public IJsiRuntime,
                                 private InstallHermesFatalErrorHandler,
                                 private jsi::Instrumentation {
  public:
@@ -713,6 +716,595 @@ class HermesRuntimeImpl final : public HermesRuntime,
   ScopeState *pushScope() override;
   void popScope(ScopeState *prv) override;
 
+  // --- JSI C-API
+
+  jsi_status JSICALL evaluateJavaScript(
+      JsiBuffer *buffer,
+      const char *sourceURL,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createPreparedScript(
+      const JsiBuffer *buffer,
+      const char *sourceUrl,
+      JsiPreparedJavaScript **result) override { // TODO
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL evaluatePreparedScript(
+      const JsiPreparedJavaScript *prepared_script,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  drainMicrotasks(int32_t maxMicrotasksHint, bool *result) override {
+    // *result = drainMicrotasks(maxMicrotasksHint);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL getGlobal(JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL getDescription(const char **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL isInspectable(bool *result) override {
+    //*result = isInspectable();
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  cloneSymbol(const JsiSymbol *symbol, JsiSymbol **result) override {
+    //*result = clone(symbol);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  cloneBigInt(const JsiBigInt *bigint, JsiBigInt **result) override {
+    //*result = clone(bigint);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  cloneString(const JsiString *str, JsiString **result) override {
+    //*result = clone(str);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  cloneObject(const JsiObject *obj, JsiObject **result) override {
+    //*result = clone(obj);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  clonePropNameID(const JsiPropNameID *name, JsiPropNameID **result) override {
+    //*result = clone(name);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createPropNameIDFromAscii(
+      const char *ascii,
+      size_t length,
+      JsiPropNameID **result) override {
+    // #ifndef NDEBUG
+    //       for (size_t i = 0; i < length; ++i) {
+    //         assert(
+    //             static_cast<unsigned char>(str[i]) < 128 &&
+    //             "non-ASCII character in property name");
+    //       }
+    // #endif
+
+    //       vm::GCScope gcScope(runtime_);
+    //       auto cr = vm::stringToSymbolID(
+    //           runtime_,
+    //           vm::StringPrimitive::createNoThrow(
+    //               runtime_, llvh::StringRef(str, length)));
+    //       checkStatus(cr.getStatus());
+    //       *result = add2<JsiPropNameID>(cr->getHermesValue());
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createPropNameIDFromUtf8(
+      const uint8_t *utf8,
+      size_t length,
+      JsiPropNameID **result) override {
+    // vm::GCScope gcScope(runtime_);
+    // auto cr = vm::stringToSymbolID(
+    //     runtime_,
+    //     vm::createPseudoHandle(stringHVFromUtf8(utf8,
+    //     length).getString()));
+    // checkStatus(cr.getStatus());
+    // *result = add2<JsiPropNameID>(cr->getHermesValue());
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createPropNameIDFromString(
+      const JsiString *str,
+      JsiPropNameID **result) override {
+    // vm::GCScope gcScope(runtime_);
+    // auto cr = vm::stringToSymbolID(
+    //     runtime_, vm::createPseudoHandle(phv(str).getString()));
+    // checkStatus(cr.getStatus());
+    // *result = add2<JsiPropNameID>(cr->getHermesValue());
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createPropNameIDFromSymbol(
+      const JsiSymbol *symbol,
+      JsiPropNameID **result) override {
+    //      *result = add2<JsiPropNameID>(phv(sym));
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL propNameIDToUtf8(
+      const JsiPropNameID *propertyId,
+      JsiToUtf8Callback toUtf8,
+      void *receiver) override {
+    // vm::GCScope gcScope(runtime_);
+    // vm::SymbolID id = phv(sym).getSymbol();
+    // auto view = runtime_.getIdentifierTable().getStringView(runtime_, id);
+    // vm::SmallU16String<32> allocator;
+    // std::string ret;
+    // ::hermes::convertUTF16ToUTF8WithReplacements(
+    //     ret, view.getUTF16Ref(allocator));
+    // toUtf8(ret.data(), ret.size(), receiver);
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL propNameIDEquals(
+      const JsiPropNameID *left,
+      const JsiPropNameID *right,
+      bool *result) override {
+    //*result = phv(a).getSymbol() == phv(b).getSymbol();
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL symbolToUtf8(
+      const JsiSymbol *symbol,
+      JsiToUtf8Callback toUtf8,
+      void *receiver) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  createBigIntFromInt64(int64_t value, JsiBigInt **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createBigIntFromUInt64(
+      uint64_t value,
+      JsiBigInt **result) override { // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  bigIntIsInt64(const JsiBigInt *value, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  bigIntIsUInt64(const JsiBigInt *value, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  truncateBigInt(const JsiBigInt *value, uint64_t *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL bigIntToString(
+      const JsiBigInt *value,
+      int32_t radix,
+      JsiString **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createStringFromAscii(
+      const char *ascii,
+      size_t length,
+      JsiString **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createStringFromUtf8(
+      const uint8_t *utf8,
+      size_t length,
+      JsiString **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL stringToUtf8(
+      const JsiString *string,
+      JsiToUtf8Callback toUtf8,
+      void *receiver) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createValueFromJsonUtf8(
+      const uint8_t *json,
+      size_t length,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createObject(JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createObjectWithHostObject(
+      JsiHostObject *host_object,
+      JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getHostObject(const JsiObject *obj, JsiHostObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getHostFunction(const JsiObject *func, JsiHostFunction **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  hasNativeState(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getNativeState(const JsiObject *obj, JsiNativeState *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setNativeState(
+      const JsiObject *obj,
+      JsiNativeState state,
+      JsiDeleter deleter) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL getProperty(
+      const JsiObject *obj,
+      const JsiPropNameID *name,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL getPropertyWithStringKey(
+      const JsiObject *obj,
+      const JsiString *name,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL hasProperty(
+      const JsiObject *obj,
+      const JsiPropNameID *name,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL hasPropertyWithStringKey(
+      const JsiObject *obj,
+      const JsiString *name,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setProperty(
+      const JsiObject *obj,
+      const JsiPropNameID *name,
+      const JsiValue *value) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setPropertyWithStringKey(
+      const JsiObject *obj,
+      const JsiString *name,
+      const JsiValue *value) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL isArray(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  isArrayBuffer(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL isFunction(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL isHostObject(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  isHostFunction(const JsiObject *obj, bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getPropertyNames(const JsiObject *obj, JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  createWeakObject(const JsiObject *obj, JsiWeakObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  lockWeakObject(const JsiWeakObject *obj, JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createArray(size_t length, JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createArrayBuffer(
+      JsiMutableBuffer buffer,
+      uint8_t *data,
+      size_t size,
+      JsiDeleter deleter,
+      JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getArraySize(const JsiObject *array, size_t *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getArrayBufferSize(const JsiObject *array_buffer, size_t *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL
+  getArrayBufferData(const JsiObject *array_buffer, uint8_t **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL getValueAtIndex(
+      const JsiObject *array,
+      size_t index,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setValueAtIndex(
+      const JsiObject *array,
+      size_t index,
+      const JsiValue *value) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL createFunction(
+      const JsiPropNameID *name,
+      uint32_t param_count,
+      JsiHostFunction *host_function,
+      JsiObject **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL call(
+      const JsiObject *func,
+      const JsiValue *this_arg,
+      const JsiValue *args,
+      size_t arg_count,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL callAsConstructor(
+      const JsiObject *func,
+      const JsiValue *args,
+      size_t arg_count,
+      JsiValue *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL pushScope(JsiScopeState *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL popScope(JsiScopeState scope_state) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL symbolStrictEquals(
+      const JsiSymbol *left,
+      const JsiSymbol *right,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL bigintStrictEquals(
+      const JsiBigInt *left,
+      const JsiBigInt *right,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL stringStrictEquals(
+      const JsiString *left,
+      const JsiString *right,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL objectStrictEquals(
+      const JsiObject *left,
+      const JsiObject *right,
+      bool *result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL instanceOf(
+      const JsiObject *obj,
+      const JsiObject *constructor,
+      bool *result) override {
+    // auto res = vm::instanceOfOperator_RJS(
+    //     runtime_,
+    //     runtime_.makeHandle(phv(obj)),
+    //     runtime_.makeHandle(phv(constructor)));
+    // return checkStatus(res, result);
+    // TODO
+    return jsi_status_ok;
+  }
+
+  template <typename T>
+  jsi_status checkStatus(vm::CallResult<T> &res, T *result) {
+    if (LLVM_LIKELY(res.getStatus() != vm::ExecutionStatus::EXCEPTION)) {
+      *result = *res;
+      return jsi_status_ok;
+    }
+
+    return setError();
+  }
+
+  jsi_status setError() {
+    JsiValue exception = jsiValueFromHermesValue(runtime_.getThrownValue());
+    runtime_.clearThrownValue();
+    // Here, we increment the depth to detect recursion in error handling.
+    vm::ScopedNativeDepthTracker depthTracker{runtime_};
+    if (LLVM_LIKELY(!depthTracker.overflowed())) {
+      //   auto ex = jsi::JSError(*this, std::move(exception));
+      LOG_EXCEPTION_CAUSE("JSI rethrowing JS exception: %s", ex.what());
+      return jsi_status_error;
+    }
+
+    (void)runtime_.raiseStackOverflow(
+        vm::Runtime::StackOverflowKind::NativeStack);
+    exception = jsiValueFromHermesValue(runtime_.getThrownValue());
+    runtime_.clearThrownValue();
+    // Here, we give us a little more room so we can call into JS to
+    // populate the JSError members.
+    vm::ScopedNativeDepthReducer reducer(runtime_);
+    // throw jsi::JSError(*this, std::move(exception));
+    return jsi_status_error;
+  }
+
+  jsi_status JSICALL getAndClearLastError(JsiError **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setError(
+      JsiErrorType error_kind,
+      const char *error_details,
+      const JsiValue *value) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  JsiValue jsiValueFromHermesValue(vm::HermesValue hv) {
+    if (hv.isUndefined() || hv.isEmpty()) {
+      return JsiValue{JsiValueKind::Undefined, 0};
+    } else if (hv.isNull()) {
+      return JsiValue{JsiValueKind::Null, 0};
+    } else if (hv.isBool()) {
+      return JsiValue{JsiValueKind::Boolean, hv.getBool()};
+    } else if (hv.isDouble()) {
+      double d = hv.getDouble();
+      return JsiValue{JsiValueKind::Number, *reinterpret_cast<uint64_t *>(&d)};
+    } else if (hv.isSymbol()) {
+      return JsiValue{
+          JsiValueKind::Symbol,
+          reinterpret_cast<uint64_t>(jsiAdd<JsiSymbol>(hv))};
+    } else if (hv.isBigInt()) {
+      return JsiValue{
+          JsiValueKind::Symbol,
+          reinterpret_cast<uint64_t>(jsiAdd<JsiBigInt>(hv))};
+    } else if (hv.isString()) {
+      return JsiValue{
+          JsiValueKind::Symbol,
+          reinterpret_cast<uint64_t>(jsiAdd<JsiString>(hv))};
+    } else if (hv.isObject()) {
+      return JsiValue{
+          JsiValueKind::Symbol,
+          reinterpret_cast<uint64_t>(jsiAdd<JsiObject>(hv))};
+    } else {
+      llvm_unreachable("unknown HermesValue type");
+    }
+  }
+
+  template <typename T>
+  T *jsiAdd(::hermes::vm::HermesValue hv) {
+    static_assert(
+        std::is_same_v<JsiSymbol, T> || std::is_same_v<JsiBigInt, T> ||
+            std::is_same_v<JsiString, T> || std::is_same_v<JsiObject, T> ||
+            std::is_same_v<JsiPropNameID, T>,
+        "this type cannot be added");
+    return reinterpret_cast<T *>(&hermesValues_.add(hv));
+  }
+
+  // --- end of JSI C-API
+
   void checkStatus(vm::ExecutionStatus);
   vm::HermesValue stringHVFromAscii(const char *ascii, size_t length);
   vm::HermesValue stringHVFromUtf8(const uint8_t *utf8, size_t length);
@@ -899,14 +1491,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
     // Get the next free element. Must not be called when this instance is
     // occupied with a value.
     ManagedValue<T> *getNextFree() {
-      assert(isFree() && "Free pointer unusuable while occupied");
+      assert(isFree() && "Free pointer unusable while occupied");
       return nextFree_;
     }
 
     // Set the next free element. Must not be called when this instance is
     // occupied with a value.
     void setNextFree(ManagedValue<T> *nextFree) {
-      assert(isFree() && "Free pointer unusuable while occupied");
+      assert(isFree() && "Free pointer unusable while occupied");
       nextFree_ = nextFree;
     }
 
@@ -1044,6 +1636,16 @@ class HermesRuntimeImpl final : public HermesRuntime,
   /// The default setting of "emit async break check" in this runtime.
   bool defaultEmitAsyncBreakCheck_{false};
 };
+
+struct JsiErrorImpl {
+  virtual jsi_status JSICALL destroy() = 0;
+  virtual jsi_status JSICALL errorType(JsiErrorType *result) = 0;
+  virtual jsi_status JSICALL errorDetails(const char **result) = 0;
+  virtual jsi_status JSICALL message(const char **result) = 0;
+  virtual jsi_status JSICALL stack(const char **result) = 0;
+  virtual jsi_status JSICALL value(JsiValue *result) = 0;
+};
+
 
 ::hermes::vm::Runtime &getVMRuntime(HermesRuntime &runtime) noexcept {
   return static_cast<HermesRuntimeImpl &>(runtime).runtime_;
