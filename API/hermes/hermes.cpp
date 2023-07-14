@@ -1158,17 +1158,81 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiValue *args,
       size_t arg_count,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    vm::Handle<vm::Callable> funcHandle =
+        vm::Handle<vm::Callable>::vmcast(&phv2(func));
+
+    if (arg_count > std::numeric_limits<uint32_t>::max() ||
+        !runtime_.checkAvailableStack((uint32_t)arg_count)) {
+      LOG_EXCEPTION_CAUSE(
+          "HermesRuntimeImpl::call: Unable to call function: stack overflow");
+      // TODO:
+      // throw jsi::JSINativeException(
+      //"HermesRuntimeImpl::call: Unable to call function: stack overflow");
+    }
+
+    // We follow es5 13.2.2 [[Construct]] here. Below F == func.
+    // 13.2.2.5:
+    //    Let proto be the value of calling the [[Get]] internal property of
+    //    F with argument "prototype"
+    // 13.2.2.6:
+    //    If Type(proto) is Object, set the [[Prototype]] internal property
+    //    of obj to proto
+    // 13.2.2.7:
+    //    If Type(proto) is not Object, set the [[Prototype]] internal property
+    //    of obj to the standard built-in Object prototype object as described
+    //    in 15.2.4
+    //
+    // Note that 13.2.2.1-4 are also handled by the call to newObject.
+    auto thisRes = vm::Callable::createThisForConstruct(funcHandle, runtime_);
+    // We need to capture this in case the ctor doesn't return an object,
+    // we need to return this object.
+    auto objHandle = runtime_.makeHandle<vm::JSObject>(std::move(*thisRes));
+
+    // 13.2.2.8:
+    //    Let result be the result of calling the [[Call]] internal property of
+    //    F, providing obj as the this value and providing the argument list
+    //    passed into [[Construct]] as args.
+    //
+    // For us result == res.
+
+    vm::ScopedNativeCallFrame newFrame{
+        runtime_,
+        static_cast<uint32_t>(arg_count),
+        funcHandle.getHermesValue(),
+        funcHandle.getHermesValue(),
+        objHandle.getHermesValue()};
+    if (newFrame.overflowed()) {
+      // TODO:
+      //  checkStatus(runtime_.raiseStackOverflow(
+      //      ::hermes::vm::Runtime::StackOverflowKind::NativeStack));
+    }
+    for (uint32_t i = 0; i != arg_count; ++i) {
+      newFrame->getArgRef(i) = hvFromJsiValue(args[i]);
+    }
+    // The last parameter indicates that this call should construct an object.
+    auto callRes = vm::Callable::call(funcHandle, runtime_);
+    // TODO:
+    // checkStatus(callRes.getStatus());
+
+    // 13.2.2.9:
+    //    If Type(result) is Object then return result
+    // 13.2.2.10:
+    //    Return obj
+    vm::HermesValue resultValue = callRes->get();
+    vm::HermesValue resultHValue =
+        resultValue.isObject() ? resultValue : objHandle.getHermesValue();
+    *result = jsiValueFromHermesValue(resultHValue);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL pushScope(JsiScopeState *result) override {
-    // TODO
+    *result = nullptr;
     return jsi_status_ok;
   }
 
   jsi_status JSICALL popScope(JsiScopeState scope_state) override {
-    // TODO
+    assert(!scope_state && "pushScope only returns nullptrs");
     return jsi_status_ok;
   }
 
@@ -1176,7 +1240,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiSymbol *left,
       const JsiSymbol *right,
       bool *result) override {
-    // TODO
+    *result = phv2(left).getSymbol() == phv2(right).getSymbol();
     return jsi_status_ok;
   }
 
@@ -1184,7 +1248,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiBigInt *left,
       const JsiBigInt *right,
       bool *result) override {
-    // TODO
+    *result = phv2(left).getBigInt() == phv2(right).getBigInt();
     return jsi_status_ok;
   }
 
@@ -1192,7 +1256,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiString *left,
       const JsiString *right,
       bool *result) override {
-    // TODO
+    *result = phv2(left).getString() == phv2(right).getString();
     return jsi_status_ok;
   }
 
@@ -1200,7 +1264,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *left,
       const JsiObject *right,
       bool *result) override {
-    // TODO
+    *result = phv2(left).getObject() == phv2(right).getObject();
     return jsi_status_ok;
   }
 
@@ -1208,13 +1272,43 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiObject *constructor,
       bool *result) override {
-    // auto res = vm::instanceOfOperator_RJS(
-    //     runtime_,
-    //     runtime_.makeHandle(phv(obj)),
-    //     runtime_.makeHandle(phv(constructor)));
-    // return checkStatus(res, result);
-    // TODO
-    return jsi_status_ok;
+    auto res = vm::instanceOfOperator_RJS(
+        runtime_,
+        runtime_.makeHandle(phv2(obj)),
+        runtime_.makeHandle(phv2(constructor)));
+    return checkStatus(res, result);
+  }
+
+  template <typename T>
+  static constexpr bool isJsiPointer =
+      std::is_same_v<T, JsiSymbol> || std::is_same_v<T, JsiBigInt> ||
+      std::is_same_v<T, JsiString> || std::is_same_v<T, JsiObject>;
+
+  template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
+  static const Runtime::PointerValue *getJsiPointerValue(const T *pointer) {
+    return reinterpret_cast<const Runtime::PointerValue *>(pointer);
+  }
+
+  static const Runtime::PointerValue *getJsiPointerValue(
+      const JsiValue &value) {
+    return reinterpret_cast<Runtime::PointerValue *>(value.data);
+  }
+
+  template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
+  static const ::hermes::vm::PinnedHermesValue &phv2(const T *pointer) {
+    assert(
+        dynamic_cast<const HermesPointerValue *>(getJsiPointerValue(pointer)) &&
+        "Pointer does not contain a HermesPointerValue");
+    return static_cast<const HermesPointerValue *>(getJsiPointerValue(pointer))
+        ->value();
+  }
+
+  static const ::hermes::vm::PinnedHermesValue &phv2(const JsiValue &value) {
+    assert(
+        dynamic_cast<const HermesPointerValue *>(getJsiPointerValue(value)) &&
+        "Pointer does not contain a HermesPointerValue");
+    return static_cast<const HermesPointerValue *>(getJsiPointerValue(value))
+        ->value();
   }
 
   template <typename T>
@@ -1224,10 +1318,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return jsi_status_ok;
     }
 
-    return setError();
+    return setResultJSError();
   }
 
-  jsi_status setError() {
+  jsi_status setResultJSError() {
     JsiValue exception = jsiValueFromHermesValue(runtime_.getThrownValue());
     runtime_.clearThrownValue();
     // Here, we increment the depth to detect recursion in error handling.
@@ -1258,7 +1352,13 @@ class HermesRuntimeImpl final : public HermesRuntime,
       JsiErrorType error_kind,
       const char *error_details,
       const JsiValue *value) override {
-    // TODO
+    // TODO:
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL raiseJSError(const JsiValue *error) override {
+    // TODO: check for null?
+    // runtime_.setThrownValue(hvFromJsiValue(*error));
     return jsi_status_ok;
   }
 
@@ -1290,6 +1390,27 @@ class HermesRuntimeImpl final : public HermesRuntime,
           reinterpret_cast<uint64_t>(jsiAdd<JsiObject>(hv))};
     } else {
       llvm_unreachable("unknown HermesValue type");
+    }
+  }
+
+  static vm::HermesValue hvFromJsiValue(const JsiValue &value) {
+    switch (value.kind) {
+      case JsiValueKind::Undefined:
+        return vm::HermesValue::encodeUndefinedValue();
+      case JsiValueKind::Null:
+        return vm::HermesValue::encodeNullValue();
+      case JsiValueKind::Boolean:
+        return vm::HermesValue::encodeBoolValue(value.data == 1);
+      case JsiValueKind::Number:
+        return vm::HermesValue::encodeUntrustedDoubleValue(
+            *reinterpret_cast<const double *>(&value.data));
+      case JsiValueKind::Symbol:
+      case JsiValueKind::BigInt:
+      case JsiValueKind::String:
+      case JsiValueKind::Object:
+        return phv2(value);
+      default:
+        llvm_unreachable("unknown value kind");
     }
   }
 
@@ -1645,7 +1766,6 @@ struct JsiErrorImpl {
   virtual jsi_status JSICALL stack(const char **result) = 0;
   virtual jsi_status JSICALL value(JsiValue *result) = 0;
 };
-
 
 ::hermes::vm::Runtime &getVMRuntime(HermesRuntime &runtime) noexcept {
   return static_cast<HermesRuntimeImpl &>(runtime).runtime_;

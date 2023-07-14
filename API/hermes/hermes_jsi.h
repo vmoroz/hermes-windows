@@ -602,6 +602,8 @@ struct JsiRuntimeVTable {
       JsiErrorType error_kind,
       const char *error_details,
       const JsiValue *value);
+
+  jsi_status(JSICALL *raiseJSError)(JsiRuntime *runtime, const JsiValue *value);
 };
 
 #ifdef __cplusplus
@@ -981,6 +983,10 @@ struct JsiRuntime {
       const JsiValue *value) {
     return vtable->setError(this, error_kind, error_details, value);
   }
+
+  jsi_status raiseJSError(const JsiValue *value) {
+    return vtable->raiseJSError(this, value);
+  }
 };
 #endif
 
@@ -1184,6 +1190,7 @@ struct IJsiRuntime {
       JsiErrorType error_kind,
       const char *error_details,
       const JsiValue *value) = 0;
+  virtual jsi_status JSICALL raiseJSError(const JsiValue *value) = 0;
 };
 
 #endif // !HERMES_HERMES_JSI_H
