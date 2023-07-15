@@ -1149,7 +1149,38 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiValue *args,
       size_t arg_count,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    vm::Handle<vm::Callable> handle =
+        vm::Handle<vm::Callable>::vmcast(&phv2(func));
+    if (arg_count > std::numeric_limits<uint32_t>::max() ||
+        !runtime_.checkAvailableStack((uint32_t)arg_count)) {
+      LOG_EXCEPTION_CAUSE(
+          "HermesRuntimeImpl::call: Unable to call function: stack overflow");
+      return setJSINativeException(
+          "HermesRuntimeImpl::call: Unable to call function: stack overflow");
+    }
+
+    vm::ScopedNativeCallFrame newFrame{
+        runtime_,
+        static_cast<uint32_t>(arg_count),
+        handle.getHermesValue(),
+        vm::HermesValue::encodeUndefinedValue(),
+        hvFromJsiValue(*this_arg)};
+    if (LLVM_UNLIKELY(newFrame.overflowed())) {
+      runtime_.raiseStackOverflow(
+          ::hermes::vm::Runtime::StackOverflowKind::NativeStack);
+      return jsi_status_error;
+    }
+
+    for (uint32_t i = 0; i != arg_count; ++i) {
+      newFrame->getArgRef(i) = hvFromJsiValue(args[i]);
+    }
+    auto callRes = vm::Callable::call(handle, runtime_);
+    if (callRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return setResultJSError();
+    }
+
+    *result = jsiValueFromHermesValue(callRes->get());
     return jsi_status_ok;
   }
 
@@ -1166,9 +1197,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
         !runtime_.checkAvailableStack((uint32_t)arg_count)) {
       LOG_EXCEPTION_CAUSE(
           "HermesRuntimeImpl::call: Unable to call function: stack overflow");
-      // TODO:
-      // throw jsi::JSINativeException(
-      //"HermesRuntimeImpl::call: Unable to call function: stack overflow");
+      return setJSINativeException(
+          "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     }
 
     // We follow es5 13.2.2 [[Construct]] here. Below F == func.
@@ -1203,17 +1233,18 @@ class HermesRuntimeImpl final : public HermesRuntime,
         funcHandle.getHermesValue(),
         objHandle.getHermesValue()};
     if (newFrame.overflowed()) {
-      // TODO:
-      //  checkStatus(runtime_.raiseStackOverflow(
-      //      ::hermes::vm::Runtime::StackOverflowKind::NativeStack));
+      runtime_.raiseStackOverflow(
+          ::hermes::vm::Runtime::StackOverflowKind::NativeStack);
+      return jsi_status_error;
     }
     for (uint32_t i = 0; i != arg_count; ++i) {
       newFrame->getArgRef(i) = hvFromJsiValue(args[i]);
     }
     // The last parameter indicates that this call should construct an object.
     auto callRes = vm::Callable::call(funcHandle, runtime_);
-    // TODO:
-    // checkStatus(callRes.getStatus());
+    if (callRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return setResultJSError();
+    }
 
     // 13.2.2.9:
     //    If Type(result) is Object then return result
@@ -1279,6 +1310,25 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return checkStatus(res, result);
   }
 
+  jsi_status JSICALL getAndClearLastError(JsiError **result) override {
+    // TODO
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL setError(
+      JsiErrorType error_kind,
+      const char *error_details,
+      const JsiValue *value) override {
+    // TODO:
+    return jsi_status_ok;
+  }
+
+  jsi_status JSICALL raiseJSError(const JsiValue *error) override {
+    // TODO: check for null?
+    // runtime_.setThrownValue(hvFromJsiValue(*error));
+    return jsi_status_ok;
+  }
+
   template <typename T>
   static constexpr bool isJsiPointer =
       std::is_same_v<T, JsiSymbol> || std::is_same_v<T, JsiBigInt> ||
@@ -1339,27 +1389,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
     // Here, we give us a little more room so we can call into JS to
     // populate the JSError members.
     vm::ScopedNativeDepthReducer reducer(runtime_);
+    // TODO:
     // throw jsi::JSError(*this, std::move(exception));
     return jsi_status_error;
   }
 
-  jsi_status JSICALL getAndClearLastError(JsiError **result) override {
-    // TODO
-    return jsi_status_ok;
-  }
-
-  jsi_status JSICALL setError(
-      JsiErrorType error_kind,
-      const char *error_details,
-      const JsiValue *value) override {
+  jsi_status setJSINativeException(const char *message) {
     // TODO:
-    return jsi_status_ok;
-  }
-
-  jsi_status JSICALL raiseJSError(const JsiValue *error) override {
-    // TODO: check for null?
-    // runtime_.setThrownValue(hvFromJsiValue(*error));
-    return jsi_status_ok;
+    return jsi_status_error;
   }
 
   JsiValue jsiValueFromHermesValue(vm::HermesValue hv) {
