@@ -1136,10 +1136,22 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL createFunction(
       const JsiPropNameID *name,
-      uint32_t param_count,
-      JsiHostFunction *host_function,
+      uint32_t paramCount,
+      JsiHostFunction *hostFunction,
       JsiObject **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    vm::SymbolID nameID = phv2(name).getSymbol();
+    auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
+        runtime_,
+        hostFunction,
+        &HostFunctionContext::invoke,
+        &HostFunctionContext::finalize,
+        nameID,
+        paramCount);
+        if (funcRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+          return setResultJSError();
+        }
+    *result  = jsiAdd<JsiObject>(*funcRes);
     return jsi_status_ok;
   }
 
@@ -1330,9 +1342,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   template <typename T>
-  static constexpr bool isJsiPointer =
-      std::is_same_v<T, JsiSymbol> || std::is_same_v<T, JsiBigInt> ||
-      std::is_same_v<T, JsiString> || std::is_same_v<T, JsiObject>;
+  static constexpr bool isJsiPointer = std::is_same_v<T, JsiSymbol> ||
+      std::is_same_v<T, JsiBigInt> || std::is_same_v<T, JsiString> ||
+      std::is_same_v<T, JsiObject> || std::is_same_v<T, JsiPropNameID>;
 
   template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
   static const Runtime::PointerValue *getJsiPointerValue(const T *pointer) {
@@ -1460,6 +1472,62 @@ class HermesRuntimeImpl final : public HermesRuntime,
         "this type cannot be added");
     return reinterpret_cast<T *>(&hermesValues_.add(hv));
   }
+
+  struct HostFunctionContext {
+    static vm::CallResult<vm::HermesValue>
+    invoke(void *context, vm::Runtime &runtime, vm::NativeArgs hvArgs) {
+      JsiHostFunction *jsiFunc = reinterpret_cast<JsiHostFunction *>(context);
+      JsiRuntime *jsiRT;
+      jsiFunc->runtime(&jsiRT);
+      IJsiRuntime *jsiRuntime = reinterpret_cast<IJsiRuntime *>(jsiRT);
+      HermesRuntimeImpl &rt = static_cast<HermesRuntimeImpl &>(*jsiRuntime);
+      assert(&runtime == rt->runtime_);
+
+      llvh::SmallVector<JsiValue, 8> apiArgs;
+      for (vm::HermesValue hv : hvArgs) {
+        apiArgs.push_back(rt.jsiValueFromHermesValue(hv));
+      }
+
+      JsiValue ret;
+      const JsiValue *args = apiArgs.empty() ? nullptr : &apiArgs.front();
+
+      JsiValue thisVal = rt.jsiValueFromHermesValue(hvArgs.getThisArg());
+      jsi_status status = jsiFunc->invoke(
+          reinterpret_cast<JsiRuntime *>(jsiRuntime),
+          &thisVal,
+          args,
+          apiArgs.size(),
+          &ret);
+
+      if (status == jsi_status_ok) {
+        return HermesRuntimeImpl::hvFromJsiValue(ret);
+      }
+      // TODO: Should we transition error status to vm here?
+      return vm::ExecutionStatus::EXCEPTION;
+      // #ifdef HERMESVM_EXCEPTION_ON_OOM
+      //       catch (const vm::JSOutOfMemoryError &) {
+      //         throw;
+      //       }
+      // #endif
+      //       catch (const jsi::JSError &error) {
+      //         return runtime.setThrownValue(hvFromValue(error.value()));
+      //       }
+      //       catch (const std::exception &ex) {
+      //         return runtime.raiseError(
+      //             vm::TwineChar16{"Exception in HostFunction: "} +
+      //             ex.what());
+      //       }
+      //       catch (...) {
+      //         return runtime.raiseError("Exception in HostFunction:
+      //         <unknown>");
+      //       }
+    }
+
+    static void finalize(void *context) {
+      JsiHostFunction *jsiFunc = reinterpret_cast<JsiHostFunction *>(context);
+      jsiFunc->destroy();
+    }
+  };
 
   // --- end of JSI C-API
 

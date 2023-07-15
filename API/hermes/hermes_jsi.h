@@ -251,6 +251,8 @@ struct JsiHostObject {
 #endif
 
 struct JsiHostFunctionVTable {
+  jsi_status(
+      JSICALL *runtime)(JsiHostFunction *hostFunction, JsiRuntime **result);
   jsi_status(JSICALL *destroy)(JsiHostFunction *hostFunction);
   jsi_status(JSICALL *invoke)(
       JsiHostFunction *hostFunction,
@@ -264,6 +266,10 @@ struct JsiHostFunctionVTable {
 #ifdef __cplusplus
 struct JsiHostFunction {
   JsiHostFunction(const JsiHostFunctionVTable *vtable) : vtable(vtable) {}
+
+  jsi_status runtime(JsiRuntime **result) {
+    return vtable->runtime(this, result);
+  }
 
   jsi_status destroy() {
     return vtable->destroy(this);
