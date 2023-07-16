@@ -996,7 +996,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiPropNameID *name,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    vm::SymbolID nameID = phv2(name).getSymbol();
+    auto res = h->getNamedOrIndexed(h, runtime_, nameID);
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiValueFromHermesValue(res->get());
     return jsi_status_ok;
   }
 
@@ -1004,7 +1011,13 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiString *name,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    auto res = h->getComputed_RJS(h, runtime_, stringHandle(name));
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiValueFromHermesValue(res->get());
     return jsi_status_ok;
   }
 
@@ -1012,7 +1025,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiPropNameID *name,
       bool *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    vm::SymbolID nameID = phv2(name).getSymbol();
+    auto res = h->hasNamedOrIndexed(h, runtime_, nameID);
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = res.getValue();
     return jsi_status_ok;
   }
 
@@ -1020,7 +1040,13 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiString *name,
       bool *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    auto res = h->hasComputed(h, runtime_, stringHandle(name));
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = res.getValue();
     return jsi_status_ok;
   }
 
@@ -1028,7 +1054,18 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiPropNameID *name,
       const JsiValue *value) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    vm::SymbolID nameID = phv2(name).getSymbol();
+    if (h->putNamedOrIndexed(
+             h,
+             runtime_,
+             nameID,
+             vmHandleFromJsiValue(*value),
+             vm::PropOpFlags().plusThrowOnError())
+            .getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
     return jsi_status_ok;
   }
 
@@ -1036,7 +1073,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       const JsiString *name,
       const JsiValue *value) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    if (h->putComputed_RJS(
+             h,
+             runtime_,
+             stringHandle(name),
+             vmHandleFromJsiValue(*value),
+             vm::PropOpFlags().plusThrowOnError())
+            .getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
     return jsi_status_ok;
   }
 
