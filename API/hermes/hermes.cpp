@@ -1130,7 +1130,21 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *array,
       size_t index,
       const JsiValue *value) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    size_t size;
+    // TODO: check return type
+    getArraySize(array, &size);
+    if (LLVM_UNLIKELY(index >= size)) {
+      return jsiMakeJSError(
+          "setValueAtIndex: index ",
+          index,
+          " is out of bounds [0, ",
+          size,
+          ")");
+    }
+
+    auto h = arrayHandle(array);
+    h->setElementAt(h, runtime_, index, vmHandleFromJsiValue(*value));
     return jsi_status_ok;
   }
 
@@ -1148,10 +1162,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
         &HostFunctionContext::finalize,
         nameID,
         paramCount);
-        if (funcRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
-          return setResultJSError();
-        }
-    *result  = jsiAdd<JsiObject>(*funcRes);
+    if (funcRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return setResultJSError();
+    }
+    *result = jsiAdd<JsiObject>(*funcRes);
     return jsi_status_ok;
   }
 
@@ -1341,6 +1355,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return jsi_status_ok;
   }
 
+  template <typename... Args>
+  jsi_status jsiMakeJSError(Args &&...args) {
+    std::string s;
+    llvh::raw_string_ostream os(s);
+    raw_ostream_append(os, std::forward<Args>(args)...);
+    LOG_EXCEPTION_CAUSE("JSError: %s", os.str().c_str());
+    // TODO:
+    // return jsi::JSError(rt, os.str());
+    return jsi_status_error;
+  }
+
   template <typename T>
   static constexpr bool isJsiPointer = std::is_same_v<T, JsiSymbol> ||
       std::is_same_v<T, JsiBigInt> || std::is_same_v<T, JsiString> ||
@@ -1370,6 +1395,38 @@ class HermesRuntimeImpl final : public HermesRuntime,
         dynamic_cast<const HermesPointerValue *>(getJsiPointerValue(value)) &&
         "Pointer does not contain a HermesPointerValue");
     return static_cast<const HermesPointerValue *>(getJsiPointerValue(value))
+        ->value();
+  }
+
+  static ::hermes::vm::Handle<::hermes::vm::HermesValue> stringHandle(
+      const JsiString *str) {
+    return ::hermes::vm::Handle<::hermes::vm::HermesValue>::vmcast(&phv2(str));
+  }
+
+  static ::hermes::vm::Handle<::hermes::vm::JSObject> handle(
+      const JsiObject *obj) {
+    return ::hermes::vm::Handle<::hermes::vm::JSObject>::vmcast(&phv2(obj));
+  }
+
+  static ::hermes::vm::Handle<::hermes::vm::JSArray> arrayHandle(
+      const JsiObject *arr) {
+    return ::hermes::vm::Handle<::hermes::vm::JSArray>::vmcast(&phv2(arr));
+  }
+
+  static ::hermes::vm::Handle<::hermes::vm::JSArrayBuffer> arrayBufferHandle(
+      const JsiObject *arr) {
+    return ::hermes::vm::Handle<::hermes::vm::JSArrayBuffer>::vmcast(
+        &phv2(arr));
+  }
+
+  template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
+  static const ::hermes::vm::WeakRoot<vm::JSObject> &weakRoot(
+      const T *pointer) {
+    assert(
+        dynamic_cast<const WeakRefPointerValue *>(
+            getJsiPointerValue(pointer)) &&
+        "Pointer does not contain a WeakRefPointerValue");
+    return static_cast<const WeakRefPointerValue *>(getJsiPointerValue(pointer))
         ->value();
   }
 
@@ -1411,6 +1468,48 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return jsi_status_error;
   }
 
+  static vm::HermesValue hvFromJsiValue(const JsiValue &value) {
+    switch (value.kind) {
+      case JsiValueKind::Undefined:
+        return vm::HermesValue::encodeUndefinedValue();
+      case JsiValueKind::Null:
+        return vm::HermesValue::encodeNullValue();
+      case JsiValueKind::Boolean:
+        return vm::HermesValue::encodeBoolValue(value.data != 1);
+      case JsiValueKind::Number:
+        return vm::HermesValue::encodeUntrustedDoubleValue(
+            *reinterpret_cast<const double *>(&value.data));
+      case JsiValueKind::Symbol:
+      case JsiValueKind::BigInt:
+      case JsiValueKind::String:
+      case JsiValueKind::Object:
+        return phv2(value);
+      default:
+        llvm_unreachable("unknown value kind");
+    }
+  }
+
+  vm::Handle<> vmHandleFromJsiValue(const JsiValue &value) {
+    switch (value.kind) {
+      case JsiValueKind::Undefined:
+        return vm::Runtime::getUndefinedValue();
+      case JsiValueKind::Null:
+        return vm::Runtime::getNullValue();
+      case JsiValueKind::Boolean:
+        return vm::Runtime::getBoolValue(value.data != 1);
+      case JsiValueKind::Number:
+        return runtime_.makeHandle(vm::HermesValue::encodeUntrustedDoubleValue(
+            *reinterpret_cast<const double *>(&value.data)));
+      case JsiValueKind::Symbol:
+      case JsiValueKind::BigInt:
+      case JsiValueKind::String:
+      case JsiValueKind::Object:
+        return vm::Handle<vm::HermesValue>(&phv2(value));
+      default:
+        llvm_unreachable("unknown value kind");
+    }
+  }
+
   JsiValue jsiValueFromHermesValue(vm::HermesValue hv) {
     if (hv.isUndefined() || hv.isEmpty()) {
       return JsiValue{JsiValueKind::Undefined, 0};
@@ -1439,27 +1538,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
           reinterpret_cast<uint64_t>(jsiAdd<JsiObject>(hv))};
     } else {
       llvm_unreachable("unknown HermesValue type");
-    }
-  }
-
-  static vm::HermesValue hvFromJsiValue(const JsiValue &value) {
-    switch (value.kind) {
-      case JsiValueKind::Undefined:
-        return vm::HermesValue::encodeUndefinedValue();
-      case JsiValueKind::Null:
-        return vm::HermesValue::encodeNullValue();
-      case JsiValueKind::Boolean:
-        return vm::HermesValue::encodeBoolValue(value.data == 1);
-      case JsiValueKind::Number:
-        return vm::HermesValue::encodeUntrustedDoubleValue(
-            *reinterpret_cast<const double *>(&value.data));
-      case JsiValueKind::Symbol:
-      case JsiValueKind::BigInt:
-      case JsiValueKind::String:
-      case JsiValueKind::Object:
-        return phv2(value);
-      default:
-        llvm_unreachable("unknown value kind");
     }
   }
 
