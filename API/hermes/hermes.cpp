@@ -998,7 +998,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const uint8_t *json,
       size_t length,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    llvh::ArrayRef<uint8_t> ref(json, length);
+    vm::CallResult<vm::HermesValue> res =
+        runtimeJSONParseRef(runtime_, ::hermes::UTF16Stream(ref));
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiValueFromHermesValue(*res);
     return jsi_status_ok;
   }
 
