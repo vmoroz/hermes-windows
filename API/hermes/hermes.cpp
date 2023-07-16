@@ -1102,19 +1102,22 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   getArraySize(const JsiObject *array, size_t *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    *result = getLength(arrayHandle(array));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getArrayBufferSize(const JsiObject *array_buffer, size_t *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    *result = getByteLength(arrayBufferHandle(array_buffer));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getArrayBufferData(const JsiObject *array_buffer, uint8_t **result) override {
-    // TODO
+    *result = vm::vmcast<vm::JSArrayBuffer>(phv2(array_buffer))
+                  ->getDataBlock(runtime_);
     return jsi_status_ok;
   }
 
