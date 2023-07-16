@@ -1101,7 +1101,16 @@ class HermesRuntimeImpl final : public HermesRuntime,
       size_t size,
       JsiDeleter deleter,
       JsiObject **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto buf = runtime_.makeHandle(vm::JSArrayBuffer::create(
+        runtime_,
+        vm::Handle<vm::JSObject>::vmcast(&runtime_.arrayBufferPrototype)));
+    auto res = vm::JSArrayBuffer::setExternalDataBlock(
+        runtime_, buf, data, size, buffer, deleter);
+    if (res == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiObject>(buf.getHermesValue());
     return jsi_status_ok;
   }
 
