@@ -1122,7 +1122,28 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *array,
       size_t index,
       JsiValue *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    size_t size;
+    // TODO: check return type
+    getArraySize(array, &size);
+    if (LLVM_UNLIKELY(index >= size)) {
+      return jsiMakeJSError(
+          "getValueAtIndex: index ",
+          index,
+          " is out of bounds [0, ",
+          size,
+          ")");
+    }
+
+    auto res = vm::JSObject::getComputed_RJS(
+        arrayHandle(array),
+        runtime_,
+        runtime_.makeHandle(vm::HermesValue::encodeNumberValue(index)));
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return setResultJSError();
+    }
+
+    *result = jsiValueFromHermesValue(res->get());
     return jsi_status_ok;
   }
 
