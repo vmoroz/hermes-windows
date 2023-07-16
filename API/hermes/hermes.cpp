@@ -886,7 +886,15 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiSymbol *symbol,
       JsiToUtf8Callback toUtf8,
       void *receiver) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto res = symbolDescriptiveString(
+        runtime_,
+        ::hermes::vm::Handle<::hermes::vm::SymbolID>::vmcast(&phv2(symbol)));
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+
+    returnString(runtime_, res.getValue(), toUtf8, receiver);
     return jsi_status_ok;
   }
 
