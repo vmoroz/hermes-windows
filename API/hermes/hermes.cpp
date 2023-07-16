@@ -1086,7 +1086,12 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   jsi_status JSICALL createArray(size_t length, JsiObject **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto res = vm::JSArray::create(runtime_, length, length);
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return setResultJSError();
+    }
+    *result = jsiAdd<JsiObject>(res->getHermesValue());
     return jsi_status_ok;
   }
 
