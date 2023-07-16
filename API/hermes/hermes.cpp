@@ -880,31 +880,51 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   createBigIntFromInt64(int64_t value, JsiBigInt **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    vm::CallResult<vm::HermesValue> res =
+        vm::BigIntPrimitive::fromSigned(runtime_, value);
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiBigInt>(*res);
     return jsi_status_ok;
   }
 
-  jsi_status JSICALL createBigIntFromUInt64(
-      uint64_t value,
-      JsiBigInt **result) override { // TODO
+  jsi_status JSICALL
+  createBigIntFromUInt64(uint64_t value, JsiBigInt **result) override {
+    vm::GCScope gcScope(runtime_);
+    vm::CallResult<vm::HermesValue> res =
+        vm::BigIntPrimitive::fromUnsigned(runtime_, value);
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiBigInt>(*res);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   bigIntIsInt64(const JsiBigInt *value, bool *result) override {
-    // TODO
+    constexpr bool signedTruncation = true;
+    *result = phv2(value).getBigInt()->isTruncationToSingleDigitLossless(
+        signedTruncation);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   bigIntIsUInt64(const JsiBigInt *value, bool *result) override {
-    // TODO
+    constexpr bool signedTruncation = false;
+    *result = phv2(value).getBigInt()->isTruncationToSingleDigitLossless(
+        signedTruncation);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   truncateBigInt(const JsiBigInt *value, uint64_t *result) override {
-    // TODO
+    auto digit = phv2(value).getBigInt()->truncateToSingleDigit();
+    static_assert(
+        sizeof(digit) == sizeof(uint64_t),
+        "BigInt digit is no longer sizeof(uint64_t) bytes.");
+    *result = digit;
     return jsi_status_ok;
   }
 
@@ -912,7 +932,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiBigInt *value,
       int32_t radix,
       JsiString **result) override {
-    // TODO
+    if (radix < 2 || radix > 36) {
+      return jsiMakeJSError("Invalid radix ", radix, " to BigInt.toString");
+    }
+
+    vm::GCScope gcScope(runtime_);
+    vm::CallResult<vm::HermesValue> toStringRes =
+        phv2(value).getBigInt()->toString(runtime_, radix);
+    if (toStringRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiString>(*toStringRes);
     return jsi_status_ok;
   }
 
