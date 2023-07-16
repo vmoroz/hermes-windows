@@ -743,24 +743,24 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   drainMicrotasks(int32_t maxMicrotasksHint, bool *result) override {
-    // TODO
-    // *result = drainMicrotasks(maxMicrotasksHint);
+    *result = drainMicrotasks(maxMicrotasksHint);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL getGlobal(JsiObject **result) override {
-    // TODO
+    *result = jsiAdd<JsiObject>(runtime_.getGlobal().getHermesValue());
     return jsi_status_ok;
   }
 
+  std::string description_;
   jsi_status JSICALL getDescription(const char **result) override {
-    // TODO
+    description_ = HermesRuntimeImpl::description();
+    *result = description_.c_str();
     return jsi_status_ok;
   }
 
   jsi_status JSICALL isInspectable(bool *result) override {
-    // TODO
-    //*result = isInspectable();
+    *result = isInspectable();
     return jsi_status_ok;
   }
 
