@@ -75,13 +75,18 @@ struct JsiPreparedJavaScript;
 struct JsiHostObject;
 struct JsiHostFunction;
 struct JsiError;
+struct JsiPointer;
 
 struct JsiPointerVTable {
-  jsi_status(JSICALL *release)();
+  jsi_status(JSICALL *release)(const JsiPointer* pointer);
 };
 
 struct JsiPointer {
   const JsiPointerVTable *vtable;
+
+  jsi_status release() const {
+    return vtable->release(this);
+  }
 };
 
 // TODO: express it differently in C API

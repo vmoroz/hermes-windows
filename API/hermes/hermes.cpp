@@ -1016,28 +1016,115 @@ class HermesRuntimeImpl final : public HermesRuntime,
     return jsi_status_ok;
   }
 
+  struct JsiHostObjectProxy final : public vm::HostObjectProxy {
+    HermesRuntimeImpl &rt_;
+    JsiHostObject *ho_;
+
+    JsiHostObjectProxy(HermesRuntimeImpl &rt, JsiHostObject *ho)
+        : rt_(rt), ho_(ho) {}
+
+    ~JsiHostObjectProxy() {
+      ho_->destroy();
+    }
+
+    vm::CallResult<vm::HermesValue> get(vm::SymbolID id) override {
+      JsiPropNameID *sym =
+          rt_.jsiAdd<JsiPropNameID>(vm::HermesValue::encodeSymbolValue(id));
+      JsiValue ret;
+
+      if (ho_->get(
+              reinterpret_cast<JsiRuntime *>(static_cast<IJsiRuntime *>(&rt_)),
+              sym,
+              &ret) != jsi_status_ok) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+
+      return hvFromJsiValue(ret);
+    }
+
+    vm::CallResult<bool> set(vm::SymbolID id, vm::HermesValue value) override {
+      JsiPropNameID *name =
+          rt_.jsiAdd<JsiPropNameID>(vm::HermesValue::encodeSymbolValue(id));
+      JsiValue val = rt_.jsiValueFromHermesValue(value);
+      if (ho_->set(
+              reinterpret_cast<JsiRuntime *>(static_cast<IJsiRuntime *>(&rt_)),
+              name,
+              &val) != jsi_status_ok) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+      return true;
+    }
+
+    struct JsiPropNameIDDeleter {
+      void operator()(const JsiPropNameID *name) {
+        name->release();
+      }
+    };
+
+    vm::CallResult<vm::Handle<vm::JSArray>> getHostPropertyNames() override {
+      using JsiPropNameIDPtr =
+          std::unique_ptr<const JsiPropNameID, JsiPropNameIDDeleter>;
+      std::vector<JsiPropNameIDPtr> names;
+      if (ho_->getPropertyNames(
+              reinterpret_cast<JsiRuntime *>(static_cast<IJsiRuntime *>(&rt_)),
+              [](const JsiPropNameID **data, size_t size, void *receiver) {
+                std::vector<JsiPropNameIDPtr> &names =
+                    *reinterpret_cast<std::vector<JsiPropNameIDPtr> *>(
+                        receiver);
+                names.reserve(size);
+                for (size_t i = 0; i < size; ++i) {
+                  names.emplace_back(data[i], JsiPropNameIDDeleter());
+                }
+              },
+              &names) == jsi_status_error) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+
+      auto arrayRes =
+          vm::JSArray::create(rt_.runtime_, names.size(), names.size());
+      if (arrayRes == vm::ExecutionStatus::EXCEPTION) {
+        return vm::ExecutionStatus::EXCEPTION;
+      }
+      vm::Handle<vm::JSArray> arrayHandle = *arrayRes;
+
+      vm::GCScope gcScope{rt_.runtime_};
+      vm::MutableHandle<vm::SymbolID> tmpHandle{rt_.runtime_};
+      size_t i = 0;
+      for (auto &name : names) {
+        tmpHandle = phv2(name.get()).getSymbol();
+        vm::JSArray::setElementAt(arrayHandle, rt_.runtime_, i++, tmpHandle);
+      }
+
+      return arrayHandle;
+    }
+  };
+
   jsi_status JSICALL createObjectWithHostObject(
       JsiHostObject *host_object,
       JsiObject **result) override {
-    // TODO:
-    //   vm::GCScope gcScope(runtime_);
+    vm::GCScope gcScope(runtime_);
 
-    // auto objRes = vm::HostObject::createWithoutPrototype(
-    //     runtime_, std::make_unique<JsiProxy>(*this, ho));
-    // checkStatus(objRes.getStatus());
-    // return add<jsi::Object>(*objRes);
+    auto objRes = vm::HostObject::createWithoutPrototype(
+        runtime_, std::make_unique<JsiHostObjectProxy>(*this, host_object));
+    if (objRes.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiObject>(*objRes);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getHostObject(const JsiObject *obj, JsiHostObject **result) override {
-    // TODO
+    const vm::HostObjectProxy *proxy =
+        vm::vmcast<vm::HostObject>(phv2(obj))->getProxy();
+    *result = static_cast<const JsiHostObjectProxy *>(proxy)->ho_;
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getHostFunction(const JsiObject *func, JsiHostFunction **result) override {
-    // TODO
+    *result = static_cast<JsiHostFunction *>(
+        vm::vmcast<vm::FinalizableNativeFunction>(phv2(func))->getContext());
     return jsi_status_ok;
   }
 
@@ -1855,25 +1942,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       if (status == jsi_status_ok) {
         return HermesRuntimeImpl::hvFromJsiValue(ret);
       }
-      // TODO: Should we transition error status to vm here?
       return vm::ExecutionStatus::EXCEPTION;
-      // #ifdef HERMESVM_EXCEPTION_ON_OOM
-      //       catch (const vm::JSOutOfMemoryError &) {
-      //         throw;
-      //       }
-      // #endif
-      //       catch (const jsi::JSError &error) {
-      //         return runtime.setThrownValue(hvFromValue(error.value()));
-      //       }
-      //       catch (const std::exception &ex) {
-      //         return runtime.raiseError(
-      //             vm::TwineChar16{"Exception in HostFunction: "} +
-      //             ex.what());
-      //       }
-      //       catch (...) {
-      //         return runtime.raiseError("Exception in HostFunction:
-      //         <unknown>");
-      //       }
     }
 
     static void finalize(void *context) {
