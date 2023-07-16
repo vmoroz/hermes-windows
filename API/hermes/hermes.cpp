@@ -1041,47 +1041,91 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   jsi_status JSICALL isArray(const JsiObject *obj, bool *result) override {
-    // TODO
+    *result = vm::vmisa<vm::JSArray>(phv2(obj));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   isArrayBuffer(const JsiObject *obj, bool *result) override {
-    // TODO
+    *result = vm::vmisa<vm::JSArrayBuffer>(phv2(obj));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL isFunction(const JsiObject *obj, bool *result) override {
-    // TODO
+    *result = vm::vmisa<vm::Callable>(phv2(obj));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL isHostObject(const JsiObject *obj, bool *result) override {
-    // TODO
+    *result = vm::vmisa<vm::HostObject>(phv2(obj));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   isHostFunction(const JsiObject *obj, bool *result) override {
-    // TODO
+    *result = vm::vmisa<vm::FinalizableNativeFunction>(phv2(obj));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getPropertyNames(const JsiObject *obj, JsiObject **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    uint32_t beginIndex;
+    uint32_t endIndex;
+    vm::CallResult<vm::Handle<vm::SegmentedArray>> cr =
+        vm::getForInPropertyNames(runtime_, handle(obj), beginIndex, endIndex);
+    if (cr.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    vm::Handle<vm::SegmentedArray> arr = *cr;
+    size_t length = endIndex - beginIndex;
+
+    jsi_status stat = createArray(length, result);
+    if (stat == jsi_status_error) {
+      return jsi_status_error;
+    }
+    for (size_t i = 0; i < length; ++i) {
+      vm::HermesValue name = arr->at(runtime_, beginIndex + i);
+      if (name.isString()) {
+        JsiValue val = jsiValueFromHermesValue(name);
+        stat = setValueAtIndex(*result, i, &val);
+        if (stat == jsi_status_error) {
+          return jsi_status_error;
+        }
+      } else if (name.isNumber()) {
+        std::string s;
+        llvh::raw_string_ostream os(s);
+        os << static_cast<size_t>(name.getNumber());
+        // TODO: implement
+        // ret.setValueAtIndex(
+        //     *this, i, jsi::String::createFromAscii(*this, os.str()));
+      } else {
+        llvm_unreachable("property name is not String or Number");
+      }
+    }
+
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   createWeakObject(const JsiObject *obj, JsiWeakObject **result) override {
-    // TODO
+    *result = jsiAddWeak(vm::WeakRoot<vm::JSObject>(
+        static_cast<vm::JSObject *>(phv2(obj).getObject()), runtime_));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   lockWeakObject(const JsiWeakObject *obj, JsiValue *result) override {
-    // TODO
+    const vm::WeakRoot<vm::JSObject> &wr = weakRoot(obj);
+
+    if (const auto ptr = wr.get(runtime_, runtime_.getHeap())) {
+      *result = {
+          JsiValueKind::Object,
+          reinterpret_cast<uint64_t>(
+              jsiAdd<JsiObject>(vm::HermesValue::encodeObjectValue(ptr)))};
+    }
+
+    *result = {JsiValueKind::Undefined, 0};
     return jsi_status_ok;
   }
 
@@ -1405,9 +1449,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   template <typename T>
-  static constexpr bool isJsiPointer = std::is_same_v<T, JsiSymbol> ||
-      std::is_same_v<T, JsiBigInt> || std::is_same_v<T, JsiString> ||
-      std::is_same_v<T, JsiObject> || std::is_same_v<T, JsiPropNameID>;
+  static constexpr bool isJsiPointer =
+      std::is_same_v<T, JsiSymbol> || std::is_same_v<T, JsiBigInt> ||
+      std::is_same_v<T, JsiString> || std::is_same_v<T, JsiObject> ||
+      std::is_same_v<T, JsiPropNameID> || std::is_same_v<T, JsiWeakObject>;
 
   template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
   static const Runtime::PointerValue *getJsiPointerValue(const T *pointer) {
@@ -1457,9 +1502,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
         &phv2(arr));
   }
 
-  template <typename T, std::enable_if_t<isJsiPointer<T>, int> = 0>
   static const ::hermes::vm::WeakRoot<vm::JSObject> &weakRoot(
-      const T *pointer) {
+      const JsiWeakObject *pointer) {
     assert(
         dynamic_cast<const WeakRefPointerValue *>(
             getJsiPointerValue(pointer)) &&
@@ -1587,6 +1631,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
             std::is_same_v<JsiPropNameID, T>,
         "this type cannot be added");
     return reinterpret_cast<T *>(&hermesValues_.add(hv));
+  }
+
+  JsiWeakObject *jsiAddWeak(::hermes::vm::WeakRoot<vm::JSObject> wr) {
+    return reinterpret_cast<JsiWeakObject *>(&weakHermesValues_.add(wr));
   }
 
   struct HostFunctionContext {
