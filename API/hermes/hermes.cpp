@@ -719,27 +719,18 @@ class HermesRuntimeImpl final : public HermesRuntime,
   // --- JSI C-API
 
   jsi_status JSICALL evaluateJavaScript(
-      JsiBuffer *buffer,
-      const char *sourceURL,
-      JsiValue *result) override {
-    // TODO
-    return jsi_status_ok;
-  }
-
-  jsi_status JSICALL createPreparedScript(
       const JsiBuffer *buffer,
-      const char *sourceUrl,
-      JsiPreparedJavaScript **result) override {
-    // TODO
-    return jsi_status_ok;
-  }
+      const char *sourceURL,
+      JsiValue *result) override;
 
-  jsi_status JSICALL evaluatePreparedScript(
+  jsi_status JSICALL prepareJavaScript(
+      const JsiBuffer *jsiBuffer,
+      const char *sourceURL,
+      JsiPreparedJavaScript **result) override;
+
+  jsi_status JSICALL evaluatePreparedJavaScript(
       const JsiPreparedJavaScript *prepared_script,
-      JsiValue *result) override {
-    // TODO
-    return jsi_status_ok;
-  }
+      JsiValue *result) override;
 
   jsi_status JSICALL
   drainMicrotasks(int32_t maxMicrotasksHint, bool *result) override {
@@ -1891,6 +1882,21 @@ class HermesRuntimeImpl final : public HermesRuntime,
     }
   };
 
+  // A class which adapts a jsi buffer to a Hermes buffer.
+  class JsiBufferAdapter final : public ::hermes::Buffer {
+   public:
+    JsiBufferAdapter(const JsiBuffer *buf) : buf_(buf) {
+      buf_->getSpan(&data_, &size_);
+    }
+
+    ~JsiBufferAdapter() {
+      buf_->destroy();
+    }
+
+   private:
+    const JsiBuffer *buf_;
+  };
+
   // --- end of JSI C-API
 
   void checkStatus(vm::ExecutionStatus);
@@ -2619,6 +2625,146 @@ class HermesPreparedJavaScript final : public jsi::PreparedJavaScript {
 };
 
 } // namespace
+
+// --- JSI C-API
+
+namespace {
+// An implementation of PreparedJavaScript that wraps a BytecodeProvider.
+class JsiHermesPreparedJavaScript final : public JsiPreparedJavaScript {
+ public:
+  explicit JsiHermesPreparedJavaScript(
+      std::unique_ptr<hbc::BCProvider> bcProvider,
+      vm::RuntimeModuleFlags runtimeFlags,
+      std::string sourceURL)
+      : JsiPreparedJavaScript(getVTable()),
+        bcProvider_(std::move(bcProvider)),
+        runtimeFlags_(runtimeFlags),
+        sourceURL_(std::move(sourceURL)) {}
+
+  std::shared_ptr<hbc::BCProvider> bytecodeProvider() const {
+    return bcProvider_;
+  }
+
+  vm::RuntimeModuleFlags runtimeFlags() const {
+    return runtimeFlags_;
+  }
+
+  const std::string &sourceURL() const {
+    return sourceURL_;
+  }
+
+ private:
+  static const JsiPreparedJavaScriptVTable *getVTable() {
+    static JsiPreparedJavaScriptVTable vtable{destroy};
+    return &vtable;
+  }
+
+  static jsi_status JSICALL destroy(const JsiPreparedJavaScript *script) {
+    delete script;
+    return jsi_status_error;
+  }
+
+ private:
+  std::shared_ptr<hbc::BCProvider> bcProvider_;
+  vm::RuntimeModuleFlags runtimeFlags_;
+  std::string sourceURL_;
+};
+
+} // namespace
+
+jsi_status JSICALL HermesRuntimeImpl::evaluateJavaScript(
+    const JsiBuffer *buffer,
+    const char *sourceURL,
+    JsiValue *result) {
+  JsiPreparedJavaScript *preparedJS;
+  if (prepareJavaScript(buffer, sourceURL, &preparedJS) == jsi_status_error) {
+    return jsi_status_error;
+  }
+
+  jsi_status stat = evaluatePreparedJavaScript(preparedJS, result);
+  preparedJS->destroy();
+  return stat;
+}
+
+jsi_status JSICALL HermesRuntimeImpl::prepareJavaScript(
+    const JsiBuffer *jsiBuffer,
+    const char *sourceURL,
+    JsiPreparedJavaScript **result) {
+  std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
+  auto buffer = std::make_unique<JsiBufferAdapter>(jsiBuffer);
+  vm::RuntimeModuleFlags runtimeFlags{};
+  runtimeFlags.persistent = true;
+
+  bool isBytecode = isHermesBytecode(buffer->data(), buffer->size());
+#ifdef HERMESVM_PLATFORM_LOGGING
+  hermesLog(
+      "HermesVM", "Prepare JS on %s.", isBytecode ? "bytecode" : "source");
+#endif
+  // Save the first few bytes of the buffer so that we can later append them
+  // to any error message.
+  uint8_t bufPrefix[16];
+  const size_t bufSize = buffer->size();
+  memcpy(bufPrefix, buffer->data(), std::min(sizeof(bufPrefix), bufSize));
+
+  // Construct the BC provider either from buffer or source.
+  if (isBytecode) {
+    bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
+        std::move(buffer));
+  } else {
+#if defined(HERMESVM_LEAN)
+    bcErr.second = "prepareJavaScript source compilation not supported";
+#else
+    bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
+        std::move(buffer), sourceURL, nullptr, compileFlags_);
+#endif
+  }
+  if (!bcErr.first) {
+    std::string storage;
+    llvh::raw_string_ostream os(storage);
+    os << " Buffer size " << bufSize << " starts with: ";
+    for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
+      os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
+    std::string bufferModes = "";
+    for (const auto &mode : ::hermes::oscompat::get_vm_protect_modes(
+             buffer->data(), buffer->size())) {
+      // We only expect one match, but if there are multiple, we want to know.
+      bufferModes += mode;
+    }
+    if (!bufferModes.empty()) {
+      os << " and has protection mode(s): " << bufferModes;
+    }
+    LOG_EXCEPTION_CAUSE(
+        "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
+    throw jsi::JSINativeException(
+        "Compiling JS failed: " + std::move(bcErr.second) + os.str());
+  }
+  *result = new JsiHermesPreparedJavaScript(
+      std::move(bcErr.first), runtimeFlags, sourceURL);
+
+  return jsi_status_ok;
+}
+
+jsi_status JSICALL HermesRuntimeImpl::evaluatePreparedJavaScript(
+    const JsiPreparedJavaScript *js,
+    JsiValue *result) {
+  assert(
+      dynamic_cast<const JsiHermesPreparedJavaScript *>(js) &&
+      "js must be an instance of HermesPreparedJavaScript");
+  const auto *hermesPrep = static_cast<const JsiHermesPreparedJavaScript *>(js);
+  vm::GCScope gcScope(runtime_);
+  auto res = runtime_.runBytecode(
+      hermesPrep->bytecodeProvider(),
+      hermesPrep->runtimeFlags(),
+      hermesPrep->sourceURL(),
+      vm::Runtime::makeNullHandle<vm::Environment>());
+  if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+    return jsi_status_error;
+  }
+  *result = jsiValueFromHermesValue(*res);
+  return jsi_status_ok;
+}
+
+// --- JSI C-API end
 
 std::shared_ptr<const jsi::PreparedJavaScript>
 HermesRuntimeImpl::prepareJavaScriptWithSourceMap(

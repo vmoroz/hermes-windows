@@ -103,25 +103,23 @@ typedef void(JSICALL *JsiPropNameIDSpanCallback)(
 typedef void(JSICALL *JsiDeleter)(void *data);
 
 struct JsiBufferVTable {
-  jsi_status(JSICALL *destroy)(JsiBuffer *buffer);
-  jsi_status(JSICALL *data)(JsiBuffer *buffer, const uint8_t **data);
-  jsi_status(JSICALL *size)(JsiBuffer *buffer, size_t *size);
+  jsi_status(JSICALL *destroy)(const JsiBuffer *buffer);
+  jsi_status(JSICALL *getSpan)(
+      const JsiBuffer *buffer,
+      const uint8_t **data,
+      size_t *size);
 };
 
 #ifdef __cplusplus
 struct JsiBuffer {
   JsiBuffer(const JsiBufferVTable *vtable) : vtable(vtable) {}
 
-  jsi_status destroy() {
+  jsi_status destroy() const {
     return vtable->destroy(this);
   }
 
-  jsi_status data(const uint8_t **result) {
-    return vtable->data(this, result);
-  }
-
-  jsi_status size(size_t *result) {
-    return vtable->size(this, result);
+  jsi_status getSpan(const uint8_t **data, size_t *size) const {
+    return vtable->getSpan(this, data, size);
   }
 
  private:
@@ -292,17 +290,17 @@ struct JsiHostFunction {
 struct JsiRuntimeVTable {
   jsi_status(JSICALL *evaluateJavaScript)(
       JsiRuntime *runtime,
-      JsiBuffer *buffer,
+      const JsiBuffer *buffer,
       const char *source_url,
       JsiValue *result);
 
-  jsi_status(JSICALL *createPreparedScript)(
+  jsi_status(JSICALL *prepareJavaScript)(
       JsiRuntime *runtime,
       const JsiBuffer *buffer,
       const char *sourceUrl,
       JsiPreparedJavaScript **result);
 
-  jsi_status(JSICALL *evaluatePreparedScript)(
+  jsi_status(JSICALL *evaluatePreparedJavaScript)(
       JsiRuntime *runtime,
       const JsiPreparedJavaScript *prepared_script,
       JsiValue *result);
@@ -617,23 +615,23 @@ struct JsiRuntime {
   const struct JsiRuntimeVTable *vtable;
 
   jsi_status evaluateJavaScript(
-      JsiBuffer *buffer,
+      const JsiBuffer *buffer,
       const char *source_url,
       JsiValue *result) {
     return vtable->evaluateJavaScript(this, buffer, source_url, result);
   }
 
-  jsi_status createPreparedScript(
+  jsi_status prepareJavaScript(
       const JsiBuffer *buffer,
       const char *sourceUrl,
       JsiPreparedJavaScript **result) {
-    return vtable->createPreparedScript(this, buffer, sourceUrl, result);
+    return vtable->prepareJavaScript(this, buffer, sourceUrl, result);
   }
 
-  jsi_status evaluatePreparedScript(
+  jsi_status evaluatePreparedJavaScript(
       const JsiPreparedJavaScript *prepared_script,
       JsiValue *result) {
-    return vtable->evaluatePreparedScript(this, prepared_script, result);
+    return vtable->evaluatePreparedJavaScript(this, prepared_script, result);
   }
 
   jsi_status drainMicrotasks(int32_t maxMicrotasksHint, bool *result) {
@@ -1002,14 +1000,14 @@ struct JsiRuntime {
 
 struct IJsiRuntime {
   virtual jsi_status JSICALL evaluateJavaScript(
-      JsiBuffer *buffer,
+      const JsiBuffer *buffer,
       const char *source_url,
       JsiValue *result) = 0;
-  virtual jsi_status JSICALL createPreparedScript(
+  virtual jsi_status JSICALL prepareJavaScript(
       const JsiBuffer *buffer,
       const char *sourceUrl,
       JsiPreparedJavaScript **result) = 0;
-  virtual jsi_status JSICALL evaluatePreparedScript(
+  virtual jsi_status JSICALL evaluatePreparedJavaScript(
       const JsiPreparedJavaScript *prepared_script,
       JsiValue *result) = 0;
   virtual jsi_status JSICALL
