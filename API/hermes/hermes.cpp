@@ -766,36 +766,37 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   cloneSymbol(const JsiSymbol *symbol, JsiSymbol **result) override {
-    // TODO
-    //*result = clone(symbol);
+    *result = reinterpret_cast<JsiSymbol *>(
+        clone(reinterpret_cast<const PointerValue *>(symbol)));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneBigInt(const JsiBigInt *bigint, JsiBigInt **result) override {
-    // TODO
-    //*result = clone(bigint);
+    *result = reinterpret_cast<JsiBigInt *>(
+        clone(reinterpret_cast<const PointerValue *>(bigint)));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneString(const JsiString *str, JsiString **result) override {
-    // TODO
-    //*result = clone(str);
+    *result = reinterpret_cast<JsiString *>(
+        clone(reinterpret_cast<const PointerValue *>(str)));
+
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneObject(const JsiObject *obj, JsiObject **result) override {
-    // TODO
-    //*result = clone(obj);
+    *result = reinterpret_cast<JsiObject *>(
+        clone(reinterpret_cast<const PointerValue *>(obj)));
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   clonePropNameID(const JsiPropNameID *name, JsiPropNameID **result) override {
-    // TODO
-    //*result = clone(name);
+    *result = reinterpret_cast<JsiPropNameID *>(
+        clone(reinterpret_cast<const PointerValue *>(name)));
     return jsi_status_ok;
   }
 
