@@ -803,22 +803,23 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const char *ascii,
       size_t length,
       JsiPropNameID **result) override {
-    // TODO
-    // #ifndef NDEBUG
-    //       for (size_t i = 0; i < length; ++i) {
-    //         assert(
-    //             static_cast<unsigned char>(str[i]) < 128 &&
-    //             "non-ASCII character in property name");
-    //       }
-    // #endif
+#ifndef NDEBUG
+    for (size_t i = 0; i < length; ++i) {
+      assert(
+          static_cast<unsigned char>(ascii[i]) < 128 &&
+          "non-ASCII character in property name");
+    }
+#endif
 
-    //       vm::GCScope gcScope(runtime_);
-    //       auto cr = vm::stringToSymbolID(
-    //           runtime_,
-    //           vm::StringPrimitive::createNoThrow(
-    //               runtime_, llvh::StringRef(str, length)));
-    //       checkStatus(cr.getStatus());
-    //       *result = add2<JsiPropNameID>(cr->getHermesValue());
+    vm::GCScope gcScope(runtime_);
+    auto cr = vm::stringToSymbolID(
+        runtime_,
+        vm::StringPrimitive::createNoThrow(
+            runtime_, llvh::StringRef(ascii, length)));
+    if (cr.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiPropNameID>(cr->getHermesValue());
     return jsi_status_ok;
   }
 
@@ -826,34 +827,34 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const uint8_t *utf8,
       size_t length,
       JsiPropNameID **result) override {
-    // TODO
-    // vm::GCScope gcScope(runtime_);
-    // auto cr = vm::stringToSymbolID(
-    //     runtime_,
-    //     vm::createPseudoHandle(stringHVFromUtf8(utf8,
-    //     length).getString()));
-    // checkStatus(cr.getStatus());
-    // *result = add2<JsiPropNameID>(cr->getHermesValue());
+    vm::GCScope gcScope(runtime_);
+    auto cr = vm::stringToSymbolID(
+        runtime_,
+        vm::createPseudoHandle(stringHVFromUtf8(utf8, length).getString()));
+    if (cr.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiPropNameID>(cr->getHermesValue());
     return jsi_status_ok;
   }
 
   jsi_status JSICALL createPropNameIDFromString(
       const JsiString *str,
       JsiPropNameID **result) override {
-    // TODO
-    // vm::GCScope gcScope(runtime_);
-    // auto cr = vm::stringToSymbolID(
-    //     runtime_, vm::createPseudoHandle(phv(str).getString()));
-    // checkStatus(cr.getStatus());
-    // *result = add2<JsiPropNameID>(cr->getHermesValue());
+    vm::GCScope gcScope(runtime_);
+    auto cr = vm::stringToSymbolID(
+        runtime_, vm::createPseudoHandle(phv2(str).getString()));
+    if (cr.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    *result = jsiAdd<JsiPropNameID>(cr->getHermesValue());
     return jsi_status_ok;
   }
 
   jsi_status JSICALL createPropNameIDFromSymbol(
       const JsiSymbol *symbol,
       JsiPropNameID **result) override {
-    // TODO
-    //      *result = add2<JsiPropNameID>(phv(sym));
+    *result = jsiAdd<JsiPropNameID>(phv2(symbol));
     return jsi_status_ok;
   }
 
@@ -861,15 +862,15 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiPropNameID *propertyId,
       JsiToUtf8Callback toUtf8,
       void *receiver) override {
-    // TODO
-    // vm::GCScope gcScope(runtime_);
-    // vm::SymbolID id = phv(sym).getSymbol();
-    // auto view = runtime_.getIdentifierTable().getStringView(runtime_, id);
-    // vm::SmallU16String<32> allocator;
-    // std::string ret;
-    // ::hermes::convertUTF16ToUTF8WithReplacements(
-    //     ret, view.getUTF16Ref(allocator));
-    // toUtf8(ret.data(), ret.size(), receiver);
+    vm::GCScope gcScope(runtime_);
+    vm::SymbolID id = phv2(propertyId).getSymbol();
+    auto view = runtime_.getIdentifierTable().getStringView(runtime_, id);
+    vm::SmallU16String<32> allocator;
+    std::string ret;
+    ::hermes::convertUTF16ToUTF8WithReplacements(
+        ret, view.getUTF16Ref(allocator));
+    toUtf8(
+        reinterpret_cast<const uint8_t *>(ret.c_str()), ret.size(), receiver);
     return jsi_status_ok;
   }
 
@@ -877,8 +878,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiPropNameID *left,
       const JsiPropNameID *right,
       bool *result) override {
-    //*result = phv(a).getSymbol() == phv(b).getSymbol();
-    // TODO
+    *result = phv2(left).getSymbol() == phv2(right).getSymbol();
     return jsi_status_ok;
   }
 
