@@ -729,7 +729,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi_status JSICALL createPreparedScript(
       const JsiBuffer *buffer,
       const char *sourceUrl,
-      JsiPreparedJavaScript **result) override { // TODO
+      JsiPreparedJavaScript **result) override {
     // TODO
     return jsi_status_ok;
   }
@@ -743,6 +743,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   drainMicrotasks(int32_t maxMicrotasksHint, bool *result) override {
+    // TODO
     // *result = drainMicrotasks(maxMicrotasksHint);
     return jsi_status_ok;
   }
@@ -758,36 +759,42 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   jsi_status JSICALL isInspectable(bool *result) override {
+    // TODO
     //*result = isInspectable();
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneSymbol(const JsiSymbol *symbol, JsiSymbol **result) override {
+    // TODO
     //*result = clone(symbol);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneBigInt(const JsiBigInt *bigint, JsiBigInt **result) override {
+    // TODO
     //*result = clone(bigint);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneString(const JsiString *str, JsiString **result) override {
+    // TODO
     //*result = clone(str);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   cloneObject(const JsiObject *obj, JsiObject **result) override {
+    // TODO
     //*result = clone(obj);
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   clonePropNameID(const JsiPropNameID *name, JsiPropNameID **result) override {
+    // TODO
     //*result = clone(name);
     return jsi_status_ok;
   }
@@ -796,6 +803,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const char *ascii,
       size_t length,
       JsiPropNameID **result) override {
+    // TODO
     // #ifndef NDEBUG
     //       for (size_t i = 0; i < length; ++i) {
     //         assert(
@@ -818,6 +826,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const uint8_t *utf8,
       size_t length,
       JsiPropNameID **result) override {
+    // TODO
     // vm::GCScope gcScope(runtime_);
     // auto cr = vm::stringToSymbolID(
     //     runtime_,
@@ -831,6 +840,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi_status JSICALL createPropNameIDFromString(
       const JsiString *str,
       JsiPropNameID **result) override {
+    // TODO
     // vm::GCScope gcScope(runtime_);
     // auto cr = vm::stringToSymbolID(
     //     runtime_, vm::createPseudoHandle(phv(str).getString()));
@@ -842,6 +852,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi_status JSICALL createPropNameIDFromSymbol(
       const JsiSymbol *symbol,
       JsiPropNameID **result) override {
+    // TODO
     //      *result = add2<JsiPropNameID>(phv(sym));
     return jsi_status_ok;
   }
@@ -850,6 +861,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiPropNameID *propertyId,
       JsiToUtf8Callback toUtf8,
       void *receiver) override {
+    // TODO
     // vm::GCScope gcScope(runtime_);
     // vm::SymbolID id = phv(sym).getSymbol();
     // auto view = runtime_.getIdentifierTable().getStringView(runtime_, id);
@@ -950,7 +962,15 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const char *ascii,
       size_t length,
       JsiString **result) override {
-    // TODO
+#ifndef NDEBUG
+    for (size_t i = 0; i < length; ++i) {
+      assert(
+          static_cast<unsigned char>(ascii[i]) < 128 &&
+          "non-ASCII character in string");
+    }
+#endif
+    vm::GCScope gcScope(runtime_);
+    *result = jsiAdd<JsiString>(stringHVFromAscii(ascii, length));
     return jsi_status_ok;
   }
 
@@ -958,7 +978,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const uint8_t *utf8,
       size_t length,
       JsiString **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    *result = jsiAdd<JsiString>(stringHVFromUtf8(utf8, length));
     return jsi_status_ok;
   }
 
@@ -966,7 +987,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiString *string,
       JsiToUtf8Callback toUtf8,
       void *receiver) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    vm::Handle<vm::StringPrimitive> handle(
+        runtime_, stringHandle(string)->getString());
+    returnString(runtime_, handle, toUtf8, receiver);
     return jsi_status_ok;
   }
 
@@ -1779,6 +1803,20 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   JsiWeakObject *jsiAddWeak(::hermes::vm::WeakRoot<vm::JSObject> wr) {
     return reinterpret_cast<JsiWeakObject *>(&weakHermesValues_.add(wr));
+  }
+
+  void returnString(
+      vm::Runtime &runtime,
+      vm::Handle<vm::StringPrimitive> handle,
+      JsiToUtf8Callback toUtf8,
+      void *receiver) {
+    auto view = vm::StringPrimitive::createStringView(runtime, handle);
+    vm::SmallU16String<32> allocator;
+    std::string ret;
+    ::hermes::convertUTF16ToUTF8WithReplacements(
+        ret, view.getUTF16Ref(allocator));
+    toUtf8(
+        reinterpret_cast<const uint8_t *>(ret.c_str()), ret.size(), receiver);
   }
 
   struct HostFunctionContext {
