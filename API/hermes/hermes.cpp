@@ -949,14 +949,22 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   jsi_status JSICALL createObject(JsiObject **result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    *result =
+        jsiAdd<JsiObject>(vm::JSObject::create(runtime_).getHermesValue());
     return jsi_status_ok;
   }
 
   jsi_status JSICALL createObjectWithHostObject(
       JsiHostObject *host_object,
       JsiObject **result) override {
-    // TODO
+    // TODO:
+    //   vm::GCScope gcScope(runtime_);
+
+    // auto objRes = vm::HostObject::createWithoutPrototype(
+    //     runtime_, std::make_unique<JsiProxy>(*this, ho));
+    // checkStatus(objRes.getStatus());
+    // return add<jsi::Object>(*objRes);
     return jsi_status_ok;
   }
 
