@@ -974,13 +974,47 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
   jsi_status JSICALL
   hasNativeState(const JsiObject *obj, bool *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    if (h->isProxyObject() || h->isHostObject()) {
+      *result = false;
+      return jsi_status_ok;
+    }
+    vm::NamedPropertyDescriptor desc;
+    *result = vm::JSObject::getOwnNamedDescriptor(
+        h,
+        runtime_,
+        vm::Predefined::getSymbolID(
+            vm::Predefined::InternalPropertyNativeState),
+        desc);
+
     return jsi_status_ok;
   }
 
   jsi_status JSICALL
   getNativeState(const JsiObject *obj, JsiNativeState *result) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+#ifndef NDEBUG
+    bool hasNS;
+    hasNativeState(obj, &hasNS);
+    assert(hasNS && "object lacks native state");
+#endif
+    auto h = handle(obj);
+    vm::NamedPropertyDescriptor desc;
+    bool exists = vm::JSObject::getOwnNamedDescriptor(
+        h,
+        runtime_,
+        vm::Predefined::getSymbolID(
+            vm::Predefined::InternalPropertyNativeState),
+        desc);
+    (void)exists;
+    assert(exists && "hasNativeState lied");
+    // Raw pointers below.
+    vm::NoAllocScope scope(runtime_);
+    vm::NativeState *ns = vm::vmcast<vm::NativeState>(
+        vm::JSObject::getNamedSlotValueUnsafe(*h, runtime_, desc)
+            .getObject(runtime_));
+    *result = reinterpret_cast<JsiNativeState>(ns->context());
     return jsi_status_ok;
   }
 
@@ -988,7 +1022,32 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiObject *obj,
       JsiNativeState state,
       JsiDeleter deleter) override {
-    // TODO
+    vm::GCScope gcScope(runtime_);
+    auto h = handle(obj);
+    if (h->isProxyObject()) {
+      return setJSINativeException("native state unsupported on Proxy");
+    } else if (h->isHostObject()) {
+      return setJSINativeException("native state unsupported on HostObject");
+    }
+    auto ns =
+        runtime_.makeHandle(vm::NativeState::create(runtime_, state, deleter));
+    auto res = vm::JSObject::defineOwnProperty(
+        h,
+        runtime_,
+        vm::Predefined::getSymbolID(
+            vm::Predefined::InternalPropertyNativeState),
+        vm::DefinePropertyFlags::getDefaultNewPropertyFlags(),
+        ns);
+    // NB: If setting the property failed, then the NativeState cell will soon
+    // be unreachable, and when it's later finalized, the shared_ptr will be
+    // deleted.
+    if (res.getStatus() == vm::ExecutionStatus::EXCEPTION) {
+      return jsi_status_error;
+    }
+    if (!*res) {
+      return setJSINativeException(
+          "failed to define internal native state property");
+    }
     return jsi_status_ok;
   }
 
