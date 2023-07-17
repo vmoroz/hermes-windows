@@ -1457,8 +1457,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
       JsiValue *result) override {
     vm::GCScope gcScope(runtime_);
     size_t size;
-    // TODO: check return type
-    getArraySize(array, &size);
+    if (getArraySize(array, &size) == jsi_status_error) {
+      return jsi_status_error;
+    }
     if (LLVM_UNLIKELY(index >= size)) {
       return jsiMakeJSError(
           "getValueAtIndex: index ",
@@ -1486,8 +1487,9 @@ class HermesRuntimeImpl final : public HermesRuntime,
       const JsiValue *value) override {
     vm::GCScope gcScope(runtime_);
     size_t size;
-    // TODO: check return type
-    getArraySize(array, &size);
+    if (getArraySize(array, &size) == jsi_status_error) {
+      return jsi_status_error;
+    }
     if (LLVM_UNLIKELY(index >= size)) {
       return jsiMakeJSError(
           "setValueAtIndex: index ",
