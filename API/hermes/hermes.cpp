@@ -1358,9 +1358,19 @@ class HermesRuntimeImpl final : public HermesRuntime,
         std::string s;
         llvh::raw_string_ostream os(s);
         os << static_cast<size_t>(name.getNumber());
-        // TODO: implement
-        // ret.setValueAtIndex(
-        //     *this, i, jsi::String::createFromAscii(*this, os.str()));
+        JsiString *strName;
+        if (createStringFromAscii(
+                os.str().c_str(), os.str().size(), &strName) ==
+            jsi_status_error) {
+          return jsi_status_error;
+        }
+        // TODO: optimize
+        JsiValue val = {
+            JsiValueKind::String, reinterpret_cast<uint64_t>(strName)};
+        stat = setValueAtIndex(*result, i, &val);
+        if (stat == jsi_status_error) {
+          return jsi_status_error;
+        }
       } else {
         llvm_unreachable("property name is not String or Number");
       }
