@@ -78,7 +78,7 @@ struct JsiError;
 struct JsiPointer;
 
 struct JsiPointerVTable {
-  jsi_status(JSICALL *release)(const JsiPointer* pointer);
+  jsi_status(JSICALL *release)(const JsiPointer *pointer);
 };
 
 struct JsiPointer {
@@ -153,10 +153,8 @@ struct JsiPreparedJavaScript {
 struct JsiErrorVTable {
   jsi_status(JSICALL *destroy)(const JsiError *error);
   jsi_status(JSICALL *errorType)(const JsiError *error, JsiErrorType *result);
-  jsi_status(JSICALL *errorDetails)(const JsiError *error, const char **result);
   jsi_status(JSICALL *message)(const JsiError *error, const char **result);
-  jsi_status(JSICALL *stack)(const JsiError *error, const char **result);
-  jsi_status(JSICALL *value)(const JsiError *error, JsiValue *result);
+  jsi_status(JSICALL *value)(const JsiError *error, const JsiValue **result);
 };
 
 #ifdef __cplusplus
@@ -171,19 +169,11 @@ struct JsiError {
     return vtable->errorType(this, result);
   }
 
-  jsi_status errorDetails(const char **result) const {
-    return vtable->errorDetails(this, result);
-  }
-
   jsi_status message(const char **result) const {
     return vtable->message(this, result);
   }
 
-  jsi_status stack(const char **result) const {
-    return vtable->stack(this, result);
-  }
-
-  jsi_status value(JsiValue *result) const {
+  jsi_status value(const JsiValue **result) const {
     return vtable->value(this, result);
   }
 
@@ -192,12 +182,10 @@ struct JsiError {
 };
 
 struct IJsiError {
-  virtual jsi_status JSICALL destroy() = 0;
-  virtual jsi_status JSICALL errorType(JsiErrorType *result) = 0;
-  virtual jsi_status JSICALL errorDetails(const char **result) = 0;
-  virtual jsi_status JSICALL message(const char **result) = 0;
-  virtual jsi_status JSICALL stack(const char **result) = 0;
-  virtual jsi_status JSICALL value(JsiValue *result) = 0;
+  virtual jsi_status JSICALL destroy() const = 0;
+  virtual jsi_status JSICALL errorType(JsiErrorType *result) const = 0;
+  virtual jsi_status JSICALL message(const char **result) const = 0;
+  virtual jsi_status JSICALL value(const JsiValue **result) const = 0;
 };
 
 #else

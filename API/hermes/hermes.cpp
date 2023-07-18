@@ -1693,7 +1693,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   jsi_status JSICALL getAndClearLastError(JsiError **result) override {
-    // TODO
+    *result = reinterpret_cast<JsiError *>(error_.release());
     return jsi_status_ok;
   }
 
@@ -1701,13 +1701,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
       JsiErrorType error_kind,
       const char *error_details,
       const JsiValue *value) override {
-    // TODO:
+    if (error_kind == JsiErrorType::NativeException) {
+      error_ = std::make_unique<JsiErrorImpl>(error_details);
+    } else {
+      // TODO: Do we need to clone value here?
+      error_ = std::make_unique<JsiErrorImpl>(value);
+    }
     return jsi_status_ok;
   }
 
   jsi_status JSICALL raiseJSError(const JsiValue *error) override {
-    // TODO: check for null?
-    // runtime_.setThrownValue(hvFromJsiValue(*error));
+    runtime_.setThrownValue(hvFromJsiValue(*error));
     return jsi_status_ok;
   }
 
@@ -1717,10 +1721,60 @@ class HermesRuntimeImpl final : public HermesRuntime,
     llvh::raw_string_ostream os(s);
     raw_ostream_append(os, std::forward<Args>(args)...);
     LOG_EXCEPTION_CAUSE("JSError: %s", os.str().c_str());
-    // TODO:
-    // return jsi::JSError(rt, os.str());
-    return jsi_status_error;
+    // TODO: How to make it JSError?
+    return setJSINativeException(os.str().c_str());
   }
+
+  struct JsiErrorImpl : IJsiError {
+    explicit JsiErrorImpl(const char *message)
+        : errorType_(JsiErrorType::NativeException),
+          message_(message),
+          value_{JsiValueKind::Undefined, 0} {}
+
+    explicit JsiErrorImpl(JsiValue *value)
+        : errorType_(JsiErrorType::JSError), message_(""), value_(*value) {}
+
+    // TODO: make a copy?
+    explicit JsiErrorImpl(const JsiValue *value)
+        : errorType_(JsiErrorType::JSError), message_(""), value_(*value) {}
+
+    jsi_status JSICALL destroy() const override {
+      delete this;
+      return jsi_status_ok;
+    }
+
+    jsi_status JSICALL errorType(JsiErrorType *result) const override {
+      *result = errorType_;
+      return jsi_status_ok;
+    }
+
+    jsi_status JSICALL message(const char **result) const override {
+      *result = message_.c_str();
+      return jsi_status_ok;
+    }
+
+    jsi_status JSICALL value(const JsiValue **result) const override {
+      *result = &value_;
+      return jsi_status_ok;
+    }
+
+    ~JsiErrorImpl() {
+      if (value_.kind == JsiValueKind::Object ||
+          value_.kind == JsiValueKind::Symbol ||
+          value_.kind == JsiValueKind::BigInt ||
+          value_.kind == JsiValueKind::String) {
+        PointerValue *pv = reinterpret_cast<PointerValue *>(value_.data);
+        pv->invalidate();
+      }
+    }
+
+   private:
+    JsiErrorType errorType_;
+    std::string message_;
+    JsiValue value_;
+  };
+
+  std::unique_ptr<JsiErrorImpl> error_;
 
   template <typename T>
   static constexpr bool isJsiPointer =
@@ -1802,8 +1856,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
     // Here, we increment the depth to detect recursion in error handling.
     vm::ScopedNativeDepthTracker depthTracker{runtime_};
     if (LLVM_LIKELY(!depthTracker.overflowed())) {
-      //   auto ex = jsi::JSError(*this, std::move(exception));
-      LOG_EXCEPTION_CAUSE("JSI rethrowing JS exception: %s", ex.what());
+      error_ = std::make_unique<JsiErrorImpl>(&exception);
+      // LOG_EXCEPTION_CAUSE("JSI rethrowing JS exception: %s", ex.what());
       return jsi_status_error;
     }
 
@@ -1814,13 +1868,12 @@ class HermesRuntimeImpl final : public HermesRuntime,
     // Here, we give us a little more room so we can call into JS to
     // populate the JSError members.
     vm::ScopedNativeDepthReducer reducer(runtime_);
-    // TODO:
-    // throw jsi::JSError(*this, std::move(exception));
+    error_ = std::make_unique<JsiErrorImpl>(&exception);
     return jsi_status_error;
   }
 
   jsi_status setJSINativeException(const char *message) {
-    // TODO:
+    error_ = std::make_unique<JsiErrorImpl>(message);
     return jsi_status_error;
   }
 
