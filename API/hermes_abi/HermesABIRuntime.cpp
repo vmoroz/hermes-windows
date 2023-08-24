@@ -9,6 +9,7 @@
 
 #include "hermes_abi/HermesABIHelpers.h"
 #include "hermes_abi/hermes_abi.h"
+#include "jsi/jsilib.h"
 
 #include "hermes/ADT/ManagedChunkedList.h"
 
@@ -37,6 +38,22 @@ class BufferWrapper : public HermesABIBuffer {
  public:
   explicit BufferWrapper(std::shared_ptr<const Buffer> buf)
       : HermesABIBuffer{&vt, buf->data(), buf->size()}, buf_(std::move(buf)) {}
+};
+
+class MutableBufferWrapper : public HermesABIMutableBuffer {
+  std::shared_ptr<MutableBuffer> buf_;
+
+  static void release(HermesABIMutableBuffer *buf) {
+    delete static_cast<const MutableBufferWrapper *>(buf);
+  }
+  static constexpr HermesABIMutableBufferVTable vt{
+      release,
+  };
+
+ public:
+  explicit MutableBufferWrapper(std::shared_ptr<MutableBuffer> buf)
+      : HermesABIMutableBuffer{&vt, buf->data(), buf->size()},
+        buf_(std::move(buf)) {}
 };
 
 /// Helper class to save and restore a value on exiting a scope.
@@ -130,6 +147,245 @@ class HermesABIRuntime : public Runtime {
       // underlying pointer.
       if (oldCount == 1)
         managedPointer_->vtable->invalidate(managedPointer_);
+    }
+  };
+
+  /// An implementation of HermesABIByteBuffer that uses a string as its
+  /// internal storage. This can be used to conveniently construct a std::string
+  /// from ABI functions that return strings.
+  class StringByteBuffer : public HermesABIByteBuffer {
+    std::string buf_;
+
+    static void grow_by(HermesABIByteBuffer *buf, size_t amount) {
+      auto *self = static_cast<StringByteBuffer *>(buf);
+      self->buf_.resize(self->buf_.size() + amount);
+      self->data = (uint8_t *)self->buf_.data();
+      self->available += amount;
+    }
+
+    static constexpr HermesABIByteBufferVTable vt{
+        grow_by,
+    };
+
+   public:
+    explicit StringByteBuffer() : HermesABIByteBuffer{&vt, nullptr, 0} {
+      // Make the small string storage available for use without needing to call
+      // grow_by.
+      buf_.resize(buf_.capacity());
+      data = (uint8_t *)buf_.data();
+      available = buf_.size();
+    }
+
+    std::string get() && {
+      // Trim off any unused bytes at the end.
+      buf_.resize(buf_.size() - available);
+      return std::move(buf_);
+    }
+  };
+
+  class HostFunctionWrapper : public HermesABIHostFunction {
+    HermesABIRuntime &rt_;
+    HostFunctionType hf_;
+
+    static HermesABIValueOrError call(
+        HermesABIHostFunction *hf,
+        HermesABIContext *ctx,
+        const HermesABIValue *thisArg,
+        const HermesABIValue *args,
+        size_t count) {
+      auto *self = static_cast<HostFunctionWrapper *>(hf);
+      auto &rt = self->rt_;
+      try {
+        std::vector<Value> jsiArgs;
+        jsiArgs.reserve(count);
+        for (size_t i = 0; i < count; ++i)
+          jsiArgs.emplace_back(rt.cloneToJSIValue(args[i]));
+
+        auto jsiThisArg = rt.cloneToJSIValue(*thisArg);
+        return abi::createValueOrError(rt.cloneToABIValue(
+            self->hf_(rt, jsiThisArg, jsiArgs.data(), count)));
+      } catch (const JSError &e) {
+        auto abiVal = toABIValue(e.value());
+        rt.vtable_->set_js_error_value(ctx, &abiVal);
+        return abi::createValueOrError(HermesABIErrorCodeJSError);
+      } catch (const std::exception &e) {
+        auto what = std::string("Exception in HostFunction: ") + e.what();
+        rt.vtable_->set_native_exception_message(
+            ctx, what.c_str(), what.size());
+        return abi::createValueOrError(HermesABIErrorCodeNativeException);
+      } catch (...) {
+        std::string err = "An unknown exception occurred in HostFunction.";
+        rt.vtable_->set_native_exception_message(ctx, err.c_str(), err.size());
+        return abi::createValueOrError(HermesABIErrorCodeNativeException);
+      }
+    }
+    static void release(HermesABIHostFunction *hf) {
+      delete static_cast<HostFunctionWrapper *>(hf);
+    }
+
+   public:
+    static constexpr HermesABIHostFunctionVTable vt{
+        call,
+        release,
+    };
+
+    HostFunctionWrapper(HermesABIRuntime &rt, HostFunctionType hf)
+        : HermesABIHostFunction{&vt}, rt_{rt}, hf_{std::move(hf)} {}
+
+    HostFunctionType &getHostFunction() {
+      return hf_;
+    }
+  };
+
+  class HostObjectWrapper : public HermesABIHostObject {
+    HermesABIRuntime &rt_;
+    std::shared_ptr<HostObject> ho_;
+
+    static HermesABIValueOrError get(
+        HermesABIHostObject *ho,
+        HermesABIContext *ctx,
+        HermesABIPropNameID name) {
+      auto *self = static_cast<HostObjectWrapper *>(ho);
+      auto &rt = self->rt_;
+      try {
+        auto jsiName = rt.cloneToJSIPropNameID(name);
+        return abi::createValueOrError(
+            rt.cloneToABIValue(self->ho_->get(rt, jsiName)));
+      } catch (const JSError &e) {
+        auto abiVal = toABIValue(e.value());
+        rt.vtable_->set_js_error_value(ctx, &abiVal);
+        return abi::createValueOrError(HermesABIErrorCodeJSError);
+      } catch (const std::exception &e) {
+        auto *what = e.what();
+        rt.vtable_->set_native_exception_message(ctx, what, strlen(what));
+        return abi::createValueOrError(HermesABIErrorCodeNativeException);
+      } catch (...) {
+        std::string err = "An unknown exception occurred in HostObject::get";
+        rt.vtable_->set_native_exception_message(ctx, err.c_str(), err.size());
+        return abi::createValueOrError(HermesABIErrorCodeNativeException);
+      }
+    }
+
+    static HermesABIVoidOrError set(
+        HermesABIHostObject *ho,
+        HermesABIContext *ctx,
+        HermesABIPropNameID name,
+        const HermesABIValue *value) {
+      auto *self = static_cast<HostObjectWrapper *>(ho);
+      auto &rt = self->rt_;
+      try {
+        auto jsiName = rt.cloneToJSIPropNameID(name);
+        auto jsiValue = rt.cloneToJSIValue(*value);
+        self->ho_->set(rt, jsiName, jsiValue);
+        return abi::createVoidOrError();
+      } catch (const JSError &e) {
+        auto abiVal = toABIValue(e.value());
+        rt.vtable_->set_js_error_value(ctx, &abiVal);
+        return abi::createVoidOrError(HermesABIErrorCodeJSError);
+      } catch (const std::exception &e) {
+        auto what = std::string("Exception in HostObject: ") + e.what();
+        rt.vtable_->set_native_exception_message(
+            ctx, what.c_str(), what.size());
+        return abi::createVoidOrError(HermesABIErrorCodeNativeException);
+      } catch (...) {
+        std::string err = "An unknown exception occurred in HostObject::set";
+        rt.vtable_->set_native_exception_message(ctx, err.c_str(), err.size());
+        return abi::createVoidOrError(HermesABIErrorCodeNativeException);
+      }
+    }
+
+    class PropNameIDListWrapper : public HermesABIPropNameIDList {
+      std::vector<PropNameID> jsiPropsVec_;
+      std::vector<HermesABIPropNameID> abiPropsVec_;
+
+      static void release(HermesABIPropNameIDList *self) {
+        delete static_cast<PropNameIDListWrapper *>(self);
+      }
+      static constexpr HermesABIPropNameIDListVTable vt{
+          release,
+      };
+
+     public:
+      PropNameIDListWrapper(
+          std::vector<PropNameID> jsiPropsVec,
+          std::vector<HermesABIPropNameID> abiPropsVec) {
+        vtable = &vt;
+        jsiPropsVec_ = std::move(jsiPropsVec);
+        abiPropsVec_ = std::move(abiPropsVec);
+        props = abiPropsVec_.data();
+        size = abiPropsVec_.size();
+      }
+    };
+
+    static HermesABIPropNameIDListPtrOrError getPropertyNames(
+        HermesABIHostObject *ho,
+        HermesABIContext *ctx) {
+      auto *self = static_cast<HostObjectWrapper *>(ho);
+      auto &rt = self->rt_;
+
+      try {
+        auto res = self->ho_->getPropertyNames(rt);
+        std::vector<HermesABIPropNameID> v;
+        for (auto &p : res)
+          v.push_back(rt.toABIPropNameID(p));
+        return abi::createPropNameIDListPtrOrError(
+            new PropNameIDListWrapper(std::move(res), std::move(v)));
+      } catch (const JSError &e) {
+        auto abiVal = toABIValue(e.value());
+        rt.vtable_->set_js_error_value(ctx, &abiVal);
+        return abi::createPropNameIDListPtrOrError(HermesABIErrorCodeJSError);
+      } catch (const std::exception &e) {
+        auto what = std::string("Exception in HostObject: ") + e.what();
+        rt.vtable_->set_native_exception_message(
+            ctx, what.c_str(), what.size());
+        return abi::createPropNameIDListPtrOrError(
+            HermesABIErrorCodeNativeException);
+      } catch (...) {
+        std::string err =
+            "An unknown exception occurred in HostObject::getPropertyNames";
+        rt.vtable_->set_native_exception_message(ctx, err.c_str(), err.size());
+        return abi::createPropNameIDListPtrOrError(
+            HermesABIErrorCodeNativeException);
+      }
+    }
+
+    static void release(HermesABIHostObject *ho) {
+      delete static_cast<HostObjectWrapper *>(ho);
+    }
+
+   public:
+    static constexpr HermesABIHostObjectVTable vt{
+        get,
+        set,
+        getPropertyNames,
+        release,
+    };
+
+    HostObjectWrapper(HermesABIRuntime &rt, std::shared_ptr<HostObject> ho)
+        : HermesABIHostObject{&vt}, rt_{rt}, ho_{std::move(ho)} {}
+
+    std::shared_ptr<HostObject> getHostObject() const {
+      return ho_;
+    }
+  };
+
+  class NativeStateWrapper : public HermesABINativeState {
+    std::shared_ptr<NativeState> nativeState_;
+
+    static void release(HermesABINativeState *self) {
+      delete static_cast<NativeStateWrapper *>(self);
+    }
+
+   public:
+    static constexpr HermesABINativeStateVTable vt{
+        release,
+    };
+
+    NativeStateWrapper(std::shared_ptr<NativeState> nativeState)
+        : HermesABINativeState{&vt}, nativeState_{std::move(nativeState)} {}
+
+    std::shared_ptr<NativeState> getNativeState() const {
+      return nativeState_;
     }
   };
 
@@ -368,24 +624,27 @@ class HermesABIRuntime : public Runtime {
   std::shared_ptr<const PreparedJavaScript> prepareJavaScript(
       const std::shared_ptr<const Buffer> &buffer,
       std::string sourceURL) override {
-    throwUnimplemented();
+    return std::make_shared<const SourceJavaScriptPreparation>(
+        buffer, std::move(sourceURL));
   }
 
   Value evaluatePreparedJavaScript(
       const std::shared_ptr<const PreparedJavaScript> &js) override {
-    throwUnimplemented();
+    assert(dynamic_cast<const SourceJavaScriptPreparation *>(js.get()));
+    auto sjp = std::static_pointer_cast<const SourceJavaScriptPreparation>(js);
+    return evaluateJavaScript(sjp, sjp->sourceURL());
   }
 
   bool drainMicrotasks(int maxMicrotasksHint = -1) override {
-    throwUnimplemented();
+    return unwrap(vtable_->drain_microtasks(ctx_, maxMicrotasksHint));
   }
 
   Object global() override {
-    throwUnimplemented();
+    return intoJSIObject(vtable_->get_global_object(ctx_));
   }
 
   std::string description() override {
-    throwUnimplemented();
+    return "HermesABIRuntime";
   }
 
   bool isInspectable() override {
@@ -415,188 +674,258 @@ class HermesABIRuntime : public Runtime {
 
   PropNameID createPropNameIDFromAscii(const char *str, size_t length)
       override {
-    throwUnimplemented();
+    return intoJSIPropNameID(
+        vtable_->create_prop_name_id_from_ascii(ctx_, str, length));
   }
   PropNameID createPropNameIDFromUtf8(const uint8_t *utf8, size_t length)
       override {
-    throwUnimplemented();
+    return intoJSIPropNameID(
+        vtable_->create_prop_name_id_from_utf8(ctx_, utf8, length));
   }
   PropNameID createPropNameIDFromString(const String &str) override {
-    throwUnimplemented();
+    return intoJSIPropNameID(
+        vtable_->create_prop_name_id_from_string(ctx_, toABIString(str)));
   }
   PropNameID createPropNameIDFromSymbol(const Symbol &sym) override {
-    throwUnimplemented();
+    return intoJSIPropNameID(
+        vtable_->create_prop_name_id_from_symbol(ctx_, toABISymbol(sym)));
   }
-  std::string utf8(const PropNameID &) override {
-    throwUnimplemented();
+  std::string utf8(const PropNameID &name) override {
+    StringByteBuffer buffer;
+    vtable_->get_utf8_from_prop_name_id(ctx_, toABIPropNameID(name), &buffer);
+    return std::move(buffer).get();
   }
-  bool compare(const PropNameID &, const PropNameID &) override {
-    throwUnimplemented();
+  bool compare(const PropNameID &a, const PropNameID &b) override {
+    return vtable_->prop_name_id_equals(
+        ctx_, toABIPropNameID(a), toABIPropNameID(b));
   }
 
-  std::string symbolToString(const Symbol &) override {
-    throwUnimplemented();
+  std::string symbolToString(const Symbol &sym) override {
+    StringByteBuffer buffer;
+    vtable_->get_utf8_from_symbol(ctx_, toABISymbol(sym), &buffer);
+    return std::move(buffer).get();
   }
 
-  BigInt createBigIntFromInt64(int64_t) override {
-    throwUnimplemented();
+  BigInt createBigIntFromInt64(int64_t value) override {
+    return intoJSIBigInt(vtable_->create_bigint_from_int64(ctx_, value));
   }
-  BigInt createBigIntFromUint64(uint64_t) override {
-    throwUnimplemented();
+  BigInt createBigIntFromUint64(uint64_t value) override {
+    return intoJSIBigInt(vtable_->create_bigint_from_uint64(ctx_, value));
   }
-  bool bigintIsInt64(const BigInt &) override {
-    throwUnimplemented();
+  bool bigintIsInt64(const BigInt &bigint) override {
+    return vtable_->bigint_is_int64(ctx_, toABIBigInt(bigint));
   }
-  bool bigintIsUint64(const BigInt &) override {
-    throwUnimplemented();
+  bool bigintIsUint64(const BigInt &bigint) override {
+    return vtable_->bigint_is_uint64(ctx_, toABIBigInt(bigint));
   }
-  uint64_t truncate(const BigInt &) override {
-    throwUnimplemented();
+  uint64_t truncate(const BigInt &bigint) override {
+    return vtable_->bigint_truncate_to_uint64(ctx_, toABIBigInt(bigint));
   }
-  String bigintToString(const BigInt &, int) override {
-    throwUnimplemented();
+  String bigintToString(const BigInt &bigint, int radix) override {
+    // Note that the ABI takes the radix as unsigned, but it is safe to pass in
+    // the signed value without a check because values <2 or >36 will be
+    // rejected anyway.
+    return intoJSIString(
+        vtable_->bigint_to_string(ctx_, toABIBigInt(bigint), (unsigned)radix));
   }
 
   String createStringFromAscii(const char *str, size_t length) override {
-    throwUnimplemented();
+    return intoJSIString(vtable_->create_string_from_ascii(ctx_, str, length));
   }
   String createStringFromUtf8(const uint8_t *utf8, size_t length) override {
-    throwUnimplemented();
+    return intoJSIString(vtable_->create_string_from_utf8(ctx_, utf8, length));
   }
-  std::string utf8(const String &) override {
-    throwUnimplemented();
+  std::string utf8(const String &str) override {
+    StringByteBuffer buffer;
+    vtable_->get_utf8_from_string(ctx_, toABIString(str), &buffer);
+    return std::move(buffer).get();
   }
 
   Object createObject() override {
-    throwUnimplemented();
+    return intoJSIObject(vtable_->create_object(ctx_));
   }
   Object createObject(std::shared_ptr<HostObject> ho) override {
-    throwUnimplemented();
+    return intoJSIObject(vtable_->create_object_from_host_object(
+        ctx_, new HostObjectWrapper(*this, std::move(ho))));
   }
-  std::shared_ptr<HostObject> getHostObject(const Object &) override {
-    throwUnimplemented();
+  std::shared_ptr<HostObject> getHostObject(const Object &o) override {
+    return static_cast<HostObjectWrapper *>(
+               vtable_->get_host_object(ctx_, toABIObject(o)))
+        ->getHostObject();
   }
-  HostFunctionType &getHostFunction(const Function &) override {
-    throwUnimplemented();
+  HostFunctionType &getHostFunction(const Function &f) override {
+    return static_cast<HostFunctionWrapper *>(
+               vtable_->get_host_function(ctx_, toABIFunction(f)))
+        ->getHostFunction();
   }
 
-  bool hasNativeState(const Object &) override {
-    throwUnimplemented();
+  bool hasNativeState(const Object &obj) override {
+    bool hasNS = vtable_->has_native_state(ctx_, toABIObject(obj));
+    if (!hasNS)
+      return false;
+
+    auto *ns = vtable_->get_native_state(ctx_, toABIObject(obj));
+    return ns->vtable == &NativeStateWrapper::vt;
   }
-  std::shared_ptr<NativeState> getNativeState(const Object &) override {
-    throwUnimplemented();
+  std::shared_ptr<NativeState> getNativeState(const Object &obj) override {
+    auto *ns = vtable_->get_native_state(ctx_, toABIObject(obj));
+    return static_cast<NativeStateWrapper *>(ns)->getNativeState();
   }
-  void setNativeState(const Object &, std::shared_ptr<NativeState> state)
+  void setNativeState(const Object &obj, std::shared_ptr<NativeState> state)
       override {
-    throwUnimplemented();
+    unwrap(vtable_->set_native_state(
+        ctx_, toABIObject(obj), new NativeStateWrapper(std::move(state))));
   }
 
-  Value getProperty(const Object &, const PropNameID &name) override {
-    throwUnimplemented();
+  Value getProperty(const Object &obj, const PropNameID &name) override {
+    return intoJSIValue(vtable_->get_object_property_from_prop_name_id(
+        ctx_, toABIObject(obj), toABIPropNameID(name)));
   }
-  Value getProperty(const Object &, const String &name) override {
-    throwUnimplemented();
+  Value getProperty(const Object &obj, const String &name) override {
+    return intoJSIValue(vtable_->get_object_property_from_string(
+        ctx_, toABIObject(obj), toABIString(name)));
   }
-  bool hasProperty(const Object &, const PropNameID &name) override {
-    throwUnimplemented();
+  bool hasProperty(const Object &obj, const PropNameID &name) override {
+    return unwrap(vtable_->has_object_property_from_prop_name_id(
+        ctx_, toABIObject(obj), toABIPropNameID(name)));
   }
-  bool hasProperty(const Object &, const String &name) override {
-    throwUnimplemented();
+  bool hasProperty(const Object &obj, const String &name) override {
+    return unwrap(vtable_->has_object_property_from_string(
+        ctx_, toABIObject(obj), toABIString(name)));
   }
   void setPropertyValue(
-      const Object &,
+      const Object &obj,
       const PropNameID &name,
       const Value &value) override {
-    throwUnimplemented();
+    auto abiVal = toABIValue(value);
+    unwrap(vtable_->set_object_property_from_prop_name_id(
+        ctx_, toABIObject(obj), toABIPropNameID(name), &abiVal));
   }
-  void setPropertyValue(const Object &, const String &name, const Value &value)
-      override {
-    throwUnimplemented();
-  }
-
-  bool isArray(const Object &) const override {
-    throwUnimplemented();
-  }
-  bool isArrayBuffer(const Object &) const override {
-    throwUnimplemented();
-  }
-  bool isFunction(const Object &) const override {
-    throwUnimplemented();
-  }
-  bool isHostObject(const Object &) const override {
-    throwUnimplemented();
-  }
-  bool isHostFunction(const Function &) const override {
-    throwUnimplemented();
-  }
-  Array getPropertyNames(const Object &) override {
-    throwUnimplemented();
+  void setPropertyValue(
+      const Object &obj,
+      const String &name,
+      const Value &value) override {
+    auto abiVal = toABIValue(value);
+    unwrap(vtable_->set_object_property_from_string(
+        ctx_, toABIObject(obj), toABIString(name), &abiVal));
   }
 
-  WeakObject createWeakObject(const Object &) override {
-    throwUnimplemented();
+  bool isArray(const Object &obj) const override {
+    return vtable_->object_is_array(ctx_, toABIObject(obj));
   }
-  Value lockWeakObject(const WeakObject &) override {
-    throwUnimplemented();
+  bool isArrayBuffer(const Object &obj) const override {
+    return vtable_->object_is_array_buffer(ctx_, toABIObject(obj));
+  }
+  bool isFunction(const Object &obj) const override {
+    return vtable_->object_is_function(ctx_, toABIObject(obj));
+  }
+  bool isHostObject(const Object &obj) const override {
+    // First check if it is considered a HostObject by the ABI.
+    bool isHO = vtable_->object_is_host_object(ctx_, toABIObject(obj));
+    if (!isHO)
+      return false;
+
+    // Now check if the HostObject was created by this C++ wrapper.
+    auto ho = vtable_->get_host_object(ctx_, toABIObject(obj));
+    return ho->vtable == &HostObjectWrapper::vt;
+  }
+  bool isHostFunction(const Function &fn) const override {
+    // First check if it is considered a HostFunction by the ABI.
+    bool isHF = vtable_->function_is_host_function(ctx_, toABIFunction(fn));
+    if (!isHF)
+      return false;
+    // Now check if the HostFunction was created by this C++ wrapper.
+    auto hf = vtable_->get_host_function(ctx_, toABIFunction(fn));
+    return hf->vtable == &HostFunctionWrapper::vt;
+  }
+  Array getPropertyNames(const Object &obj) override {
+    return intoJSIArray(
+        vtable_->get_object_property_names(ctx_, toABIObject(obj)));
+  }
+
+  WeakObject createWeakObject(const Object &obj) override {
+    return intoJSIWeakObject(
+        vtable_->create_weak_object(ctx_, toABIObject(obj)));
+  }
+  Value lockWeakObject(const WeakObject &wo) override {
+    return intoJSIValue(vtable_->lock_weak_object(ctx_, toABIWeakObject(wo)));
   }
 
   Array createArray(size_t length) override {
-    throwUnimplemented();
+    return intoJSIArray(vtable_->create_array(ctx_, length));
   }
   ArrayBuffer createArrayBuffer(
       std::shared_ptr<MutableBuffer> buffer) override {
-    throwUnimplemented();
+    return intoJSIArrayBuffer(
+        vtable_->create_array_buffer_from_external_data(
+            ctx_, new MutableBufferWrapper(std::move(buffer))));
   }
-  size_t size(const Array &) override {
-    throwUnimplemented();
+  size_t size(const Array &arr) override {
+    return vtable_->get_array_length(ctx_, toABIArray(arr));
   }
-  size_t size(const ArrayBuffer &) override {
-    throwUnimplemented();
+  size_t size(const ArrayBuffer &ab) override {
+    return unwrap(vtable_->get_array_buffer_size(ctx_, toABIArrayBuffer(ab)));
   }
-  uint8_t *data(const ArrayBuffer &) override {
-    throwUnimplemented();
+  uint8_t *data(const ArrayBuffer &ab) override {
+    return unwrap(vtable_->get_array_buffer_data(ctx_, toABIArrayBuffer(ab)));
   }
-  Value getValueAtIndex(const Array &, size_t i) override {
-    throwUnimplemented();
+  Value getValueAtIndex(const Array &arr, size_t i) override {
+    return intoJSIValue(
+        vtable_->get_array_value_at_index(ctx_, toABIArray(arr), i));
   }
-  void setValueAtIndexImpl(const Array &, size_t i, const Value &value)
+  void setValueAtIndexImpl(const Array &arr, size_t i, const Value &value)
       override {
-    throwUnimplemented();
+    auto abiVal = toABIValue(value);
+    unwrap(
+        vtable_->set_array_value_at_index(ctx_, toABIArray(arr), i, &abiVal));
   }
 
   Function createFunctionFromHostFunction(
       const PropNameID &name,
       unsigned int paramCount,
       HostFunctionType func) override {
-    throwUnimplemented();
+    return intoJSIFunction(vtable_->create_function_from_host_function(
+        ctx_,
+        toABIPropNameID(name),
+        paramCount,
+        new HostFunctionWrapper(*this, func)));
   }
   Value call(
-      const Function &,
+      const Function &fn,
       const Value &jsThis,
       const Value *args,
       size_t count) override {
-    throwUnimplemented();
+    std::vector<HermesABIValue> abiArgs;
+    for (size_t i = 0; i < count; ++i)
+      abiArgs.push_back(toABIValue(args[i]));
+    HermesABIValue abiThis = toABIValue(jsThis);
+    return intoJSIValue(vtable_->call(
+        ctx_, toABIFunction(fn), &abiThis, abiArgs.data(), abiArgs.size()));
   }
-  Value callAsConstructor(const Function &, const Value *args, size_t count)
+  Value callAsConstructor(const Function &fn, const Value *args, size_t count)
       override {
-    throwUnimplemented();
+    std::vector<HermesABIValue> abiArgs;
+    for (size_t i = 0; i < count; ++i)
+      abiArgs.push_back(toABIValue(args[i]));
+    return intoJSIValue(vtable_->call_as_constructor(
+        ctx_, toABIFunction(fn), abiArgs.data(), abiArgs.size()));
   }
 
   bool strictEquals(const Symbol &a, const Symbol &b) const override {
-    throwUnimplemented();
+    return vtable_->strict_equals_symbol(ctx_, toABISymbol(a), toABISymbol(b));
   }
   bool strictEquals(const BigInt &a, const BigInt &b) const override {
-    throwUnimplemented();
+    return vtable_->strict_equals_bigint(ctx_, toABIBigInt(a), toABIBigInt(b));
   }
   bool strictEquals(const String &a, const String &b) const override {
-    throwUnimplemented();
+    return vtable_->strict_equals_string(ctx_, toABIString(a), toABIString(b));
   }
   bool strictEquals(const Object &a, const Object &b) const override {
-    throwUnimplemented();
+    return vtable_->strict_equals_object(ctx_, toABIObject(a), toABIObject(b));
   }
 
   bool instanceOf(const Object &o, const Function &f) override {
-    throwUnimplemented();
+    return unwrap(vtable_->instance_of(ctx_, toABIObject(o), toABIFunction(f)));
   }
 };
 

@@ -11,6 +11,7 @@
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/Public/RuntimeConfig.h"
 #include "hermes/VM/Callable.h"
+#include "hermes/VM/HostModel.h"
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
 #include "hermes/VM/Runtime.h"
@@ -429,6 +430,890 @@ ABI_PREFIX HermesABIValueOrError evaluate_hermes_bytecode(
   return ctx->createValueOrError(*res);
 }
 
+ABI_PREFIX HermesABIObject get_global_object(HermesABIContext *ctx) {
+  return ctx->createObject(ctx->rt->getGlobal().getHermesValue());
+}
+
+ABI_PREFIX HermesABIStringOrError create_string_from_ascii(
+    HermesABIContext *ctx,
+    const char *str,
+    size_t length) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto strRes = vm::StringPrimitive::createEfficient(
+      runtime, llvh::makeArrayRef(str, length));
+  if (strRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createStringOrError(HermesABIErrorCodeJSError);
+  return ctx->createStringOrError(*strRes);
+}
+
+ABI_PREFIX HermesABIStringOrError create_string_from_utf8(
+    HermesABIContext *ctx,
+    const uint8_t *utf8,
+    size_t length) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto strRes = vm::StringPrimitive::createEfficient(
+      runtime, llvh::makeArrayRef(utf8, length), /* IgnoreInputErrors */ true);
+  if (strRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createStringOrError(HermesABIErrorCodeJSError);
+  return ctx->createStringOrError(*strRes);
+}
+
+ABI_PREFIX HermesABIObjectOrError create_object(HermesABIContext *ctx) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  return ctx->createObjectOrError(
+      vm::JSObject::create(runtime).getHermesValue());
+}
+
+ABI_PREFIX HermesABIBoolOrError has_object_property_from_string(
+    HermesABIContext *ctx,
+    HermesABIObject obj,
+    HermesABIString str) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto res = vm::JSObject::hasComputed(toHandle(obj), runtime, toHandle(str));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createBoolOrError(HermesABIErrorCodeJSError);
+  return abi::createBoolOrError(*res);
+}
+
+ABI_PREFIX HermesABIBoolOrError has_object_property_from_prop_name_id(
+    HermesABIContext *ctx,
+    HermesABIObject obj,
+    HermesABIPropNameID name) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto res =
+      vm::JSObject::hasNamedOrIndexed(toHandle(obj), runtime, *toHandle(name));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createBoolOrError(HermesABIErrorCodeJSError);
+  return abi::createBoolOrError(*res);
+}
+
+ABI_PREFIX HermesABIValueOrError get_object_property_from_string(
+    HermesABIContext *ctx,
+    HermesABIObject object,
+    HermesABIString str) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto res =
+      vm::JSObject::getComputed_RJS(toHandle(object), runtime, toHandle(str));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+  return ctx->createValueOrError(res->get());
+}
+
+ABI_PREFIX HermesABIValueOrError get_object_property_from_prop_name_id(
+    HermesABIContext *ctx,
+    HermesABIObject object,
+    HermesABIPropNameID sym) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto res = vm::JSObject::getNamedOrIndexed(
+      toHandle(object), runtime, *toHandle(sym));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+  return ctx->createValueOrError(res->get());
+}
+
+ABI_PREFIX HermesABIVoidOrError set_object_property_from_string(
+    HermesABIContext *ctx,
+    HermesABIObject obj,
+    HermesABIString str,
+    const HermesABIValue *val) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+
+  auto res = vm::JSObject::putComputed_RJS(
+                 toHandle(obj),
+                 runtime,
+                 toHandle(str),
+                 ctx->makeHandle(*val),
+                 vm::PropOpFlags().plusThrowOnError())
+                 .getStatus();
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createVoidOrError(HermesABIErrorCodeJSError);
+  return abi::createVoidOrError();
+}
+
+ABI_PREFIX HermesABIVoidOrError set_object_property_from_prop_name_id(
+    HermesABIContext *ctx,
+    HermesABIObject obj,
+    HermesABIPropNameID name,
+    const HermesABIValue *val) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+
+  auto res = vm::JSObject::putNamedOrIndexed(
+                 toHandle(obj),
+                 runtime,
+                 *toHandle(name),
+                 ctx->makeHandle(*val),
+                 vm::PropOpFlags().plusThrowOnError())
+                 .getStatus();
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createVoidOrError(HermesABIErrorCodeJSError);
+  return abi::createVoidOrError();
+}
+
+ABI_PREFIX HermesABIArrayOrError
+get_object_property_names(HermesABIContext *ctx, HermesABIObject obj) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  uint32_t beginIndex;
+  uint32_t endIndex;
+  auto objHandle = toHandle(obj);
+
+  auto propsRes =
+      vm::getForInPropertyNames(runtime, objHandle, beginIndex, endIndex);
+  if (propsRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createArrayOrError(HermesABIErrorCodeJSError);
+
+  vm::Handle<vm::SegmentedArray> props = *propsRes;
+  size_t length = endIndex - beginIndex;
+
+  auto retRes = vm::JSArray::create(runtime, length, length);
+  if (retRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createArrayOrError(HermesABIErrorCodeJSError);
+  vm::Handle<vm::JSArray> ret = *retRes;
+  vm::JSArray::setStorageEndIndex(ret, runtime, length);
+
+  for (size_t i = 0; i < length; ++i) {
+    vm::HermesValue name = props->at(runtime, beginIndex + i);
+    vm::StringPrimitive *asString;
+    if (name.isString()) {
+      asString = name.getString();
+    } else {
+      assert(name.isNumber());
+      auto asStrRes = vm::toString_RJS(runtime, runtime.makeHandle(name));
+      if (asStrRes == vm::ExecutionStatus::EXCEPTION)
+        return abi::createArrayOrError(HermesABIErrorCodeJSError);
+      asString = asStrRes->get();
+    }
+    vm::JSArray::unsafeSetExistingElementAt(
+        *ret,
+        runtime,
+        i,
+        vm::SmallHermesValue::encodeStringValue(asString, runtime));
+  }
+
+  return ctx->createArrayOrError(ret.getHermesValue());
+}
+
+ABI_PREFIX HermesABIArrayOrError
+create_array(HermesABIContext *ctx, size_t length) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto result = vm::JSArray::create(runtime, length, length);
+  if (result == vm::ExecutionStatus::EXCEPTION)
+    return abi::createArrayOrError(HermesABIErrorCodeJSError);
+  return ctx->createArrayOrError(result->getHermesValue());
+}
+
+size_t get_array_length(HermesABIContext *ctx, HermesABIArray arr) {
+  auto &runtime = *ctx->rt;
+  return vm::JSArray::getLength(*toHandle(arr), runtime);
+}
+ABI_PREFIX HermesABIValueOrError
+get_array_value_at_index(HermesABIContext *ctx, HermesABIArray arr, size_t i) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto len = vm::JSArray::getLength(*toHandle(arr), runtime);
+  if (LLVM_UNLIKELY(i >= len)) {
+    (void)runtime.raiseError("Array index out of bounds.");
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+  }
+
+  auto res = vm::JSObject::getComputed_RJS(
+      toHandle(arr),
+      runtime,
+      runtime.makeHandle(vm::HermesValue::encodeUntrustedNumberValue(i)));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+
+  return ctx->createValueOrError(res->get());
+}
+
+ABI_PREFIX HermesABIVoidOrError set_array_value_at_index(
+    HermesABIContext *ctx,
+    HermesABIArray arr,
+    size_t i,
+    const HermesABIValue *val) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto len = vm::JSArray::getLength(*toHandle(arr), runtime);
+  if (LLVM_UNLIKELY(i >= len)) {
+    (void)runtime.raiseError("Array index out of bounds.");
+    return abi::createVoidOrError(HermesABIErrorCodeJSError);
+  }
+
+  auto res = vm::JSObject::putComputed_RJS(
+      toHandle(arr),
+      runtime,
+      runtime.makeHandle(vm::HermesValue::encodeTrustedNumberValue(i)),
+      ctx->makeHandle(*val));
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createVoidOrError(HermesABIErrorCodeJSError);
+  return abi::createVoidOrError();
+}
+
+ABI_PREFIX HermesABIArrayBufferOrError create_array_buffer_from_external_data(
+    HermesABIContext *ctx,
+    HermesABIMutableBuffer *buf) {
+  auto &runtime = *ctx->rt;
+
+  vm::GCScope gcScope(runtime);
+  auto arrayBuffer = runtime.makeHandle(vm::JSArrayBuffer::create(
+      runtime,
+      vm::Handle<vm::JSObject>::vmcast(&runtime.arrayBufferPrototype)));
+  auto size = buf->size;
+  auto *data = buf->data;
+  auto finalize = [](void *buf) {
+    auto *self = static_cast<HermesABIMutableBuffer *>(buf);
+    self->vtable->release(self);
+  };
+  auto res = vm::JSArrayBuffer::setExternalDataBlock(
+      runtime, arrayBuffer, data, size, buf, finalize);
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createArrayBufferOrError(HermesABIErrorCodeJSError);
+  return ctx->createArrayBufferOrError(arrayBuffer.getHermesValue());
+}
+
+ABI_PREFIX HermesABIUint8PtrOrError
+get_array_buffer_data(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
+  auto &runtime = *ctx->rt;
+  auto ab = toHandle(buf);
+  if (!ab->attached()) {
+    ctx->nativeExceptionMessage =
+        "Cannot get data block of detached ArrayBuffer.";
+    return abi::createUint8PtrOrError(HermesABIErrorCodeNativeException);
+  }
+  return abi::createUint8PtrOrError(ab->getDataBlock(runtime));
+}
+
+ABI_PREFIX HermesABISizeTOrError
+get_array_buffer_size(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
+  auto ab = toHandle(buf);
+  if (!ab->attached()) {
+    ctx->nativeExceptionMessage = "Cannot get size of detached ArrayBuffer.";
+    return abi::createSizeTOrError(HermesABIErrorCodeNativeException);
+  }
+  return abi::createSizeTOrError(ab->size());
+}
+
+ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_ascii(
+    HermesABIContext *ctx,
+    const char *str,
+    size_t len) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto cr = vm::stringToSymbolID(
+      runtime,
+      vm::StringPrimitive::createNoThrow(runtime, llvh::StringRef(str, len)));
+  if (cr == vm::ExecutionStatus::EXCEPTION)
+    return abi::createPropNameIDOrError(HermesABIErrorCodeJSError);
+  return ctx->createPropNameIDOrError(cr->getHermesValue());
+}
+
+ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_utf8(
+    HermesABIContext *ctx,
+    const uint8_t *utf8,
+    size_t length) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto strRes = vm::StringPrimitive::createEfficient(
+      runtime, llvh::makeArrayRef(utf8, length), /* IgnoreInputErrors */ true);
+  if (strRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createPropNameIDOrError(HermesABIErrorCodeJSError);
+
+  auto cr = vm::stringToSymbolID(
+      runtime, vm::createPseudoHandle(strRes->getString()));
+  if (cr == vm::ExecutionStatus::EXCEPTION)
+    return abi::createPropNameIDOrError(HermesABIErrorCodeJSError);
+  return ctx->createPropNameIDOrError(cr->getHermesValue());
+}
+
+ABI_PREFIX HermesABIPropNameIDOrError
+create_prop_name_id_from_string(HermesABIContext *ctx, HermesABIString str) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto cr =
+      vm::stringToSymbolID(runtime, vm::createPseudoHandle(*toHandle(str)));
+  if (cr == vm::ExecutionStatus::EXCEPTION)
+    return abi::createPropNameIDOrError(HermesABIErrorCodeJSError);
+  return ctx->createPropNameIDOrError(cr->getHermesValue());
+}
+
+ABI_PREFIX HermesABIPropNameIDOrError
+create_prop_name_id_from_symbol(HermesABIContext *ctx, HermesABISymbol sym) {
+  return ctx->createPropNameIDOrError(toHandle(sym).getHermesValue());
+}
+
+ABI_PREFIX bool prop_name_id_equals(
+    HermesABIContext *,
+    HermesABIPropNameID a,
+    HermesABIPropNameID b) {
+  return *toHandle(a) == *toHandle(b);
+}
+
+ABI_PREFIX bool object_is_array(HermesABIContext *, HermesABIObject object) {
+  return vm::vmisa<vm::JSArray>(*toHandle(object));
+}
+ABI_PREFIX bool object_is_array_buffer(
+    HermesABIContext *,
+    HermesABIObject object) {
+  return vm::vmisa<vm::JSArrayBuffer>(*toHandle(object));
+}
+ABI_PREFIX bool object_is_function(HermesABIContext *, HermesABIObject object) {
+  return vm::vmisa<vm::Callable>(*toHandle(object));
+}
+ABI_PREFIX bool object_is_host_object(
+    HermesABIContext *,
+    HermesABIObject object) {
+  return vm::vmisa<vm::HostObject>(*toHandle(object));
+}
+ABI_PREFIX bool function_is_host_function(
+    HermesABIContext *,
+    HermesABIFunction fn) {
+  return vm::vmisa<vm::FinalizableNativeFunction>(*toHandle(fn));
+}
+
+ABI_PREFIX HermesABIValueOrError call(
+    HermesABIContext *ctx,
+    HermesABIFunction func,
+    const HermesABIValue *jsThis,
+    const HermesABIValue *args,
+    size_t count) {
+  if (count > std::numeric_limits<uint32_t>::max()) {
+    ctx->nativeExceptionMessage = "Too many arguments to call";
+    return abi::createValueOrError(HermesABIErrorCodeNativeException);
+  }
+
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  vm::Handle<vm::Callable> funcHandle = toHandle(func);
+
+  vm::ScopedNativeCallFrame newFrame{
+      runtime,
+      static_cast<uint32_t>(count),
+      funcHandle.getHermesValue(),
+      vm::HermesValue::encodeUndefinedValue(),
+      toHermesValue(*jsThis)};
+  if (LLVM_UNLIKELY(newFrame.overflowed())) {
+    (void)runtime.raiseStackOverflow(
+        ::hermes::vm::Runtime::StackOverflowKind::NativeStack);
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+  }
+
+  for (uint32_t i = 0; i != count; ++i)
+    newFrame->getArgRef(i) = toHermesValue(args[i]);
+
+  auto callRes = vm::Callable::call(funcHandle, runtime);
+  if (callRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+
+  return ctx->createValueOrError(callRes->get());
+}
+
+ABI_PREFIX HermesABIValueOrError call_as_constructor(
+    HermesABIContext *ctx,
+    HermesABIFunction fn,
+    const HermesABIValue *args,
+    size_t count) {
+  if (count > std::numeric_limits<uint32_t>::max()) {
+    ctx->nativeExceptionMessage = "Too many arguments to call";
+    return abi::createValueOrError(HermesABIErrorCodeNativeException);
+  }
+
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  vm::Handle<vm::Callable> funcHandle = toHandle(fn);
+
+  auto thisRes = vm::Callable::createThisForConstruct_RJS(funcHandle, runtime);
+  // Save the this param to the constructor call in case the function does not
+  // return an object.
+  auto objHandle = runtime.makeHandle<vm::JSObject>(std::move(*thisRes));
+
+  vm::ScopedNativeCallFrame newFrame{
+      runtime,
+      static_cast<uint32_t>(count),
+      funcHandle.getHermesValue(),
+      funcHandle.getHermesValue(),
+      objHandle.getHermesValue()};
+  if (LLVM_UNLIKELY(newFrame.overflowed())) {
+    (void)runtime.raiseStackOverflow(
+        ::hermes::vm::Runtime::StackOverflowKind::NativeStack);
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+  }
+  for (uint32_t i = 0; i != count; ++i)
+    newFrame->getArgRef(i) = toHermesValue(args[i]);
+
+  // The last parameter indicates that this call should construct an object.
+  auto callRes = vm::Callable::call(funcHandle, runtime);
+  if (callRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+
+  // If the result is not an object, return the this parameter.
+  auto res = callRes->get();
+  return ctx->createValueOrError(
+      res.isObject() ? res : objHandle.getHermesValue());
+}
+
+namespace {
+class HostFunctionWrapper {
+  HermesABIContext *ctx_;
+  HermesABIHostFunction *func_;
+
+ public:
+  HostFunctionWrapper(HermesABIContext *ctx, HermesABIHostFunction *func)
+      : ctx_(ctx), func_(func) {}
+
+  ~HostFunctionWrapper() {
+    func_->vtable->release(func_);
+  }
+
+  HermesABIHostFunction *getFunc() {
+    return func_;
+  }
+
+  static vm::CallResult<vm::HermesValue>
+  call(void *hfCtx, vm::Runtime &runtime, vm::NativeArgs hvArgs) {
+    auto *self = static_cast<HostFunctionWrapper *>(hfCtx);
+    HermesABIContext *ctx = self->ctx_;
+    assert(&runtime == ctx->rt.get());
+
+    llvh::SmallVector<HermesABIValue, 8> apiArgs;
+    for (vm::HermesValue hv : hvArgs)
+      apiArgs.push_back(ctx->createValue(hv));
+
+    const HermesABIValue *args = apiArgs.empty() ? nullptr : &apiArgs.front();
+    HermesABIValue thisArg = ctx->createValue(hvArgs.getThisArg());
+
+    auto retOrError = (self->func_->vtable->call)(
+        self->func_, ctx, &thisArg, args, apiArgs.size());
+
+    for (const auto &arg : apiArgs)
+      abi::releaseValue(arg);
+    abi::releaseValue(thisArg);
+
+    // Error values do not need to be "released" so we can return early.
+    if (abi::isError(retOrError))
+      return ctx->raiseError(abi::getError(retOrError));
+
+    auto ret = abi::getValue(retOrError);
+    auto retHV = toHermesValue(ret);
+    abi::releaseValue(ret);
+    return retHV;
+  }
+  static void release(void *data) {
+    delete static_cast<HostFunctionWrapper *>(data);
+  }
+};
+} // namespace
+
+ABI_PREFIX HermesABIFunctionOrError create_function_from_host_function(
+    HermesABIContext *ctx,
+    HermesABIPropNameID name,
+    unsigned int paramCount,
+    HermesABIHostFunction *func) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto *hfw = new HostFunctionWrapper(ctx, func);
+  auto funcRes = vm::FinalizableNativeFunction::createWithoutPrototype(
+      runtime,
+      hfw,
+      HostFunctionWrapper::call,
+      HostFunctionWrapper::release,
+      *toHandle(name),
+      paramCount);
+  assert(
+      funcRes != vm::ExecutionStatus::EXCEPTION &&
+      "Failed to create HostFunction");
+  return ctx->createFunctionOrError(*funcRes);
+}
+
+ABI_PREFIX HermesABIHostFunction *get_host_function(
+    HermesABIContext *,
+    HermesABIFunction fn) {
+  auto h = vm::Handle<vm::FinalizableNativeFunction>::vmcast(toHandle(fn));
+  return static_cast<HostFunctionWrapper *>(h->getContext())->getFunc();
+}
+
+namespace {
+class HostObjectWrapper : public vm::HostObjectProxy {
+  HermesABIContext *ctx_;
+  HermesABIHostObject *ho_;
+
+ public:
+  HostObjectWrapper(HermesABIContext *ctx, HermesABIHostObject *ho)
+      : ctx_(ctx), ho_(ho) {}
+
+  // This is called when the object is finalized.
+  ~HostObjectWrapper() {
+    ho_->vtable->release(ho_);
+  }
+
+  HermesABIHostObject *getHostObject() {
+    return ho_;
+  }
+
+  // This is called to fetch a property value by name.
+  vm::CallResult<vm::HermesValue> get(vm::SymbolID sym) override {
+    HermesABIPropNameID name =
+        ctx_->createPropNameID(vm::HermesValue::encodeSymbolValue(sym));
+    auto retOrErr = ho_->vtable->get(ho_, ctx_, name);
+    abi::releasePointer(name.pointer);
+
+    if (abi::isError(retOrErr))
+      return ctx_->raiseError(abi::getError(retOrErr));
+
+    auto ret = abi::getValue(retOrErr);
+    auto retHV = toHermesValue(ret);
+    abi::releaseValue(ret);
+    return retHV;
+  }
+
+  // This is called to set a property value by name.  It will return
+  // \c ExecutionStatus, and set the runtime's thrown value as appropriate.
+  vm::CallResult<bool> set(vm::SymbolID sym, vm::HermesValue value) override {
+    HermesABIPropNameID name =
+        ctx_->createPropNameID(vm::HermesValue::encodeSymbolValue(sym));
+    auto abiVal = ctx_->createValue(value);
+    auto ret = ho_->vtable->set(ho_, ctx_, name, &abiVal);
+    abi::releasePointer(name.pointer);
+    abi::releaseValue(abiVal);
+    if (abi::isError(ret))
+      return ctx_->raiseError(abi::getError(ret));
+    return true;
+  }
+
+  // This is called to query names of properties.  In case of failure it will
+  // return \c ExecutionStatus::EXCEPTION, and set the runtime's thrown Value
+  // as appropriate.
+  vm::CallResult<vm::Handle<vm::JSArray>> getHostPropertyNames() override {
+    auto ret = ho_->vtable->get_property_names(ho_, ctx_);
+    if (abi::isError(ret))
+      return ctx_->raiseError(abi::getError(ret));
+    auto *abiNames = abi::getPropNameIDListPtr(ret);
+    const HermesABIPropNameID *names = abiNames->props;
+    size_t size = abiNames->size;
+    auto &runtime = *ctx_->rt;
+    auto arrayRes = vm::JSArray::create(runtime, size, size);
+    if (arrayRes == vm::ExecutionStatus::EXCEPTION) {
+      abiNames->vtable->release(abiNames);
+      return vm::ExecutionStatus::EXCEPTION;
+    }
+    vm::Handle<vm::JSArray> arrayHandle = *arrayRes;
+    vm::JSArray::setStorageEndIndex(arrayHandle, runtime, size);
+    for (size_t i = 0; i < size; ++i) {
+      auto shv = vm::SmallHermesValue::encodeSymbolValue(*toHandle(names[i]));
+      vm::JSArray::unsafeSetExistingElementAt(*arrayHandle, runtime, i, shv);
+    }
+    abiNames->vtable->release(abiNames);
+    return arrayHandle;
+  }
+};
+} // namespace
+
+ABI_PREFIX HermesABIObjectOrError
+create_object_from_host_object(HermesABIContext *ctx, HermesABIHostObject *ho) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto objRes = vm::HostObject::createWithoutPrototype(
+      runtime, std::make_unique<HostObjectWrapper>(ctx, ho));
+  assert(
+      objRes != vm::ExecutionStatus::EXCEPTION &&
+      "Failed to create HostObject");
+  return ctx->createObjectOrError(*objRes);
+}
+
+ABI_PREFIX HermesABIHostObject *get_host_object(
+    HermesABIContext *,
+    HermesABIObject obj) {
+  auto h = vm::Handle<vm::HostObject>::vmcast(toHandle(obj));
+  return static_cast<HostObjectWrapper *>(h->getProxy())->getHostObject();
+}
+
+ABI_PREFIX bool has_native_state(HermesABIContext *ctx, HermesABIObject obj) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto h = toHandle(obj);
+  if (h->isProxyObject() || h->isHostObject()) {
+    return false;
+  }
+  vm::NamedPropertyDescriptor desc;
+  return vm::JSObject::getOwnNamedDescriptor(
+      h,
+      runtime,
+      vm::Predefined::getSymbolID(vm::Predefined::InternalPropertyNativeState),
+      desc);
+}
+ABI_PREFIX HermesABINativeState *get_native_state(
+    HermesABIContext *ctx,
+    HermesABIObject obj) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto h = toHandle(obj);
+  vm::NamedPropertyDescriptor desc;
+  bool exists = vm::JSObject::getOwnNamedDescriptor(
+      h,
+      runtime,
+      vm::Predefined::getSymbolID(vm::Predefined::InternalPropertyNativeState),
+      desc);
+  (void)exists;
+  assert(exists && "Object does not have native state");
+  // Raw pointers below.
+  vm::NoAllocScope scope(runtime);
+  vm::NativeState *ns = vm::vmcast<vm::NativeState>(
+      vm::JSObject::getNamedSlotValueUnsafe(*h, runtime, desc)
+          .getObject(runtime));
+  return static_cast<HermesABINativeState *>(ns->context());
+}
+
+ABI_PREFIX HermesABIVoidOrError set_native_state(
+    HermesABIContext *ctx,
+    HermesABIObject obj,
+    HermesABINativeState *abiState) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+
+  auto finalize = [](void *state) {
+    auto *self = static_cast<HermesABINativeState *>(state);
+    self->vtable->release(self);
+  };
+  // Note that creating the vm::NativeState here takes ownership of abiState, so
+  // if the below steps fail, abiState will simply be freed when the
+  // vm::NativeState is garbage collected.
+  auto ns =
+      runtime.makeHandle(vm::NativeState::create(runtime, abiState, finalize));
+
+  auto h = toHandle(obj);
+  if (h->isProxyObject()) {
+    ctx->nativeExceptionMessage = "Native state is unsupported on Proxy";
+    return abi::createVoidOrError(HermesABIErrorCodeNativeException);
+  } else if (h->isHostObject()) {
+    ctx->nativeExceptionMessage = "Native state is unsupported on HostObject";
+    return abi::createVoidOrError(HermesABIErrorCodeNativeException);
+  }
+
+  auto res = vm::JSObject::defineOwnProperty(
+      h,
+      runtime,
+      vm::Predefined::getSymbolID(vm::Predefined::InternalPropertyNativeState),
+      vm::DefinePropertyFlags::getDefaultNewPropertyFlags(),
+      ns);
+  if (res == vm::ExecutionStatus::EXCEPTION) {
+    return abi::createVoidOrError(HermesABIErrorCodeJSError);
+  }
+  if (!*res) {
+    ctx->nativeExceptionMessage = "Failed to set native state.";
+    return abi::createVoidOrError(HermesABIErrorCodeNativeException);
+  }
+  return abi::createVoidOrError();
+}
+
+ABI_PREFIX HermesABIWeakObjectOrError
+create_weak_object(HermesABIContext *ctx, HermesABIObject obj) {
+  return ctx->createWeakObjectOrError(toHandle(obj).getHermesValue());
+}
+ABI_PREFIX HermesABIValue
+lock_weak_object(HermesABIContext *ctx, HermesABIWeakObject obj) {
+  auto &runtime = *ctx->rt;
+  const auto &wr =
+      static_cast<ManagedValue<vm::WeakRoot<vm::JSObject>> *>(obj.pointer)
+          ->value();
+  if (const auto ptr = wr.get(runtime, runtime.getHeap()))
+    return ctx->createValue(vm::HermesValue::encodeObjectValue(ptr));
+  return abi::createUndefinedValue();
+}
+
+ABI_PREFIX void get_utf8_from_string(
+    HermesABIContext *ctx,
+    HermesABIString str,
+    HermesABIByteBuffer *buf) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto view = vm::StringPrimitive::createStringView(runtime, toHandle(str));
+  std::string convertBuf;
+  llvh::StringRef res;
+  if (view.isASCII()) {
+    res = {view.castToCharPtr(), view.length()};
+  } else {
+    ::hermes::convertUTF16ToUTF8WithReplacements(
+        convertBuf, {view.castToChar16Ptr(), view.length()});
+    res = convertBuf;
+  }
+  if (buf->available < res.size())
+    buf->vtable->grow_by(buf, res.size() - buf->available);
+  memcpy(buf->data, res.data(), res.size());
+  buf->available -= res.size();
+}
+
+ABI_PREFIX void get_utf8_from_prop_name_id(
+    HermesABIContext *ctx,
+    HermesABIPropNameID name,
+    HermesABIByteBuffer *buf) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto view =
+      runtime.getIdentifierTable().getStringView(runtime, *toHandle(name));
+  std::string convertBuf;
+  llvh::StringRef res;
+  if (view.isASCII()) {
+    res = {view.castToCharPtr(), view.length()};
+  } else {
+    ::hermes::convertUTF16ToUTF8WithReplacements(
+        convertBuf, {view.castToChar16Ptr(), view.length()});
+    res = convertBuf;
+  }
+  if (buf->available < res.size())
+    buf->vtable->grow_by(buf, res.size() - buf->available);
+  memcpy(buf->data, res.data(), res.size());
+  buf->available -= res.size();
+}
+
+ABI_PREFIX void get_utf8_from_symbol(
+    HermesABIContext *ctx,
+    HermesABISymbol name,
+    HermesABIByteBuffer *buf) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto view =
+      runtime.getIdentifierTable().getStringView(runtime, *toHandle(name));
+  auto writeToBuf = [buf](llvh::StringRef res) {
+    llvh::StringRef prefix{"Symbol("};
+    auto *cur = buf->data;
+    // Total bytes needed are the size of the string, plus the prefix, plus the
+    // closing parenthesis.
+    size_t bytesNeeded = res.size() + prefix.size() + 1;
+    if (buf->available < bytesNeeded)
+      buf->vtable->grow_by(buf, bytesNeeded - buf->available);
+    buf->available -= bytesNeeded;
+
+    memcpy(cur, prefix.data(), prefix.size());
+    cur += prefix.size();
+    memcpy(cur, res.data(), res.size());
+    cur += res.size();
+    *cur = ')';
+  };
+  if (view.isASCII()) {
+    writeToBuf({view.castToCharPtr(), view.length()});
+    return;
+  }
+
+  // TODO: Write directly to the output buffer instead of copying.
+  std::string ret;
+  ::hermes::convertUTF16ToUTF8WithReplacements(
+      ret, {view.castToChar16Ptr(), view.length()});
+  writeToBuf(ret);
+}
+
+ABI_PREFIX HermesABIBoolOrError
+instance_of(HermesABIContext *ctx, HermesABIObject o, HermesABIFunction f) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto result = vm::instanceOfOperator_RJS(runtime, toHandle(o), toHandle(f));
+  if (result == vm::ExecutionStatus::EXCEPTION)
+    return abi::createBoolOrError(HermesABIErrorCodeJSError);
+  return abi::createBoolOrError(*result);
+}
+
+ABI_PREFIX bool strict_equals_symbol(
+    HermesABIContext *ctx,
+    HermesABISymbol a,
+    HermesABISymbol b) {
+  return toHandle(a) == toHandle(b);
+}
+ABI_PREFIX bool strict_equals_bigint(
+    HermesABIContext *ctx,
+    HermesABIBigInt a,
+    HermesABIBigInt b) {
+  return toHandle(a)->compare(*toHandle(b)) == 0;
+}
+ABI_PREFIX bool strict_equals_string(
+    HermesABIContext *ctx,
+    HermesABIString a,
+    HermesABIString b) {
+  return toHandle(a)->equals(*toHandle(b));
+}
+ABI_PREFIX bool strict_equals_object(
+    HermesABIContext *ctx,
+    HermesABIObject a,
+    HermesABIObject b) {
+  return toHandle(a) == toHandle(b);
+}
+
+ABI_PREFIX HermesABIBoolOrError drain_microtasks(HermesABIContext *ctx, int) {
+  auto &runtime = *ctx->rt;
+  if (runtime.hasMicrotaskQueue()) {
+    auto drainRes = runtime.drainJobs();
+    if (drainRes == vm::ExecutionStatus::EXCEPTION)
+      return abi::createBoolOrError(HermesABIErrorCodeJSError);
+  }
+  runtime.clearKeptObjects();
+
+  // drainJobs currently drains the entire queue, unless there is an exception,
+  // so always return true.
+  // TODO(T89426441): Support maxMicrotaskHint.
+  return abi::createBoolOrError(true);
+}
+
+ABI_PREFIX HermesABIBigIntOrError
+create_bigint_from_int64(HermesABIContext *ctx, int64_t value) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  vm::CallResult<vm::HermesValue> res =
+      vm::BigIntPrimitive::fromSigned(runtime, value);
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createBigIntOrError(HermesABIErrorCodeJSError);
+  return ctx->createBigIntOrError(*res);
+}
+ABI_PREFIX HermesABIBigIntOrError
+create_bigint_from_uint64(HermesABIContext *ctx, uint64_t value) {
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  auto res = vm::BigIntPrimitive::fromUnsigned(runtime, value);
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createBigIntOrError(HermesABIErrorCodeJSError);
+  return ctx->createBigIntOrError(*res);
+}
+ABI_PREFIX bool bigint_is_int64(HermesABIContext *, HermesABIBigInt bigint) {
+  return toHandle(bigint)->isTruncationToSingleDigitLossless(
+      /* signedTruncation */ true);
+}
+ABI_PREFIX bool bigint_is_uint64(HermesABIContext *, HermesABIBigInt bigint) {
+  return toHandle(bigint)->isTruncationToSingleDigitLossless(
+      /* signedTruncation */ false);
+}
+ABI_PREFIX uint64_t
+bigint_truncate_to_uint64(HermesABIContext *, HermesABIBigInt bigint) {
+  auto digit = toHandle(bigint)->truncateToSingleDigit();
+  static_assert(
+      sizeof(digit) == sizeof(uint64_t),
+      "BigInt digit is no longer sizeof(uint64_t) bytes.");
+  return digit;
+}
+ABI_PREFIX HermesABIStringOrError bigint_to_string(
+    HermesABIContext *ctx,
+    HermesABIBigInt bigint,
+    unsigned radix) {
+  auto &runtime = *ctx->rt;
+  if (radix < 2 || radix > 36) {
+    ctx->nativeExceptionMessage = "Radix must be between 2 and 36";
+    return abi::createStringOrError(HermesABIErrorCodeNativeException);
+  }
+
+  vm::GCScope gcScope(runtime);
+  auto toStringRes = vm::BigIntPrimitive::toString(
+      runtime, vm::createPseudoHandle(*toHandle(bigint)), radix);
+
+  if (toStringRes == vm::ExecutionStatus::EXCEPTION)
+    return abi::createStringOrError(HermesABIErrorCodeJSError);
+  return ctx->createStringOrError(*toStringRes);
+}
+
 extern "C" {
 #ifdef _MSC_VER
 __declspec(dllexport)
@@ -452,6 +1337,60 @@ __attribute__((visibility("default")))
       is_hermes_bytecode,
       evaluate_javascript_source,
       evaluate_hermes_bytecode,
+      get_global_object,
+      create_string_from_ascii,
+      create_string_from_utf8,
+      create_object,
+      has_object_property_from_string,
+      has_object_property_from_prop_name_id,
+      get_object_property_from_string,
+      get_object_property_from_prop_name_id,
+      set_object_property_from_string,
+      set_object_property_from_prop_name_id,
+      get_object_property_names,
+      create_array,
+      get_array_length,
+      get_array_value_at_index,
+      set_array_value_at_index,
+      create_array_buffer_from_external_data,
+      get_array_buffer_data,
+      get_array_buffer_size,
+      create_prop_name_id_from_ascii,
+      create_prop_name_id_from_utf8,
+      create_prop_name_id_from_string,
+      create_prop_name_id_from_symbol,
+      prop_name_id_equals,
+      object_is_array,
+      object_is_array_buffer,
+      object_is_function,
+      object_is_host_object,
+      function_is_host_function,
+      call,
+      call_as_constructor,
+      create_function_from_host_function,
+      get_host_function,
+      create_object_from_host_object,
+      get_host_object,
+      has_native_state,
+      get_native_state,
+      set_native_state,
+      create_weak_object,
+      lock_weak_object,
+      get_utf8_from_string,
+      get_utf8_from_prop_name_id,
+      get_utf8_from_symbol,
+      instance_of,
+      strict_equals_symbol,
+      strict_equals_bigint,
+      strict_equals_string,
+      strict_equals_object,
+      drain_microtasks,
+      create_bigint_from_int64,
+      create_bigint_from_uint64,
+      bigint_is_int64,
+      bigint_is_uint64,
+      bigint_truncate_to_uint64,
+      bigint_to_string,
   };
   return &abiVtable;
 }
