@@ -23,6 +23,18 @@ using namespace facebook::hermes;
 
 namespace {
 
+class BufferWrapper : public hermes::Buffer {
+  HermesABIBuffer *buffer_;
+
+ public:
+  explicit BufferWrapper(HermesABIBuffer *buffer)
+      : hermes::Buffer(buffer->data, buffer->size), buffer_(buffer) {}
+
+  ~BufferWrapper() override {
+    buffer_->vtable->release(buffer_);
+  }
+};
+
 /// A ManagedChunkedList element that indicates whether it's occupied based on
 /// a refcount.
 template <typename T>
@@ -350,6 +362,73 @@ clone_big_int(HermesABIContext *ctx, HermesABIBigInt bi) {
   return abi::createBigInt(bi.pointer);
 }
 
+ABI_PREFIX bool is_hermes_bytecode(const uint8_t *data, size_t len) {
+  return hbc::BCProviderFromBuffer::isBytecodeStream(
+      llvh::ArrayRef<uint8_t>(data, len));
+}
+
+ABI_PREFIX HermesABIValueOrError evaluate_javascript_source(
+    HermesABIContext *ctx,
+    HermesABIBuffer *source,
+    const char *sourceURL,
+    size_t sourceURLLength) {
+  llvh::StringRef sourceURLRef(sourceURL, sourceURLLength);
+  std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
+#if defined(HERMESVM_LEAN)
+  bcErr.second = "source compilation not supported";
+#else
+  bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
+      std::make_unique<BufferWrapper>(source),
+      sourceURLRef,
+      /* sourceMap */ {},
+      /* compileFlags */ {});
+#endif
+  if (!bcErr.first) {
+    ctx->nativeExceptionMessage = std::move(bcErr.second);
+    return abi::createValueOrError(HermesABIErrorCodeNativeException);
+  }
+  auto &runtime = *ctx->rt;
+  vm::RuntimeModuleFlags runtimeFlags{};
+  vm::GCScope gcScope(runtime);
+  auto res = runtime.runBytecode(
+      std::move(bcErr.first),
+      runtimeFlags,
+      sourceURLRef,
+      vm::Runtime::makeNullHandle<vm::Environment>());
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+
+  return ctx->createValueOrError(*res);
+}
+
+ABI_PREFIX HermesABIValueOrError evaluate_hermes_bytecode(
+    HermesABIContext *ctx,
+    HermesABIBuffer *bytecode,
+    const char *sourceURL,
+    size_t sourceURLLength) {
+  assert(is_hermes_bytecode(bytecode->data, bytecode->size));
+  auto bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
+      std::make_unique<BufferWrapper>(bytecode));
+  if (!bcErr.first) {
+    ctx->nativeExceptionMessage = std::move(bcErr.second);
+    return abi::createValueOrError(HermesABIErrorCodeNativeException);
+  }
+
+  auto &runtime = *ctx->rt;
+  vm::GCScope gcScope(runtime);
+  llvh::StringRef sourceURLRef(sourceURL, sourceURLLength);
+  vm::RuntimeModuleFlags runtimeFlags{};
+  auto res = runtime.runBytecode(
+      std::move(bcErr.first),
+      runtimeFlags,
+      sourceURLRef,
+      vm::Runtime::makeNullHandle<vm::Environment>());
+  if (res == vm::ExecutionStatus::EXCEPTION)
+    return abi::createValueOrError(HermesABIErrorCodeJSError);
+
+  return ctx->createValueOrError(*res);
+}
+
 extern "C" {
 #ifdef _MSC_VER
 __declspec(dllexport)
@@ -370,6 +449,9 @@ __attribute__((visibility("default")))
       clone_symbol,
       clone_object,
       clone_big_int,
+      is_hermes_bytecode,
+      evaluate_javascript_source,
+      evaluate_hermes_bytecode,
   };
   return &abiVtable;
 }

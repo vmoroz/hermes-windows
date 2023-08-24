@@ -18,6 +18,26 @@ using namespace facebook::jsi;
 using namespace facebook::hermes;
 
 namespace {
+class BufferWrapper : public HermesABIBuffer {
+  std::shared_ptr<const Buffer> buf_;
+
+  static size_t size(const HermesABIBuffer *buf) {
+    return static_cast<const BufferWrapper *>(buf)->buf_->size();
+  }
+  static const uint8_t *data(const HermesABIBuffer *buf) {
+    return static_cast<const BufferWrapper *>(buf)->buf_->data();
+  }
+  static void release(HermesABIBuffer *buf) {
+    delete static_cast<const BufferWrapper *>(buf);
+  }
+  static constexpr HermesABIBufferVTable vt{
+      release,
+  };
+
+ public:
+  explicit BufferWrapper(std::shared_ptr<const Buffer> buf)
+      : HermesABIBuffer{&vt, buf->data(), buf->size()}, buf_(std::move(buf)) {}
+};
 
 /// Helper class to save and restore a value on exiting a scope.
 template <typename T>
@@ -336,7 +356,13 @@ class HermesABIRuntime : public Runtime {
   Value evaluateJavaScript(
       const std::shared_ptr<const Buffer> &buffer,
       const std::string &sourceURL) override {
-    throwUnimplemented();
+    auto *bw = new BufferWrapper(buffer);
+    if (vtable_->is_hermes_bytecode(buffer->data(), buffer->size()))
+      return intoJSIValue(vtable_->evaluate_hermes_bytecode(
+          ctx_, bw, sourceURL.c_str(), sourceURL.size()));
+
+    return intoJSIValue(vtable_->evaluate_javascript_source(
+        ctx_, bw, sourceURL.c_str(), sourceURL.size()));
   }
 
   std::shared_ptr<const PreparedJavaScript> prepareJavaScript(

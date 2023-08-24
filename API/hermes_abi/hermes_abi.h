@@ -14,6 +14,7 @@
 struct HermesABIRuntimeConfig;
 struct HermesABIContext;
 struct HermesABIManagedPointer;
+struct HermesABIBuffer;
 
 /// Define the structure for references to pointer types in JS (e.g. string,
 /// object, BigInt).
@@ -112,6 +113,17 @@ struct HermesABIByteRef {
   size_t length;
 };
 
+/// Define the structure for buffers containing JS source or bytecode. This is
+/// designed to mirror the functionality of jsi::Buffer.
+struct HermesABIBufferVTable {
+  void (*release)(HermesABIBuffer *);
+};
+struct HermesABIBuffer {
+  const HermesABIBufferVTable *vtable;
+  const uint8_t *data;
+  size_t size;
+};
+
 struct HermesABIVTable {
   /// Create a new instance of a Hermes Runtime, and return a pointer to its
   /// associated context. The context must be released with
@@ -144,6 +156,24 @@ struct HermesABIVTable {
   HermesABISymbol (*clone_symbol)(HermesABIContext *, HermesABISymbol);
   HermesABIObject (*clone_object)(HermesABIContext *, HermesABIObject);
   HermesABIBigInt (*clone_big_int)(HermesABIContext *, HermesABIBigInt);
+
+  /// Check if the given buffer contains Hermes bytecode.
+  bool (*is_hermes_bytecode)(const uint8_t *, size_t);
+
+  /// Evaluate the given JavaScript source or Hermes bytecode with an associated
+  /// source URL in the given context, and return the result. The caller must
+  /// ensure that bytecode passed to \c evaluate_hermes_bytecode is valid
+  /// bytecode.
+  HermesABIValueOrError (*evaluate_javascript_source)(
+      HermesABIContext *,
+      HermesABIBuffer *,
+      const char *,
+      size_t);
+  HermesABIValueOrError (*evaluate_hermes_bytecode)(
+      HermesABIContext *,
+      HermesABIBuffer *,
+      const char *,
+      size_t);
 };
 
 #endif
