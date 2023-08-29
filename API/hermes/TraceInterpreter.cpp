@@ -1147,7 +1147,7 @@ Value TraceInterpreter::execFunction(
                 call,
                 globalRecordNum,
                 locals);
-            LLVM_FALLTHROUGH;
+            [[fallthrough]];
           }
           case RecordType::Marker: {
             const auto &mr =

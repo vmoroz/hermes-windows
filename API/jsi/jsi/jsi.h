@@ -530,7 +530,7 @@ class JSI_EXPORT PropNameID : public Pointer {
 
   // Creates a vector of given PropNameIDs.
   template <size_t N>
-  static std::vector<PropNameID> names(PropNameID (&&propertyNames)[N]);
+  static std::vector<PropNameID> names(PropNameID(&&propertyNames)[N]);
 
   /// Copies the data in a PropNameID as utf8 into a C++ string.
   std::string utf8(Runtime& runtime) const {
@@ -980,6 +980,7 @@ class JSI_EXPORT Array : public Object {
  private:
   friend class Object;
   friend class Value;
+  friend class Runtime;
 
   void setValueAtIndexImpl(Runtime& runtime, size_t i, const Value& value)
       JSI_CONST_10 {
@@ -1000,7 +1001,8 @@ class JSI_EXPORT ArrayBuffer : public Object {
       : ArrayBuffer(runtime.createArrayBuffer(std::move(buffer))) {}
 #endif
 
-  /// \return the size of the ArrayBuffer, according to its byteLength property.
+  /// \return the size of the ArrayBuffer storage. This is not affected by
+  /// overriding the byteLength property.
   /// (C++ naming convention)
   size_t size(Runtime& runtime) const {
     return runtime.size(*this);
@@ -1017,6 +1019,7 @@ class JSI_EXPORT ArrayBuffer : public Object {
  private:
   friend class Object;
   friend class Value;
+  friend class Runtime;
 
   ArrayBuffer(Runtime::PointerValue* value) : Object(value) {}
 };
@@ -1125,6 +1128,7 @@ class JSI_EXPORT Function : public Object {
  private:
   friend class Object;
   friend class Value;
+  friend class Runtime;
 
   Function(Runtime::PointerValue* value) : Object(value) {}
 };
@@ -1156,16 +1160,16 @@ class JSI_EXPORT Value {
   }
 
   /// Moves a Symbol, String, or Object rvalue into a new JS value.
-  template <typename T>
-  /* implicit */ Value(T&& other) : Value(kindOf(other)) {
-    static_assert(
-        std::is_base_of<Symbol, T>::value ||
+  template <
+      typename T,
+      typename = std::enable_if_t<
+          std::is_base_of<Symbol, T>::value ||
 #if JSI_VERSION >= 6
-            std::is_base_of<BigInt, T>::value ||
+          std::is_base_of<BigInt, T>::value ||
 #endif
-            std::is_base_of<String, T>::value ||
-            std::is_base_of<Object, T>::value,
-        "Value cannot be implicitly move-constructed from this type");
+          std::is_base_of<String, T>::value ||
+          std::is_base_of<Object, T>::value>>
+  /* implicit */ Value(T&& other) : Value(kindOf(other)) {
     new (&data_.pointer) T(std::move(other));
   }
 
@@ -1464,7 +1468,7 @@ class JSI_EXPORT Scope {
   explicit Scope(Runtime& rt) : rt_(rt), prv_(rt.pushScope()) {}
   ~Scope() {
     rt_.popScope(prv_);
-  };
+  }
 
   Scope(const Scope&) = delete;
   Scope(Scope&&) = delete;
@@ -1486,8 +1490,8 @@ class JSI_EXPORT Scope {
 /// Base class for jsi exceptions
 class JSI_EXPORT JSIException : public std::exception {
  protected:
-  JSIException(){};
-  JSIException(std::string what) : what_(std::move(what)){};
+  JSIException() {}
+  JSIException(std::string what) : what_(std::move(what)) {}
 
  public:
   JSIException(const JSIException&) = default;
@@ -1528,7 +1532,7 @@ class JSI_EXPORT JSError : public JSIException {
   /// Creates a JSError referring to new \c Error instance capturing current
   /// JavaScript stack. The error message property is set to given \c message.
   JSError(Runtime& rt, const char* message)
-      : JSError(rt, std::string(message)){};
+      : JSError(rt, std::string(message)) {}
 
   /// Creates a JSError referring to a JavaScript Object having message and
   /// stack properties set to provided values.

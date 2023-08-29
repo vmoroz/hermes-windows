@@ -39,7 +39,7 @@ workflows:
 apple_defaults: &apple_defaults
   macos:
     xcode: 13.4.1
-  resource_class: macos.x86.medium.gen2
+  resource_class: macos.m1.medium.gen1
   working_directory: ~/hermes
   environment:
     - TERM: dumb
@@ -531,7 +531,7 @@ jobs:
   test-e2e:
     executor:
       name: android/android-machine
-      tag: 2022.04.1
+      tag: 2023.06.1
     working_directory: /home/circleci
     environment:
       REACT_NATIVE_OVERRIDE_HERMES_DIR: /home/circleci/hermes
@@ -543,6 +543,7 @@ jobs:
           name: Setup dependencies
           command: |
             (yes | sdkmanager "cmake;3.22.1" --verbose) || true
+            sudo apt update && sudo apt install -y openjdk-11-jdk
       - checkout:
           path: hermes
       - run:
@@ -588,7 +589,8 @@ jobs:
           post-emulator-launch-assemble-command: ''
           run-tests-working-directory: hermes/android
           run-logcat: true
-          additional-emulator-args: -timezone Europe/Paris
+          additional-emulator-args: -timezone Europe/Paris -partition-size 2048
+          additional-avd-args: "-c 2048M"
           test-command: ./gradlew :intltest:prepareTests && ./gradlew -Pabis=x86 :intltest:connectedAndroidTest
 
   test-macos-test262:

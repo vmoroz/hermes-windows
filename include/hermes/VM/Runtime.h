@@ -777,6 +777,8 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   const bool optimizedEval : 1;
   /// Whether to emit async break check instructions in eval().
   const bool asyncBreakCheckInEval : 1;
+  /// Whether to enable block scoping in eval().
+  const bool enableBlockScopingInEval : 1;
 
 #ifdef HERMESVM_PROFILER_OPCODE
   /// Track the frequency of each opcode in the interpreter.
@@ -1066,6 +1068,10 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
 
   /// Enumerate all public native builtin methods, and invoke the callback on
   /// each method.
+  /// If the properties on the global object which are supposed to contain the
+  /// public native builtin methods no longer are objects, throws TypeError
+  /// instead of calling the callback.
+  /// e.g. if globalThis.Object is not an object, it'll throw.
   ExecutionStatus forEachPublicNativeBuiltin(
       const std::function<ForEachPublicNativeBuiltinCallback> &callback);
 
@@ -1377,6 +1383,12 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// making it optional. If this is accessed when the optional value is cleared
   /// (the invalid state) we assert.
   llvh::Optional<const inst::Inst *> currentIP_{(const inst::Inst *)nullptr};
+
+  /// The number of alive/active NoRJSScopes. If nonzero, then no JS execution
+  /// is allowed
+  uint32_t noRJSLevel_{0};
+
+  friend class NoRJSScope;
 #endif
 
  public:
@@ -1738,6 +1750,7 @@ class NoAllocScope {
   NoAllocScope() = delete;
 };
 using NoHandleScope = NoAllocScope;
+using NoRJSScope = NoAllocScope;
 
 #else
 
@@ -1806,6 +1819,14 @@ class NoAllocScope : public BaseNoScope {
  public:
   explicit NoAllocScope(Runtime &runtime) : NoAllocScope(runtime.getHeap()) {}
   explicit NoAllocScope(GC &gc) : BaseNoScope(&gc.noAllocLevel_) {}
+  using BaseNoScope::BaseNoScope;
+  using BaseNoScope::operator=;
+};
+
+/// RAII class to temporarily disallow reentering JS execution.
+class NoRJSScope : public BaseNoScope {
+ public:
+  explicit NoRJSScope(Runtime &runtime) : BaseNoScope(&runtime.noRJSLevel_) {}
   using BaseNoScope::BaseNoScope;
   using BaseNoScope::operator=;
 };

@@ -109,7 +109,7 @@ export interface Position {
 }
 
 // note: this is only ever present on Program.interpreter, never in the body
-interface InterpreterDirective extends BaseNode {
+export interface InterpreterDirective extends BaseNode {
   type: 'InterpreterDirective';
   value: string;
 }
@@ -174,17 +174,21 @@ export type ESNode =
   | TypeAnnotationType
   | Variance
   | FunctionTypeParam
+  | ComponentTypeParameter
   | InferredPredicate
   | ObjectTypeProperty
   | ObjectTypeCallProperty
   | ObjectTypeIndexer
   | ObjectTypeSpreadProperty
+  | ObjectTypeMappedTypeProperty
   | InterfaceExtends
   | ClassImplements
   | Decorator
   | TypeParameterDeclaration
   | TypeParameter
   | TypeParameterInstantiation
+  | ComponentDeclaration
+  | ComponentParameter
   | EnumDeclaration
   | EnumNumberBody
   | EnumStringBody
@@ -227,10 +231,13 @@ export type Statement =
   | BlockStatement
   | BreakStatement
   | ClassDeclaration
+  | ComponentDeclaration
   | ContinueStatement
   | DebuggerStatement
   | DeclareClass
+  | DeclareComponent
   | DeclareVariable
+  | DeclareEnum
   | DeclareFunction
   | DeclareInterface
   | DeclareModule
@@ -377,6 +384,24 @@ export interface DebuggerStatement extends BaseNode {
   +type: 'DebuggerStatement';
 }
 
+type ComponentParameterAndRestElement = ComponentParameter | RestElement;
+
+export interface ComponentParameter extends BaseNode {
+  +type: 'ComponentParameter';
+  +name: Identifier | StringLiteral;
+  +local: BindingName | AssignmentPattern;
+  +shorthand: boolean;
+}
+
+export interface ComponentDeclaration extends BaseNode {
+  +type: 'ComponentDeclaration';
+  +body: BlockStatement;
+  +id: Identifier;
+  +params: $ReadOnlyArray<ComponentParameterAndRestElement>;
+  +rendersType: null | TypeAnnotation;
+  +typeParameters: null | TypeParameterDeclaration;
+}
+
 export interface FunctionDeclaration extends BaseFunction {
   +type: 'FunctionDeclaration';
   /** It is null when a function declaration is a part of the `export default function` statement */
@@ -519,8 +544,8 @@ export interface DestructuringObjectPropertyWithShorthandStaticName
   +computed: false;
   // shorthand keys *must* be identifiers
   +key: Identifier;
-  // shorthand values *must* be identifiers (that look the same as the key)
-  +value: Identifier;
+  // shorthand values *must* be identifiers or assignments (that look the same as the key)
+  +value: Identifier | AssignmentPattern;
   +shorthand: true;
 }
 export interface DestructuringObjectPropertyWithComputedName
@@ -619,7 +644,6 @@ export type MemberExpression =
   | MemberExpressionWithNonComputedName;
 export interface MemberExpressionWithComputedName extends BaseNode {
   +type: 'MemberExpression';
-  +computed: true;
   +object: Expression | Super;
   +property: Expression;
   +computed: true;
@@ -627,7 +651,6 @@ export interface MemberExpressionWithComputedName extends BaseNode {
 }
 export interface MemberExpressionWithNonComputedName extends BaseNode {
   +type: 'MemberExpression';
-  +computed: false;
   +object: Expression | Super;
   +property: Identifier | PrivateIdentifier;
   +computed: false;
@@ -677,7 +700,7 @@ export type Literal =
 
 export interface BigIntLiteral extends BaseNode {
   +type: 'Literal';
-  +value: null /* | bigint */;
+  +value: bigint;
   +bigint: string;
   +raw: string;
   +literalType: 'bigint';
@@ -1021,7 +1044,10 @@ export interface ImportNamespaceSpecifier extends BaseNode {
   +parent: ImportDeclaration;
 }
 
-export type DefaultDeclaration = FunctionDeclaration | ClassDeclaration;
+export type DefaultDeclaration =
+  | FunctionDeclaration
+  | ClassDeclaration
+  | ComponentDeclaration;
 export type NamedDeclaration =
   | DefaultDeclaration
   | VariableDeclaration
@@ -1041,7 +1067,7 @@ export interface ExportNamedDeclarationWithSpecifiers
   extends ExportNamedDeclarationBase {
   +type: 'ExportNamedDeclaration';
   +declaration: null;
-  +source: null;
+  +source?: StringLiteral | null;
   +specifiers: $ReadOnlyArray<ExportSpecifier>;
 }
 export interface ExportNamedDeclarationWithDeclaration
@@ -1103,12 +1129,21 @@ export type TypeAnnotationType =
   | ExistsTypeAnnotation
   | GenericTypeAnnotation
   | QualifiedTypeIdentifier
+  | QualifiedTypeofIdentifier
   | TypeofTypeAnnotation
+  | KeyofTypeAnnotation
   | TupleTypeAnnotation
+  | TupleTypeSpreadElement
+  | TupleTypeLabeledElement
+  | InferTypeAnnotation
   | InterfaceTypeAnnotation
   | UnionTypeAnnotation
   | IntersectionTypeAnnotation
+  | ConditionalTypeAnnotation
+  | TypeOperator
+  | TypePredicate
   | FunctionTypeAnnotation
+  | ComponentTypeAnnotation
   | ObjectTypeAnnotation
   | IndexedAccessType
   | OptionalIndexedAccessType;
@@ -1189,7 +1224,7 @@ export interface NumberLiteralTypeAnnotation extends BaseNode {
 export interface BigIntLiteralTypeAnnotation extends BaseNode {
   +type: 'BigIntLiteralTypeAnnotation';
   +bigint: string;
-  +value: null /* | bigint */;
+  +value: bigint;
   +raw: string;
 }
 export interface BooleanLiteralTypeAnnotation extends BaseNode {
@@ -1218,13 +1253,39 @@ export interface QualifiedTypeIdentifier extends BaseNode {
   +id: Identifier;
   +qualification: QualifiedTypeIdentifier | Identifier;
 }
+export interface QualifiedTypeofIdentifier extends BaseNode {
+  +type: 'QualifiedTypeofIdentifier';
+  +id: Identifier;
+  +qualification: QualifiedTypeofIdentifier | Identifier;
+}
 export interface TypeofTypeAnnotation extends BaseNode {
   +type: 'TypeofTypeAnnotation';
+  +argument: QualifiedTypeofIdentifier | Identifier;
+}
+export interface KeyofTypeAnnotation extends BaseNode {
+  +type: 'KeyofTypeAnnotation';
   +argument: TypeAnnotationType;
 }
 export interface TupleTypeAnnotation extends BaseNode {
   +type: 'TupleTypeAnnotation';
   +types: $ReadOnlyArray<TypeAnnotationType>;
+}
+export interface TupleTypeSpreadElement extends BaseNode {
+  +type: 'TupleTypeSpreadElement';
+  +label?: Identifier | null;
+  +typeAnnotation: TypeAnnotationType;
+}
+export interface TupleTypeLabeledElement extends BaseNode {
+  +type: 'TupleTypeLabeledElement';
+  +label: Identifier;
+  +elementType: TypeAnnotationType;
+  +optional: boolean;
+  +variance: Variance | null;
+}
+
+export interface InferTypeAnnotation extends BaseNode {
+  +type: 'InferTypeAnnotation';
+  +typeParameter: TypeParameter;
 }
 
 // type T = { [[foo]]: number };
@@ -1252,6 +1313,28 @@ export interface IntersectionTypeAnnotation extends BaseNode {
   +types: $ReadOnlyArray<TypeAnnotationType>;
 }
 
+export interface ConditionalTypeAnnotation extends BaseNode {
+  +type: 'ConditionalTypeAnnotation';
+  +checkType: TypeAnnotationType;
+  +extendsType: TypeAnnotationType;
+  +trueType: TypeAnnotationType;
+  +falseType: TypeAnnotationType;
+}
+
+export interface TypeOperator extends BaseNode {
+  +type: 'TypeOperator';
+  // Supported type operators, currently only "renders".
+  +operator: 'renders';
+  +typeAnnotation: TypeAnnotationType;
+}
+
+export interface TypePredicate extends BaseNode {
+  +type: 'TypePredicate';
+  +parameterName: Identifier;
+  +typeAnnotation: TypeAnnotationType | null;
+  +asserts: boolean;
+}
+
 export interface FunctionTypeAnnotation extends BaseNode {
   +type: 'FunctionTypeAnnotation';
   +params: $ReadOnlyArray<FunctionTypeParam>;
@@ -1268,6 +1351,23 @@ export interface FunctionTypeParam extends BaseNode {
 
   +parent: FunctionTypeAnnotation;
 }
+
+export interface ComponentTypeAnnotation extends BaseNode {
+  +type: 'ComponentTypeAnnotation';
+  +params: $ReadOnlyArray<ComponentTypeParameter>;
+  +rest: null | ComponentTypeParameter;
+  +typeParameters: null | TypeParameterDeclaration;
+  +rendersType: null | TypeAnnotationType;
+}
+export interface ComponentTypeParameter extends BaseNode {
+  +type: 'ComponentTypeParameter';
+  +name: Identifier | StringLiteral | null;
+  +typeAnnotation: TypeAnnotationType;
+  +optional: boolean;
+
+  +parent: ComponentTypeAnnotation | DeclareComponent;
+}
+
 export interface InferredPredicate extends BaseNode {
   +type: 'InferredPredicate';
 
@@ -1276,9 +1376,13 @@ export interface InferredPredicate extends BaseNode {
 
 export interface ObjectTypeAnnotation extends BaseNode {
   +type: 'ObjectTypeAnnotation';
-  +inexact: false;
+  +inexact: boolean;
   +exact: boolean;
-  +properties: $ReadOnlyArray<ObjectTypeProperty | ObjectTypeSpreadProperty>;
+  +properties: $ReadOnlyArray<
+    | ObjectTypeProperty
+    | ObjectTypeSpreadProperty
+    | ObjectTypeMappedTypeProperty,
+  >;
   +indexers: $ReadOnlyArray<ObjectTypeIndexer>;
   +callProperties: $ReadOnlyArray<ObjectTypeCallProperty>;
   +internalSlots: $ReadOnlyArray<ObjectTypeInternalSlot>;
@@ -1348,6 +1452,17 @@ export interface ObjectTypeIndexer extends BaseNode {
 
   +parent: ObjectTypeAnnotation;
 }
+export interface ObjectTypeMappedTypeProperty extends BaseNode {
+  +type: 'ObjectTypeMappedTypeProperty';
+  +keyTparam: TypeParameter;
+  +propType: TypeAnnotationType;
+  +sourceType: TypeAnnotationType;
+  +variance: null | Variance;
+  +optional: null | 'PlusOptional' | 'MinusOptional' | 'Optional';
+
+  +parent: ObjectTypeAnnotation;
+}
+
 export interface ObjectTypeSpreadProperty extends BaseNode {
   +type: 'ObjectTypeSpreadProperty';
   +argument: TypeAnnotationType;
@@ -1419,7 +1534,7 @@ export interface TypeParameter extends BaseNode {
   +bound: null | TypeAnnotation;
   +variance: null | Variance;
   +default: null | TypeAnnotationType;
-
+  +usesExtendsBound: boolean;
   +parent: TypeParameterDeclaration;
 }
 export interface TypeParameterInstantiation extends BaseNode {
@@ -1511,7 +1626,9 @@ export interface EnumDefaultedMember extends BaseNode {
 
 export type DeclaredNode =
   | DeclareClass
+  | DeclareComponent
   | DeclareVariable
+  | DeclareEnum
   | DeclareFunction
   | DeclareModule
   | DeclareInterface
@@ -1532,9 +1649,25 @@ export interface DeclareClass extends BaseNode {
   +mixins: $ReadOnlyArray<InterfaceExtends>;
 }
 
+export interface DeclareComponent extends BaseNode {
+  +type: 'DeclareComponent';
+  +id: Identifier;
+  +params: Array<ComponentTypeParameter>;
+  +rest: null | ComponentTypeParameter;
+  +typeParameters: null | TypeParameterDeclaration;
+  +rendersType: null | TypeAnnotation;
+}
+
 export interface DeclareVariable extends BaseNode {
   +type: 'DeclareVariable';
   +id: Identifier;
+  +kind: 'var' | 'let' | 'const';
+}
+
+export interface DeclareEnum extends BaseNode {
+  +type: 'DeclareEnum';
+  +id: Identifier;
+  +body: EnumNumberBody | EnumStringBody | EnumBooleanBody | EnumSymbolBody;
 }
 
 export interface DeclareFunction extends BaseNode {
@@ -1597,7 +1730,8 @@ export interface DeclareExportDeclarationNamedWithDeclaration
     | DeclareFunction
     | DeclareInterface
     | DeclareOpaqueType
-    | DeclareVariable;
+    | DeclareVariable
+    | DeclareEnum;
   +default: false;
   +source: null;
   // default cannot have specifiers and a declaration
@@ -1726,6 +1860,7 @@ export interface JSXOpeningElement extends BaseNode {
   +selfClosing: boolean;
   +name: JSXTagNameExpression;
   +attributes: $ReadOnlyArray<JSXAttribute | JSXSpreadAttribute>;
+  +typeArguments?: TypeParameterInstantiation | null;
 
   +parent: JSXElement;
 }

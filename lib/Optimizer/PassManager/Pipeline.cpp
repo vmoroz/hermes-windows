@@ -10,8 +10,8 @@
 #include "hermes/Optimizer/PassManager/PassManager.h"
 #include "hermes/Optimizer/Scalar/Auditor.h"
 #include "hermes/Optimizer/Scalar/DCE.h"
+#include "hermes/Optimizer/Scalar/ScopeTransformations.h"
 #include "hermes/Optimizer/Scalar/SimplifyCFG.h"
-#include "hermes/Optimizer/Scalar/StackPromotion.h"
 #include "hermes/Optimizer/Scalar/TypeInference.h"
 
 #include "llvh/Support/Debug.h"
@@ -25,7 +25,7 @@ bool hermes::runCustomOptimizationPasses(
     Module &M,
     const std::vector<std::string> &Opts) {
   LLVM_DEBUG(dbgs() << "Optimizing with custom pipeline...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   // Add the optimization passes.
   for (auto P : Opts) {
@@ -40,9 +40,12 @@ bool hermes::runCustomOptimizationPasses(
 
 void hermes::runFullOptimizationPasses(Module &M) {
   LLVM_DEBUG(dbgs() << "Running -O3 optimizations...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   // Add the optimization passes.
+  if (M.getContext().getCodeGenerationSettings().enableBlockScoping) {
+    PM.addPass<ScopeMerger>();
+  }
 
   // We need to fold constant strings before staticrequire.
   PM.addInstSimplify();
@@ -53,13 +56,14 @@ void hermes::runFullOptimizationPasses(Module &M) {
 
   PM.addTypeInference();
   PM.addSimplifyCFG();
-  PM.addStackPromotion();
+  PM.addSimpleStackPromotion();
   PM.addMem2Reg();
-  PM.addStackPromotion();
+  PM.addSimpleStackPromotion();
   PM.addInlining();
-  PM.addStackPromotion();
+  PM.addSimpleStackPromotion();
   PM.addInstSimplify();
   PM.addDCE();
+  PM.addSimpleStackPromotion();
 
 #ifdef HERMES_RUN_WASM
   if (M.getContext().getUseUnsafeIntrinsics()) {
@@ -71,7 +75,6 @@ void hermes::runFullOptimizationPasses(Module &M) {
   // Run type inference before CSE so that we can better reason about binopt.
   PM.addTypeInference();
   PM.addCSE();
-  PM.addTDZDedup();
   PM.addSimplifyCFG();
 
   PM.addInstSimplify();
@@ -99,7 +102,7 @@ void hermes::runFullOptimizationPasses(Module &M) {
 
 void hermes::runDebugOptimizationPasses(Module &M) {
   LLVM_DEBUG(dbgs() << "Running -Og optimizations...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   PM.addInstSimplify();
   PM.addResolveStaticRequire();

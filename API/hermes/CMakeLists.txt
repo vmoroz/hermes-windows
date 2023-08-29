@@ -3,11 +3,32 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# compileJS uses neither exceptions nor RTTI
+add_hermes_library(compileJS CompileJS.cpp LINK_LIBS hermesPublic)
+
+if(HERMES_ENABLE_DEBUGGER)
+  add_subdirectory(inspector)
+  set(INSPECTOR_API_SOURCES inspector/RuntimeAdapter.cpp inspector/chrome/CDPHandler.cpp)
+  set(INSPECTOR_DEPS hermesInspector_rtti_exception)
+endif()
+
+set(HERMES_ENABLE_EH ON)
+
+# synthTraceParser uses exceptions but not RTTI.
+# TODO(T127739425): Switch it to either use both exceptions and RTTI or neither.
+add_hermes_library(synthTraceParser SynthTraceParser.cpp LINK_LIBS hermesSupport hermesParser synthTrace)
+
+# All remaining targets in this file use both exceptions and RTTI.
+set(HERMES_ENABLE_RTTI ON)
+
+# List the files that define exported functions explicitly, and they can link
+# against the internal functionality they need.
 set(api_sources
   hermes.cpp
   hermes_napi.cpp
   DebuggerAPI.cpp
   MurmurHash.cpp
+  ${INSPECTOR_API_SOURCES}
   )
 
 if (WIN32)
@@ -19,7 +40,7 @@ file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 
 add_hermes_library(hermesapi
         ${api_sources}
-        LINK_LIBS jsi hermesVMRuntime hermesNapi hermesinspector)
+        LINK_LIBS jsi hermesVMRuntime hermesNapi hermesinspector ${INSPECTOR_DEPS})
 target_include_directories(hermesapi PUBLIC .. ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 add_hermes_library(hermesapiLean
@@ -36,21 +57,6 @@ add_hermes_library(traceInterpreter TraceInterpreter.cpp
   LINK_LIBS hermesapi hermesInstrumentation synthTrace synthTraceParser)
 
 set(HERMES_LINK_COMPONENTS LLVHSupport)
-set(HERMES_ENABLE_RTTI OFF)
-
-# synthTraceParser uses exceptions but not rtti
-add_hermes_library(synthTraceParser SynthTraceParser.cpp LINK_LIBS hermesSupport hermesParser synthTrace)
-
-set(HERMES_ENABLE_EH OFF)
-
-# compileJS uses neither exceptions nor RTTI
-add_hermes_library(compileJS STATIC CompileJS.cpp LINK_LIBS hermesPublic)
-
-# Restore EH and RTTI (Note: At the time of writing, there is no usage of
-# add_hermes_library either after this line in this file or in a sub directory.
-# However, the values are restored anyways for the sake of sanity.)
-set(HERMES_ENABLE_EH ON)
-set(HERMES_ENABLE_RTTI ON)
 
 add_library(libhermes SHARED ${api_sources})
 
@@ -72,6 +78,7 @@ target_link_libraries(libhermes
   hermesNapi
   hermesinspector
   ${LIBHERMES_VM_DEP}
+  ${INSPECTOR_DEPS}
 )
 target_link_options(libhermes PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
 

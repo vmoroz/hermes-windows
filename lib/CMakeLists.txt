@@ -7,6 +7,7 @@ set(HERMES_LINK_COMPONENTS LLVHSupport)
 
 add_hermes_library(hermesOptimizer
   STATIC
+  Optimizer/PassManager/PassManager.cpp
   Optimizer/PassManager/Pipeline.cpp
   Optimizer/Scalar/SimplifyCFG.cpp
   Optimizer/Scalar/CSE.cpp
@@ -15,10 +16,11 @@ add_hermes_library(hermesOptimizer
   Optimizer/Scalar/Mem2Reg.cpp
   Optimizer/Scalar/TypeInference.cpp
   Optimizer/Scalar/StackPromotion.cpp
+  Optimizer/Scalar/SimpleStackPromotion.cpp
   Optimizer/Scalar/InstSimplify.cpp
   Optimizer/Scalar/Auditor.cpp
   Optimizer/Wasm/WasmSimplify.cpp
-  Optimizer/Scalar/SimpleCallGraphProvider.cpp
+  Optimizer/Scalar/ScopeTransformations.cpp
   Optimizer/Scalar/ResolveStaticRequire.cpp
   Optimizer/Scalar/SimpleCallGraphProvider.cpp
   Optimizer/Scalar/FuncSigOpts.cpp

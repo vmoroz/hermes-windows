@@ -930,13 +930,13 @@ TEST_F(HeapSnapshotRuntimeTest, PropertyUpdatesTest) {
       runtime,
       fooSym,
       dpf,
-      runtime.makeHandle(HermesValue::encodeNumberValue(100)))));
+      runtime.makeHandle(HermesValue::encodeTrustedNumberValue(100)))));
   ASSERT_FALSE(isException(JSObject::defineOwnProperty(
       obj,
       runtime,
       barSym,
       dpf,
-      runtime.makeHandle(HermesValue::encodeNumberValue(200)))));
+      runtime.makeHandle(HermesValue::encodeTrustedNumberValue(200)))));
   // Trigger update transitions for both properties.
   dpf.writable = false;
   ASSERT_FALSE(isException(JSObject::defineOwnProperty(
@@ -944,13 +944,13 @@ TEST_F(HeapSnapshotRuntimeTest, PropertyUpdatesTest) {
       runtime,
       fooSym,
       dpf,
-      runtime.makeHandle(HermesValue::encodeNumberValue(100)))));
+      runtime.makeHandle(HermesValue::encodeTrustedNumberValue(100)))));
   ASSERT_FALSE(isException(JSObject::defineOwnProperty(
       obj,
       runtime,
       barSym,
       dpf,
-      runtime.makeHandle(HermesValue::encodeNumberValue(200)))));
+      runtime.makeHandle(HermesValue::encodeTrustedNumberValue(200)))));
   // Forcibly clear the final hidden class's property map.
   auto *clazz = obj->getClass(runtime);
   clazz->clearPropertyMap(runtime.getHeap());
@@ -1008,7 +1008,8 @@ TEST_F(HeapSnapshotRuntimeTest, ArrayElements) {
   auto cr = JSObject::getComputed_RJS(
       array,
       runtime,
-      runtime.makeHandle(HermesValue::encodeNumberValue((1 << 20) + 1000)));
+      runtime.makeHandle(
+          HermesValue::encodeTrustedNumberValue((1 << 20) + 1000)));
   ASSERT_FALSE(isException(cr));
   Handle<JSObject> thirdElement = runtime.makeHandle<JSObject>(std::move(*cr));
   const auto arrayID = runtime.getHeap().getObjectID(array.get());
@@ -1224,8 +1225,8 @@ foo(8) @ test.js(2):3:20)#");
 (root)(0) @ (0):0:0
 global(1) @ test.js(2):2:1
 global(2) @ test.js(2):11:4
-baz(4) @ test.js(2):9:31
-bar(5) @ test.js(2):6:20)#");
+baz(3) @ test.js(2):9:31
+bar(4) @ test.js(2):6:20)#");
 
   const JSONArray &samples = *llvh::cast<JSONArray>(root->at("samples"));
   // Must have at least one sample

@@ -183,6 +183,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
         break;
     }
 
+    compileFlags_.enableBlockScoping = runtimeConfig.getEnableBlockScoping();
     compileFlags_.enableGenerator = runtimeConfig.getEnableGenerator();
     compileFlags_.emitAsyncBreakCheck = defaultEmitAsyncBreakCheck_ =
         runtimeConfig.getAsyncBreakCheckInEval();
@@ -513,7 +514,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     } else if (value.isBool()) {
       return vm::HermesValue::encodeBoolValue(value.getBool());
     } else if (value.isNumber()) {
-      return vm::HermesValue::encodeUntrustedDoubleValue(value.getNumber());
+      return vm::HermesValue::encodeUntrustedNumberValue(value.getNumber());
     } else if (
         value.isSymbol() ||
 #if JSI_VERSION >= 6
@@ -535,7 +536,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return vm::Runtime::getBoolValue(value.getBool());
     } else if (value.isNumber()) {
       return runtime_.makeHandle(
-          vm::HermesValue::encodeUntrustedDoubleValue(value.getNumber()));
+          vm::HermesValue::encodeUntrustedNumberValue(value.getNumber()));
     } else if (
         value.isSymbol() ||
 #if JSI_VERSION >= 6
@@ -716,8 +717,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
   void checkStatus(vm::ExecutionStatus);
   vm::HermesValue stringHVFromAscii(const char *ascii, size_t length);
   vm::HermesValue stringHVFromUtf8(const uint8_t *utf8, size_t length);
-  size_t getLength(vm::Handle<vm::ArrayImpl> arr);
-  size_t getByteLength(vm::Handle<vm::JSArrayBuffer> arr);
 
   struct JsiProxy final : public vm::HostObjectProxy {
     HermesRuntimeImpl &rt_;
@@ -1367,6 +1366,10 @@ void HermesRuntime::unregisterForProfiling() {
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
 }
 
+void HermesRuntime::asyncTriggerTimeout() {
+  impl(this)->runtime_.triggerTimeoutAsyncBreak();
+}
+
 void HermesRuntime::watchTimeLimit(uint32_t timeoutInMs) {
   HermesRuntimeImpl &concrete = *impl(this);
   vm::Runtime &runtime = concrete.runtime_;
@@ -1736,8 +1739,9 @@ jsi::String HermesRuntimeImpl::bigintToString(
   }
 
   vm::GCScope gcScope(runtime_);
-  vm::CallResult<vm::HermesValue> toStringRes =
-      phv(bigint).getBigInt()->toString(runtime_, radix);
+  vm::CallResult<vm::HermesValue> toStringRes = vm::BigIntPrimitive::toString(
+      runtime_, vm::createPseudoHandle(phv(bigint).getBigInt()), radix);
+
   checkStatus(toStringRes.getStatus());
   return add<jsi::String>(*toStringRes);
 }
@@ -2020,7 +2024,7 @@ jsi::Array HermesRuntimeImpl::createArray(size_t length) {
   vm::GCScope gcScope(runtime_);
   auto result = vm::JSArray::create(runtime_, length, length);
   checkStatus(result.getStatus());
-  return add<jsi::Object>(result->getHermesValue()).getArray(*this);
+  return add<jsi::Array>(result->getHermesValue());
 }
 
 #if JSI_VERSION >= 9
@@ -2039,22 +2043,26 @@ jsi::ArrayBuffer HermesRuntimeImpl::createArrayBuffer(
   auto res = vm::JSArrayBuffer::setExternalDataBlock(
       runtime_, buf, data, size, ctx, finalize);
   checkStatus(res);
-  return add<jsi::Object>(buf.getHermesValue()).getArrayBuffer(*this);
+  return add<jsi::ArrayBuffer>(buf.getHermesValue());
 }
 #endif
 
 size_t HermesRuntimeImpl::size(const jsi::Array &arr) {
-  vm::GCScope gcScope(runtime_);
-  return getLength(arrayHandle(arr));
+  return vm::JSArray::getLength(*arrayHandle(arr), runtime_);
 }
 
 size_t HermesRuntimeImpl::size(const jsi::ArrayBuffer &arr) {
-  vm::GCScope gcScope(runtime_);
-  return getByteLength(arrayBufferHandle(arr));
+  auto ab = arrayBufferHandle(arr);
+  if (LLVM_UNLIKELY(!ab->attached()))
+    throw jsi::JSINativeException("ArrayBuffer is detached.");
+  return ab->size();
 }
 
 uint8_t *HermesRuntimeImpl::data(const jsi::ArrayBuffer &arr) {
-  return vm::vmcast<vm::JSArrayBuffer>(phv(arr))->getDataBlock(runtime_);
+  auto ab = arrayBufferHandle(arr);
+  if (LLVM_UNLIKELY(!ab->attached()))
+    throw jsi::JSINativeException("ArrayBuffer is detached.");
+  return ab->getDataBlock(runtime_);
 }
 
 jsi::Value HermesRuntimeImpl::getValueAtIndex(const jsi::Array &arr, size_t i) {
@@ -2072,7 +2080,7 @@ jsi::Value HermesRuntimeImpl::getValueAtIndex(const jsi::Array &arr, size_t i) {
   auto res = vm::JSObject::getComputed_RJS(
       arrayHandle(arr),
       runtime_,
-      runtime_.makeHandle(vm::HermesValue::encodeNumberValue(i)));
+      runtime_.makeHandle(vm::HermesValue::encodeUntrustedNumberValue(i)));
   checkStatus(res.getStatus());
 
   return valueFromHermesValue(res->get());
@@ -2093,8 +2101,12 @@ void HermesRuntimeImpl::setValueAtIndexImpl(
         ")");
   }
 
-  auto h = arrayHandle(arr);
-  h->setElementAt(h, runtime_, i, vmHandleFromValue(value));
+  auto res = vm::JSObject::putComputed_RJS(
+      arrayHandle(arr),
+      runtime_,
+      runtime_.makeHandle(vm::HermesValue::encodeTrustedNumberValue(i)),
+      vmHandleFromValue(value));
+  checkStatus(res.getStatus());
 }
 
 jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
@@ -2123,7 +2135,7 @@ jsi::Function HermesRuntimeImpl::createFunctionFromHostFunction(
       nameID,
       paramCount);
   checkStatus(funcRes.getStatus());
-  jsi::Function ret = add<jsi::Object>(*funcRes).getFunction(*this);
+  jsi::Function ret = add<jsi::Function>(*funcRes);
   return ret;
 }
 
@@ -2142,8 +2154,7 @@ jsi::Value HermesRuntimeImpl::call(
   vm::GCScope gcScope(runtime_);
   vm::Handle<vm::Callable> handle =
       vm::Handle<vm::Callable>::vmcast(&phv(func));
-  if (count > std::numeric_limits<uint32_t>::max() ||
-      !runtime_.checkAvailableStack((uint32_t)count)) {
+  if (count > std::numeric_limits<uint32_t>::max()) {
     LOG_EXCEPTION_CAUSE(
         "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     throw jsi::JSINativeException(
@@ -2178,8 +2189,7 @@ jsi::Value HermesRuntimeImpl::callAsConstructor(
   vm::Handle<vm::Callable> funcHandle =
       vm::Handle<vm::Callable>::vmcast(&phv(func));
 
-  if (count > std::numeric_limits<uint32_t>::max() ||
-      !runtime_.checkAvailableStack((uint32_t)count)) {
+  if (count > std::numeric_limits<uint32_t>::max()) {
     LOG_EXCEPTION_CAUSE(
         "HermesRuntimeImpl::call: Unable to call function: stack overflow");
     throw jsi::JSINativeException(
@@ -2199,7 +2209,7 @@ jsi::Value HermesRuntimeImpl::callAsConstructor(
   //    in 15.2.4
   //
   // Note that 13.2.2.1-4 are also handled by the call to newObject.
-  auto thisRes = vm::Callable::createThisForConstruct(funcHandle, runtime_);
+  auto thisRes = vm::Callable::createThisForConstruct_RJS(funcHandle, runtime_);
   // We need to capture this in case the ctor doesn't return an object,
   // we need to return this object.
   auto objHandle = runtime_.makeHandle<vm::JSObject>(std::move(*thisRes));
@@ -2264,8 +2274,7 @@ bool HermesRuntimeImpl::instanceOf(
     const jsi::Object &o,
     const jsi::Function &f) {
   vm::GCScope gcScope(runtime_);
-  auto result = vm::instanceOfOperator_RJS(
-      runtime_, runtime_.makeHandle(phv(o)), runtime_.makeHandle(phv(f)));
+  auto result = vm::instanceOfOperator_RJS(runtime_, handle(o), handle(f));
   checkStatus(result.getStatus());
   return *result;
 }
@@ -2322,27 +2331,6 @@ vm::HermesValue HermesRuntimeImpl::stringHVFromUtf8(
   return *strRes;
 }
 
-size_t HermesRuntimeImpl::getLength(vm::Handle<vm::ArrayImpl> arr) {
-  auto res = vm::JSObject::getNamed_RJS(
-      arr, runtime_, vm::Predefined::getSymbolID(vm::Predefined::length));
-  checkStatus(res.getStatus());
-  if (!(*res)->isNumber()) {
-    throw jsi::JSError(*this, "getLength: property 'length' is not a number");
-  }
-  return static_cast<size_t>((*res)->getDouble());
-}
-
-size_t HermesRuntimeImpl::getByteLength(vm::Handle<vm::JSArrayBuffer> arr) {
-  auto res = vm::JSObject::getNamed_RJS(
-      arr, runtime_, vm::Predefined::getSymbolID(vm::Predefined::byteLength));
-  checkStatus(res.getStatus());
-  if (!(*res)->isNumber()) {
-    throw jsi::JSError(
-        *this, "getLength: property 'byteLength' is not a number");
-  }
-  return static_cast<size_t>((*res)->getDouble());
-}
-
 namespace {
 
 class HermesMutex : public std::recursive_mutex {
@@ -2361,6 +2349,8 @@ vm::RuntimeConfig hardenedHermesRuntimeConfig() {
   config.withEnableEval(false);
   config.withArrayBuffer(false);
   config.withES6Proxy(false);
+  config.withEnableHermesInternal(false);
+  config.withEnableHermesInternalTestMethods(false);
 
   // Enabled hardening options.
   config.withRandomizeMemoryLayout(true);

@@ -14,6 +14,7 @@
 #include "hermes/Support/SourceErrorManager.h"
 #include "hermes/Support/StringTable.h"
 
+#include "llvh/ADT/DenseSet.h"
 #include "llvh/ADT/StringRef.h"
 
 namespace hermes {
@@ -26,9 +27,17 @@ class BackendContext;
 class EmitWasmIntrinsicsContext;
 #endif // HERMES_RUN_WASM
 
+struct CodeGenerationSettings_DumpSettings {
+  bool all{false};
+  llvh::SmallDenseSet<llvh::StringRef> passes;
+  llvh::SmallDenseSet<llvh::StringRef> functions;
+};
+
 struct CodeGenerationSettings {
+  using DumpSettings = CodeGenerationSettings_DumpSettings;
+
   /// Whether we should emit TDZ checks.
-  bool enableTDZ{false};
+  bool const enableTDZ{false};
   /// Whether we can assume there are unlimited number of registers.
   /// This affects how we generate the IR, as we can decide whether
   /// to hold as many temporary values as we like.
@@ -43,10 +52,24 @@ struct CodeGenerationSettings {
   bool dumpTextifiedCallee{false};
   /// Print the use list if the instruction has any users.
   bool dumpUseList{false};
-  /// Dump IR after every pass.
-  bool dumpIRBetweenPasses{false};
   /// Instrument IR for dynamic checking (if support is compiled in).
   bool instrumentIR{false};
+  /// Instructs IR Generation to use synthetic names for unnamed functions.
+  bool generateNameForUnnamedFunctions{false};
+  /// Whether block scoping is enabled.
+  bool enableBlockScoping{false};
+
+  /// Dump IR before each pass (if holds boolean), or the given passes (if holds
+  /// DensetSet).
+  DumpSettings dumpBefore;
+
+  /// Dump IR after each pass (if holds boolean), or the given passes (if holds
+  /// DensetSet).
+  DumpSettings dumpAfter;
+
+  /// Restricts inter-pass dump to the given functions. If empty, all functions
+  /// are dumped.
+  llvh::SmallDenseSet<llvh::StringRef> functionsToDump;
 };
 
 struct OptimizationSettings {
@@ -199,6 +222,9 @@ class Context {
   /// If true, allow parsing JSX as a primary expression.
   bool parseJSX_{false};
 
+  /// If true, allow parsing component syntax when also using Flow syntax.
+  bool parseFlowComponentSyntax_{false};
+
   /// Whether to parse Flow type syntax.
   ParseFlowSetting parseFlow_{ParseFlowSetting::NONE};
 
@@ -346,10 +372,18 @@ class Context {
     return emitAsyncBreakCheck_;
   }
 
-  void setUseCJSModules(bool useCJSModules) {
+  /// A hack to disable CJS modules while preserving the same interface.
+  void setUseCJSModules(bool useCJSModules) {}
+  bool getUseCJSModules() const {
+    return false;
+  }
+  /// SemanticValidator performs some AST transformations when CommonJS modules
+  /// are enabled. This attribute allows us to continue supporting those, while
+  /// code generation for CJS modules has been disabled.
+  void setTransformCJSModules(bool useCJSModules) {
     useCJSModules_ = useCJSModules;
   }
-  bool getUseCJSModules() const {
+  bool getTransformCJSModules() const {
     return useCJSModules_;
   }
 
@@ -368,6 +402,13 @@ class Context {
   }
   bool getParseFlowAmbiguous() const {
     return parseFlow_ == ParseFlowSetting::ALL;
+  }
+
+  void setParseFlowComponentSyntax(bool parseFlowComponentSyntax) {
+    parseFlowComponentSyntax_ = parseFlowComponentSyntax;
+  }
+  bool getParseFlowComponentSyntax() const {
+    return parseFlowComponentSyntax_;
   }
 
   void setParseTS(bool parseTS) {
