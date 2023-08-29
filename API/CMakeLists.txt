@@ -10,3 +10,4 @@ add_subdirectory(node-api)
 # endif()
 
 add_subdirectory(hermes)
+add_subdirectory(hermes_abi)
