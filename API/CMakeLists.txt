@@ -5,8 +5,8 @@
 
 add_subdirectory(node-api)
 
-if (WIN32 AND HERMES_ENABLE_DEBUGGER)
-    add_subdirectory(inspector)
-endif()
+# if (WIN32 AND HERMES_ENABLE_DEBUGGER)
+#     add_subdirectory(inspector)
+# endif()
 
 add_subdirectory(hermes)

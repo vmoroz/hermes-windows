@@ -9,7 +9,7 @@
 #include "ScriptStore.h"
 #include "hermes/VM/Runtime.h"
 #include "hermes/inspector/RuntimeAdapter.h"
-#include "hermes/inspector/chrome/Registration.h"
+//#include "hermes/inspector/chrome/Registration.h"
 #include "llvh/Support/raw_os_ostream.h"
 
 #define NOMINMAX
@@ -473,8 +473,9 @@ class RuntimeWrapper {
       if (inspectorRuntimeName.empty()) {
         inspectorRuntimeName = "Hermes";
       }
-      facebook::hermes::inspector::chrome::enableDebugging(
-          std::move(adapter), inspectorRuntimeName);
+      // TODO: (vmoroz) Implement
+      // facebook::hermes::inspector::chrome::enableDebugging(
+      //     std::move(adapter), inspectorRuntimeName);
     }
   }
 

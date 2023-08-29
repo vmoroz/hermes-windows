@@ -40,7 +40,7 @@ file(GLOB api_public_headers ${PROJECT_SOURCE_DIR}/public/hermes/Public/*.h)
 
 add_hermes_library(hermesapi
         ${api_sources}
-        LINK_LIBS jsi hermesVMRuntime hermesNapi hermesinspector ${INSPECTOR_DEPS})
+        LINK_LIBS jsi hermesVMRuntime hermesNapi ${INSPECTOR_DEPS})
 target_include_directories(hermesapi PUBLIC .. ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 add_hermes_library(hermesapiLean
@@ -76,7 +76,6 @@ target_link_libraries(libhermes
   PRIVATE
   jsi
   hermesNapi
-  hermesinspector
   ${LIBHERMES_VM_DEP}
   ${INSPECTOR_DEPS}
 )

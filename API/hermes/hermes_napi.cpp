@@ -3591,7 +3591,7 @@ napi_status NapiEnvironment::createNumber(
     T value,
     napi_value *result) noexcept {
   return setResult(
-      vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
+      vm::HermesValue::encodeTrustedNumberValue(static_cast<double>(value)), result);
 }
 
 napi_status NapiEnvironment::getNumberValue(
@@ -4755,7 +4755,7 @@ napi_status NapiEnvironment::createNewInstance(
   //
   // Note that 13.2.2.1-4 are also handled by the call to newObject.
   vm::CallResult<vm::PseudoHandle<vm::JSObject>> thisRes =
-      vm::Callable::createThisForConstruct(ctorHandle, runtime_);
+      vm::Callable::createThisForConstruct_RJS(ctorHandle, runtime_);
   CHECK_NAPI(checkJSErrorStatus(thisRes));
   // We need to capture this in case the ctor doesn't return an object,
   // we need to return this object.
@@ -6511,7 +6511,7 @@ vm::Handle<> NapiEnvironment::makeHandle(vm::Handle<> value) noexcept {
 
 // Useful for converting index to a name/index handle.
 vm::Handle<> NapiEnvironment::makeHandle(uint32_t value) noexcept {
-  return makeHandle(vm::HermesValue::encodeDoubleValue(value));
+  return makeHandle(vm::HermesValue::encodeTrustedNumberValue(value));
 }
 
 template <class T>
