@@ -19,10 +19,6 @@
 #endif
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct HermesABIRuntimeConfig;
 struct HermesABIContext;
 struct HermesABIManagedPointer;
@@ -462,8 +458,4 @@ struct HermesABIVTable {
       unsigned);
 };
 
-#ifdef __cplusplus
-}
 #endif
-
-#endif // !HERMES_ABI_HERMES_ABI_H
