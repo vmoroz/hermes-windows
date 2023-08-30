@@ -3,12 +3,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-add_library(hermesabi SHARED hermes_vtable.cpp)
+add_library(hermesabi STATIC hermes_vtable.cpp)
 target_link_libraries(hermesabi PRIVATE hermesVMRuntime)
 target_include_directories(hermesabi PUBLIC ..)
 target_link_options(hermesabi PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
 
-add_library(hermesabi_lean SHARED hermes_vtable.cpp)
+add_library(hermesabi_lean STATIC hermes_vtable.cpp)
 target_link_libraries(hermesabi_lean PRIVATE hermesVMRuntimeLean)
 target_include_directories(hermesabi_lean PUBLIC ..)
 target_link_options(hermesabi_lean PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
