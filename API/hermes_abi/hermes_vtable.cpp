@@ -40,7 +40,7 @@ class BufferWrapper : public hermes::Buffer {
 /// a refcount.
 template <typename T>
 class ManagedValue : public HermesABIManagedPointer {
-  static void invalidate(HermesABIManagedPointer *ptr) {
+  static void HERMES_CALL invalidate(HermesABIManagedPointer *ptr) {
     static_cast<ManagedValue<T> *>(ptr)->dec();
   }
   static constexpr HermesABIManagedPointerVTable vt{invalidate};
@@ -299,76 +299,78 @@ struct HermesABIContext {
   }
 };
 
-ABI_PREFIX HermesABIContext *make_hermes_runtime(
-    const HermesABIRuntimeConfig *config) {
+ABI_PREFIX HermesABIContext *HERMES_CALL
+make_hermes_runtime(const HermesABIRuntimeConfig *config) {
   return new HermesABIContext({});
 }
 
-ABI_PREFIX void release_hermes_runtime(HermesABIContext *runtime) {
+ABI_PREFIX void HERMES_CALL release_hermes_runtime(HermesABIContext *runtime) {
   delete runtime;
 }
 
-ABI_PREFIX HermesABIValue get_and_clear_js_error_value(HermesABIContext *ctx) {
+ABI_PREFIX HermesABIValue HERMES_CALL
+get_and_clear_js_error_value(HermesABIContext *ctx) {
   auto ret = ctx->createValue(ctx->rt->getThrownValue());
   ctx->rt->clearThrownValue();
   return ret;
 }
 
-ABI_PREFIX HermesABIByteRef
+ABI_PREFIX HermesABIByteRef HERMES_CALL
 get_native_exception_message(HermesABIContext *ctx) {
   return {
       (const uint8_t *)ctx->nativeExceptionMessage.data(),
       ctx->nativeExceptionMessage.size()};
 }
-ABI_PREFIX void clear_native_exception_message(HermesABIContext *ctx) {
+ABI_PREFIX void HERMES_CALL
+clear_native_exception_message(HermesABIContext *ctx) {
   ctx->nativeExceptionMessage.clear();
   ctx->nativeExceptionMessage.shrink_to_fit();
 }
 
-ABI_PREFIX void set_js_error_value(
-    HermesABIContext *ctx,
-    const HermesABIValue *val) {
+ABI_PREFIX void HERMES_CALL
+set_js_error_value(HermesABIContext *ctx, const HermesABIValue *val) {
   ctx->rt->setThrownValue(toHermesValue(*val));
 }
-ABI_PREFIX void set_native_exception_message(
+ABI_PREFIX void HERMES_CALL set_native_exception_message(
     HermesABIContext *ctx,
     const char *message,
     size_t length) {
   ctx->nativeExceptionMessage.assign(message, length);
 }
 
-ABI_PREFIX HermesABIPropNameID
+ABI_PREFIX HermesABIPropNameID HERMES_CALL
 clone_prop_name_id(HermesABIContext *ctx, HermesABIPropNameID name) {
   static_cast<ManagedValue<vm::PinnedHermesValue> *>(name.pointer)->inc();
   return abi::createPropNameID(name.pointer);
 }
-ABI_PREFIX HermesABIString
+ABI_PREFIX HermesABIString HERMES_CALL
 clone_string(HermesABIContext *ctx, HermesABIString str) {
   static_cast<ManagedValue<vm::PinnedHermesValue> *>(str.pointer)->inc();
   return abi::createString(str.pointer);
 }
-ABI_PREFIX HermesABISymbol
+ABI_PREFIX HermesABISymbol HERMES_CALL
 clone_symbol(HermesABIContext *ctx, HermesABISymbol sym) {
   static_cast<ManagedValue<vm::PinnedHermesValue> *>(sym.pointer)->inc();
   return abi::createSymbol(sym.pointer);
 }
-ABI_PREFIX HermesABIObject
+ABI_PREFIX HermesABIObject HERMES_CALL
 clone_object(HermesABIContext *ctx, HermesABIObject obj) {
   static_cast<ManagedValue<vm::PinnedHermesValue> *>(obj.pointer)->inc();
   return abi::createObject(obj.pointer);
 }
-ABI_PREFIX HermesABIBigInt
+ABI_PREFIX HermesABIBigInt HERMES_CALL
 clone_big_int(HermesABIContext *ctx, HermesABIBigInt bi) {
   static_cast<ManagedValue<vm::PinnedHermesValue> *>(bi.pointer)->inc();
   return abi::createBigInt(bi.pointer);
 }
 
-ABI_PREFIX bool is_hermes_bytecode(const uint8_t *data, size_t len) {
+ABI_PREFIX bool HERMES_CALL
+is_hermes_bytecode(const uint8_t *data, size_t len) {
   return hbc::BCProviderFromBuffer::isBytecodeStream(
       llvh::ArrayRef<uint8_t>(data, len));
 }
 
-ABI_PREFIX HermesABIValueOrError evaluate_javascript_source(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL evaluate_javascript_source(
     HermesABIContext *ctx,
     HermesABIBuffer *source,
     const char *sourceURL,
@@ -402,7 +404,7 @@ ABI_PREFIX HermesABIValueOrError evaluate_javascript_source(
   return ctx->createValueOrError(*res);
 }
 
-ABI_PREFIX HermesABIValueOrError evaluate_hermes_bytecode(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL evaluate_hermes_bytecode(
     HermesABIContext *ctx,
     HermesABIBuffer *bytecode,
     const char *sourceURL,
@@ -430,11 +432,12 @@ ABI_PREFIX HermesABIValueOrError evaluate_hermes_bytecode(
   return ctx->createValueOrError(*res);
 }
 
-ABI_PREFIX HermesABIObject get_global_object(HermesABIContext *ctx) {
+ABI_PREFIX HermesABIObject HERMES_CALL
+get_global_object(HermesABIContext *ctx) {
   return ctx->createObject(ctx->rt->getGlobal().getHermesValue());
 }
 
-ABI_PREFIX HermesABIStringOrError create_string_from_ascii(
+ABI_PREFIX HermesABIStringOrError HERMES_CALL create_string_from_ascii(
     HermesABIContext *ctx,
     const char *str,
     size_t length) {
@@ -447,7 +450,7 @@ ABI_PREFIX HermesABIStringOrError create_string_from_ascii(
   return ctx->createStringOrError(*strRes);
 }
 
-ABI_PREFIX HermesABIStringOrError create_string_from_utf8(
+ABI_PREFIX HermesABIStringOrError HERMES_CALL create_string_from_utf8(
     HermesABIContext *ctx,
     const uint8_t *utf8,
     size_t length) {
@@ -460,14 +463,15 @@ ABI_PREFIX HermesABIStringOrError create_string_from_utf8(
   return ctx->createStringOrError(*strRes);
 }
 
-ABI_PREFIX HermesABIObjectOrError create_object(HermesABIContext *ctx) {
+ABI_PREFIX HermesABIObjectOrError HERMES_CALL
+create_object(HermesABIContext *ctx) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
   return ctx->createObjectOrError(
       vm::JSObject::create(runtime).getHermesValue());
 }
 
-ABI_PREFIX HermesABIBoolOrError has_object_property_from_string(
+ABI_PREFIX HermesABIBoolOrError HERMES_CALL has_object_property_from_string(
     HermesABIContext *ctx,
     HermesABIObject obj,
     HermesABIString str) {
@@ -479,7 +483,8 @@ ABI_PREFIX HermesABIBoolOrError has_object_property_from_string(
   return abi::createBoolOrError(*res);
 }
 
-ABI_PREFIX HermesABIBoolOrError has_object_property_from_prop_name_id(
+ABI_PREFIX HermesABIBoolOrError HERMES_CALL
+has_object_property_from_prop_name_id(
     HermesABIContext *ctx,
     HermesABIObject obj,
     HermesABIPropNameID name) {
@@ -492,7 +497,7 @@ ABI_PREFIX HermesABIBoolOrError has_object_property_from_prop_name_id(
   return abi::createBoolOrError(*res);
 }
 
-ABI_PREFIX HermesABIValueOrError get_object_property_from_string(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL get_object_property_from_string(
     HermesABIContext *ctx,
     HermesABIObject object,
     HermesABIString str) {
@@ -505,7 +510,8 @@ ABI_PREFIX HermesABIValueOrError get_object_property_from_string(
   return ctx->createValueOrError(res->get());
 }
 
-ABI_PREFIX HermesABIValueOrError get_object_property_from_prop_name_id(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL
+get_object_property_from_prop_name_id(
     HermesABIContext *ctx,
     HermesABIObject object,
     HermesABIPropNameID sym) {
@@ -518,7 +524,7 @@ ABI_PREFIX HermesABIValueOrError get_object_property_from_prop_name_id(
   return ctx->createValueOrError(res->get());
 }
 
-ABI_PREFIX HermesABIVoidOrError set_object_property_from_string(
+ABI_PREFIX HermesABIVoidOrError HERMES_CALL set_object_property_from_string(
     HermesABIContext *ctx,
     HermesABIObject obj,
     HermesABIString str,
@@ -538,7 +544,8 @@ ABI_PREFIX HermesABIVoidOrError set_object_property_from_string(
   return abi::createVoidOrError();
 }
 
-ABI_PREFIX HermesABIVoidOrError set_object_property_from_prop_name_id(
+ABI_PREFIX HermesABIVoidOrError HERMES_CALL
+set_object_property_from_prop_name_id(
     HermesABIContext *ctx,
     HermesABIObject obj,
     HermesABIPropNameID name,
@@ -558,7 +565,7 @@ ABI_PREFIX HermesABIVoidOrError set_object_property_from_prop_name_id(
   return abi::createVoidOrError();
 }
 
-ABI_PREFIX HermesABIArrayOrError
+ABI_PREFIX HermesABIArrayOrError HERMES_CALL
 get_object_property_names(HermesABIContext *ctx, HermesABIObject obj) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -602,7 +609,7 @@ get_object_property_names(HermesABIContext *ctx, HermesABIObject obj) {
   return ctx->createArrayOrError(ret.getHermesValue());
 }
 
-ABI_PREFIX HermesABIArrayOrError
+ABI_PREFIX HermesABIArrayOrError HERMES_CALL
 create_array(HermesABIContext *ctx, size_t length) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -612,11 +619,12 @@ create_array(HermesABIContext *ctx, size_t length) {
   return ctx->createArrayOrError(result->getHermesValue());
 }
 
-size_t get_array_length(HermesABIContext *ctx, HermesABIArray arr) {
+ABI_PREFIX size_t HERMES_CALL
+get_array_length(HermesABIContext *ctx, HermesABIArray arr) {
   auto &runtime = *ctx->rt;
   return vm::JSArray::getLength(*toHandle(arr), runtime);
 }
-ABI_PREFIX HermesABIValueOrError
+ABI_PREFIX HermesABIValueOrError HERMES_CALL
 get_array_value_at_index(HermesABIContext *ctx, HermesABIArray arr, size_t i) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -636,7 +644,7 @@ get_array_value_at_index(HermesABIContext *ctx, HermesABIArray arr, size_t i) {
   return ctx->createValueOrError(res->get());
 }
 
-ABI_PREFIX HermesABIVoidOrError set_array_value_at_index(
+ABI_PREFIX HermesABIVoidOrError HERMES_CALL set_array_value_at_index(
     HermesABIContext *ctx,
     HermesABIArray arr,
     size_t i,
@@ -659,7 +667,8 @@ ABI_PREFIX HermesABIVoidOrError set_array_value_at_index(
   return abi::createVoidOrError();
 }
 
-ABI_PREFIX HermesABIArrayBufferOrError create_array_buffer_from_external_data(
+ABI_PREFIX HermesABIArrayBufferOrError HERMES_CALL
+create_array_buffer_from_external_data(
     HermesABIContext *ctx,
     HermesABIMutableBuffer *buf) {
   auto &runtime = *ctx->rt;
@@ -681,7 +690,7 @@ ABI_PREFIX HermesABIArrayBufferOrError create_array_buffer_from_external_data(
   return ctx->createArrayBufferOrError(arrayBuffer.getHermesValue());
 }
 
-ABI_PREFIX HermesABIUint8PtrOrError
+ABI_PREFIX HermesABIUint8PtrOrError HERMES_CALL
 get_array_buffer_data(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
   auto &runtime = *ctx->rt;
   auto ab = toHandle(buf);
@@ -693,7 +702,7 @@ get_array_buffer_data(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
   return abi::createUint8PtrOrError(ab->getDataBlock(runtime));
 }
 
-ABI_PREFIX HermesABISizeTOrError
+ABI_PREFIX HermesABISizeTOrError HERMES_CALL
 get_array_buffer_size(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
   auto ab = toHandle(buf);
   if (!ab->attached()) {
@@ -703,7 +712,8 @@ get_array_buffer_size(HermesABIContext *ctx, HermesABIArrayBuffer buf) {
   return abi::createSizeTOrError(ab->size());
 }
 
-ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_ascii(
+ABI_PREFIX HermesABIPropNameIDOrError HERMES_CALL
+create_prop_name_id_from_ascii(
     HermesABIContext *ctx,
     const char *str,
     size_t len) {
@@ -717,7 +727,7 @@ ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_ascii(
   return ctx->createPropNameIDOrError(cr->getHermesValue());
 }
 
-ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_utf8(
+ABI_PREFIX HermesABIPropNameIDOrError HERMES_CALL create_prop_name_id_from_utf8(
     HermesABIContext *ctx,
     const uint8_t *utf8,
     size_t length) {
@@ -735,7 +745,7 @@ ABI_PREFIX HermesABIPropNameIDOrError create_prop_name_id_from_utf8(
   return ctx->createPropNameIDOrError(cr->getHermesValue());
 }
 
-ABI_PREFIX HermesABIPropNameIDOrError
+ABI_PREFIX HermesABIPropNameIDOrError HERMES_CALL
 create_prop_name_id_from_string(HermesABIContext *ctx, HermesABIString str) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -746,41 +756,40 @@ create_prop_name_id_from_string(HermesABIContext *ctx, HermesABIString str) {
   return ctx->createPropNameIDOrError(cr->getHermesValue());
 }
 
-ABI_PREFIX HermesABIPropNameIDOrError
+ABI_PREFIX HermesABIPropNameIDOrError HERMES_CALL
 create_prop_name_id_from_symbol(HermesABIContext *ctx, HermesABISymbol sym) {
   return ctx->createPropNameIDOrError(toHandle(sym).getHermesValue());
 }
 
-ABI_PREFIX bool prop_name_id_equals(
+ABI_PREFIX bool HERMES_CALL prop_name_id_equals(
     HermesABIContext *,
     HermesABIPropNameID a,
     HermesABIPropNameID b) {
   return *toHandle(a) == *toHandle(b);
 }
 
-ABI_PREFIX bool object_is_array(HermesABIContext *, HermesABIObject object) {
+ABI_PREFIX bool HERMES_CALL
+object_is_array(HermesABIContext *, HermesABIObject object) {
   return vm::vmisa<vm::JSArray>(*toHandle(object));
 }
-ABI_PREFIX bool object_is_array_buffer(
-    HermesABIContext *,
-    HermesABIObject object) {
+ABI_PREFIX bool HERMES_CALL
+object_is_array_buffer(HermesABIContext *, HermesABIObject object) {
   return vm::vmisa<vm::JSArrayBuffer>(*toHandle(object));
 }
-ABI_PREFIX bool object_is_function(HermesABIContext *, HermesABIObject object) {
+ABI_PREFIX bool HERMES_CALL
+object_is_function(HermesABIContext *, HermesABIObject object) {
   return vm::vmisa<vm::Callable>(*toHandle(object));
 }
-ABI_PREFIX bool object_is_host_object(
-    HermesABIContext *,
-    HermesABIObject object) {
+ABI_PREFIX bool HERMES_CALL
+object_is_host_object(HermesABIContext *, HermesABIObject object) {
   return vm::vmisa<vm::HostObject>(*toHandle(object));
 }
-ABI_PREFIX bool function_is_host_function(
-    HermesABIContext *,
-    HermesABIFunction fn) {
+ABI_PREFIX bool HERMES_CALL
+function_is_host_function(HermesABIContext *, HermesABIFunction fn) {
   return vm::vmisa<vm::FinalizableNativeFunction>(*toHandle(fn));
 }
 
-ABI_PREFIX HermesABIValueOrError call(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL call(
     HermesABIContext *ctx,
     HermesABIFunction func,
     const HermesABIValue *jsThis,
@@ -817,7 +826,7 @@ ABI_PREFIX HermesABIValueOrError call(
   return ctx->createValueOrError(callRes->get());
 }
 
-ABI_PREFIX HermesABIValueOrError call_as_constructor(
+ABI_PREFIX HermesABIValueOrError HERMES_CALL call_as_constructor(
     HermesABIContext *ctx,
     HermesABIFunction fn,
     const HermesABIValue *args,
@@ -913,7 +922,8 @@ class HostFunctionWrapper {
 };
 } // namespace
 
-ABI_PREFIX HermesABIFunctionOrError create_function_from_host_function(
+ABI_PREFIX HermesABIFunctionOrError HERMES_CALL
+create_function_from_host_function(
     HermesABIContext *ctx,
     HermesABIPropNameID name,
     unsigned int paramCount,
@@ -934,9 +944,8 @@ ABI_PREFIX HermesABIFunctionOrError create_function_from_host_function(
   return ctx->createFunctionOrError(*funcRes);
 }
 
-ABI_PREFIX HermesABIHostFunction *get_host_function(
-    HermesABIContext *,
-    HermesABIFunction fn) {
+ABI_PREFIX HermesABIHostFunction *HERMES_CALL
+get_host_function(HermesABIContext *, HermesABIFunction fn) {
   auto h = vm::Handle<vm::FinalizableNativeFunction>::vmcast(toHandle(fn));
   return static_cast<HostFunctionWrapper *>(h->getContext())->getFunc();
 }
@@ -1017,7 +1026,7 @@ class HostObjectWrapper : public vm::HostObjectProxy {
 };
 } // namespace
 
-ABI_PREFIX HermesABIObjectOrError
+ABI_PREFIX HermesABIObjectOrError HERMES_CALL
 create_object_from_host_object(HermesABIContext *ctx, HermesABIHostObject *ho) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -1029,14 +1038,14 @@ create_object_from_host_object(HermesABIContext *ctx, HermesABIHostObject *ho) {
   return ctx->createObjectOrError(*objRes);
 }
 
-ABI_PREFIX HermesABIHostObject *get_host_object(
-    HermesABIContext *,
-    HermesABIObject obj) {
+ABI_PREFIX HermesABIHostObject *HERMES_CALL
+get_host_object(HermesABIContext *, HermesABIObject obj) {
   auto h = vm::Handle<vm::HostObject>::vmcast(toHandle(obj));
   return static_cast<HostObjectWrapper *>(h->getProxy())->getHostObject();
 }
 
-ABI_PREFIX bool has_native_state(HermesABIContext *ctx, HermesABIObject obj) {
+ABI_PREFIX bool HERMES_CALL
+has_native_state(HermesABIContext *ctx, HermesABIObject obj) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
   auto h = toHandle(obj);
@@ -1050,9 +1059,8 @@ ABI_PREFIX bool has_native_state(HermesABIContext *ctx, HermesABIObject obj) {
       vm::Predefined::getSymbolID(vm::Predefined::InternalPropertyNativeState),
       desc);
 }
-ABI_PREFIX HermesABINativeState *get_native_state(
-    HermesABIContext *ctx,
-    HermesABIObject obj) {
+ABI_PREFIX HermesABINativeState *HERMES_CALL
+get_native_state(HermesABIContext *ctx, HermesABIObject obj) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
   auto h = toHandle(obj);
@@ -1072,7 +1080,7 @@ ABI_PREFIX HermesABINativeState *get_native_state(
   return static_cast<HermesABINativeState *>(ns->context());
 }
 
-ABI_PREFIX HermesABIVoidOrError set_native_state(
+ABI_PREFIX HermesABIVoidOrError HERMES_CALL set_native_state(
     HermesABIContext *ctx,
     HermesABIObject obj,
     HermesABINativeState *abiState) {
@@ -1114,11 +1122,11 @@ ABI_PREFIX HermesABIVoidOrError set_native_state(
   return abi::createVoidOrError();
 }
 
-ABI_PREFIX HermesABIWeakObjectOrError
+ABI_PREFIX HermesABIWeakObjectOrError HERMES_CALL
 create_weak_object(HermesABIContext *ctx, HermesABIObject obj) {
   return ctx->createWeakObjectOrError(toHandle(obj).getHermesValue());
 }
-ABI_PREFIX HermesABIValue
+ABI_PREFIX HermesABIValue HERMES_CALL
 lock_weak_object(HermesABIContext *ctx, HermesABIWeakObject obj) {
   auto &runtime = *ctx->rt;
   const auto &wr =
@@ -1129,7 +1137,7 @@ lock_weak_object(HermesABIContext *ctx, HermesABIWeakObject obj) {
   return abi::createUndefinedValue();
 }
 
-ABI_PREFIX void get_utf8_from_string(
+ABI_PREFIX void HERMES_CALL get_utf8_from_string(
     HermesABIContext *ctx,
     HermesABIString str,
     HermesABIByteBuffer *buf) {
@@ -1151,7 +1159,7 @@ ABI_PREFIX void get_utf8_from_string(
   buf->available -= res.size();
 }
 
-ABI_PREFIX void get_utf8_from_prop_name_id(
+ABI_PREFIX void HERMES_CALL get_utf8_from_prop_name_id(
     HermesABIContext *ctx,
     HermesABIPropNameID name,
     HermesABIByteBuffer *buf) {
@@ -1174,7 +1182,7 @@ ABI_PREFIX void get_utf8_from_prop_name_id(
   buf->available -= res.size();
 }
 
-ABI_PREFIX void get_utf8_from_symbol(
+ABI_PREFIX void HERMES_CALL get_utf8_from_symbol(
     HermesABIContext *ctx,
     HermesABISymbol name,
     HermesABIByteBuffer *buf) {
@@ -1210,7 +1218,7 @@ ABI_PREFIX void get_utf8_from_symbol(
   writeToBuf(ret);
 }
 
-ABI_PREFIX HermesABIBoolOrError
+ABI_PREFIX HermesABIBoolOrError HERMES_CALL
 instance_of(HermesABIContext *ctx, HermesABIObject o, HermesABIFunction f) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -1220,32 +1228,33 @@ instance_of(HermesABIContext *ctx, HermesABIObject o, HermesABIFunction f) {
   return abi::createBoolOrError(*result);
 }
 
-ABI_PREFIX bool strict_equals_symbol(
+ABI_PREFIX bool HERMES_CALL strict_equals_symbol(
     HermesABIContext *ctx,
     HermesABISymbol a,
     HermesABISymbol b) {
   return toHandle(a) == toHandle(b);
 }
-ABI_PREFIX bool strict_equals_bigint(
+ABI_PREFIX bool HERMES_CALL strict_equals_bigint(
     HermesABIContext *ctx,
     HermesABIBigInt a,
     HermesABIBigInt b) {
   return toHandle(a)->compare(*toHandle(b)) == 0;
 }
-ABI_PREFIX bool strict_equals_string(
+ABI_PREFIX bool HERMES_CALL strict_equals_string(
     HermesABIContext *ctx,
     HermesABIString a,
     HermesABIString b) {
   return toHandle(a)->equals(*toHandle(b));
 }
-ABI_PREFIX bool strict_equals_object(
+ABI_PREFIX bool HERMES_CALL strict_equals_object(
     HermesABIContext *ctx,
     HermesABIObject a,
     HermesABIObject b) {
   return toHandle(a) == toHandle(b);
 }
 
-ABI_PREFIX HermesABIBoolOrError drain_microtasks(HermesABIContext *ctx, int) {
+ABI_PREFIX HermesABIBoolOrError HERMES_CALL
+drain_microtasks(HermesABIContext *ctx, int) {
   auto &runtime = *ctx->rt;
   if (runtime.hasMicrotaskQueue()) {
     auto drainRes = runtime.drainJobs();
@@ -1260,7 +1269,7 @@ ABI_PREFIX HermesABIBoolOrError drain_microtasks(HermesABIContext *ctx, int) {
   return abi::createBoolOrError(true);
 }
 
-ABI_PREFIX HermesABIBigIntOrError
+ABI_PREFIX HermesABIBigIntOrError HERMES_CALL
 create_bigint_from_int64(HermesABIContext *ctx, int64_t value) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -1270,7 +1279,7 @@ create_bigint_from_int64(HermesABIContext *ctx, int64_t value) {
     return abi::createBigIntOrError(HermesABIErrorCodeJSError);
   return ctx->createBigIntOrError(*res);
 }
-ABI_PREFIX HermesABIBigIntOrError
+ABI_PREFIX HermesABIBigIntOrError HERMES_CALL
 create_bigint_from_uint64(HermesABIContext *ctx, uint64_t value) {
   auto &runtime = *ctx->rt;
   vm::GCScope gcScope(runtime);
@@ -1279,15 +1288,17 @@ create_bigint_from_uint64(HermesABIContext *ctx, uint64_t value) {
     return abi::createBigIntOrError(HermesABIErrorCodeJSError);
   return ctx->createBigIntOrError(*res);
 }
-ABI_PREFIX bool bigint_is_int64(HermesABIContext *, HermesABIBigInt bigint) {
+ABI_PREFIX bool HERMES_CALL
+bigint_is_int64(HermesABIContext *, HermesABIBigInt bigint) {
   return toHandle(bigint)->isTruncationToSingleDigitLossless(
       /* signedTruncation */ true);
 }
-ABI_PREFIX bool bigint_is_uint64(HermesABIContext *, HermesABIBigInt bigint) {
+ABI_PREFIX bool HERMES_CALL
+bigint_is_uint64(HermesABIContext *, HermesABIBigInt bigint) {
   return toHandle(bigint)->isTruncationToSingleDigitLossless(
       /* signedTruncation */ false);
 }
-ABI_PREFIX uint64_t
+ABI_PREFIX uint64_t HERMES_CALL
 bigint_truncate_to_uint64(HermesABIContext *, HermesABIBigInt bigint) {
   auto digit = toHandle(bigint)->truncateToSingleDigit();
   static_assert(
@@ -1295,7 +1306,7 @@ bigint_truncate_to_uint64(HermesABIContext *, HermesABIBigInt bigint) {
       "BigInt digit is no longer sizeof(uint64_t) bytes.");
   return digit;
 }
-ABI_PREFIX HermesABIStringOrError bigint_to_string(
+ABI_PREFIX HermesABIStringOrError HERMES_CALL bigint_to_string(
     HermesABIContext *ctx,
     HermesABIBigInt bigint,
     unsigned radix) {
@@ -1320,7 +1331,7 @@ __declspec(dllexport)
 #else // _MSC_VER
 __attribute__((visibility("default")))
 #endif // _MSC_VER
-    const HermesABIVTable *get_hermes_abi_vtable() {
+    const HermesABIVTable *HERMES_CALL get_hermes_abi_vtable() {
   static const HermesABIVTable abiVtable = {
       make_hermes_runtime,
       release_hermes_runtime,
