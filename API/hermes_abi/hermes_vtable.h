@@ -8,13 +8,13 @@
 #ifndef HERMES_ABI_HERMES_VTABLE_H
 #define HERMES_ABI_HERMES_VTABLE_H
 
+#include "hermes_abi.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-struct HermesABIVTable;
-
-const HermesABIVTable *get_hermes_abi_vtable();
+const HermesABIVTable *HERMES_CALL get_hermes_abi_vtable(void);
 
 #ifdef __cplusplus
 }

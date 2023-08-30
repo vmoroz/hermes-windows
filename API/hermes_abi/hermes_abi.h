@@ -11,6 +11,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef HERMES_CALL
+#ifdef _WIN32
+#define HERMES_CALL __stdcall
+#else
+#define HERMES_CALL
+#endif
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct HermesABIRuntimeConfig;
 struct HermesABIContext;
 struct HermesABIManagedPointer;
@@ -29,7 +41,7 @@ struct HermesABINativeState;
 struct HermesABIManagedPointerVTable {
   /// Pointer to the function that should be invoked when this reference is
   /// released.
-  void (*invalidate)(HermesABIManagedPointer *);
+  void(HERMES_CALL *invalidate)(HermesABIManagedPointer *);
 };
 struct HermesABIManagedPointer {
   const HermesABIManagedPointerVTable *vtable;
@@ -123,7 +135,7 @@ struct HermesABIByteRef {
 /// Define the structure for buffers containing JS source or bytecode. This is
 /// designed to mirror the functionality of jsi::Buffer.
 struct HermesABIBufferVTable {
-  void (*release)(HermesABIBuffer *);
+  void(HERMES_CALL *release)(HermesABIBuffer *);
 };
 struct HermesABIBuffer {
   const HermesABIBufferVTable *vtable;
@@ -132,7 +144,7 @@ struct HermesABIBuffer {
 };
 
 struct HermesABIMutableBufferVTable {
-  void (*release)(HermesABIMutableBuffer *);
+  void(HERMES_CALL *release)(HermesABIMutableBuffer *);
 };
 struct HermesABIMutableBuffer {
   const HermesABIMutableBufferVTable *vtable;
@@ -141,7 +153,7 @@ struct HermesABIMutableBuffer {
 };
 
 struct HermesABIByteBufferVTable {
-  void (*grow_by)(HermesABIByteBuffer *, size_t);
+  void(HERMES_CALL *grow_by)(HermesABIByteBuffer *, size_t);
 };
 struct HermesABIByteBuffer {
   const HermesABIByteBufferVTable *vtable;
@@ -152,13 +164,13 @@ struct HermesABIByteBuffer {
 /// Define the structure for host functions. This is designed to recreate the
 /// functionality of jsi::HostFunction.
 struct HermesABIHostFunctionVTable {
-  HermesABIValueOrError (*call)(
+  HermesABIValueOrError(HERMES_CALL *call)(
       HermesABIHostFunction *,
       HermesABIContext *,
       const HermesABIValue *,
       const HermesABIValue *,
       size_t);
-  void (*release)(HermesABIHostFunction *);
+  void(HERMES_CALL *release)(HermesABIHostFunction *);
 };
 struct HermesABIHostFunction {
   const HermesABIHostFunctionVTable *vtable;
@@ -167,7 +179,7 @@ struct HermesABIHostFunction {
 /// Define the structure for lists of PropNameIDs, so that they can be returned
 /// by get_property_names on a HostObject.
 struct HermesABIPropNameIDListVTable {
-  void (*release)(HermesABIPropNameIDList *);
+  void(HERMES_CALL *release)(HermesABIPropNameIDList *);
 };
 struct HermesABIPropNameIDList {
   const HermesABIPropNameIDListVTable *vtable;
@@ -178,23 +190,26 @@ struct HermesABIPropNameIDList {
 /// Define the structure for host objects. This is designed to recreate the
 /// functionality of jsi::HostObject.
 struct HermesABIHostObjectVTable {
-  HermesABIValueOrError (
-      *get)(HermesABIHostObject *, HermesABIContext *, HermesABIPropNameID);
-  HermesABIVoidOrError (*set)(
+  HermesABIValueOrError(HERMES_CALL *get)(
+      HermesABIHostObject *,
+      HermesABIContext *,
+      HermesABIPropNameID);
+  HermesABIVoidOrError(HERMES_CALL *set)(
       HermesABIHostObject *,
       HermesABIContext *,
       HermesABIPropNameID,
       const HermesABIValue *);
-  HermesABIPropNameIDListPtrOrError (
-      *get_property_names)(HermesABIHostObject *, HermesABIContext *);
-  void (*release)(HermesABIHostObject *);
+  HermesABIPropNameIDListPtrOrError(HERMES_CALL *get_property_names)(
+      HermesABIHostObject *,
+      HermesABIContext *);
+  void(HERMES_CALL *release)(HermesABIHostObject *);
 };
 struct HermesABIHostObject {
   const HermesABIHostObjectVTable *vtable;
 };
 
 struct HermesABINativeStateVTable {
-  void (*release)(HermesABINativeState *);
+  void(HERMES_CALL *release)(HermesABINativeState *);
 };
 struct HermesABINativeState {
   const HermesABINativeStateVTable *vtable;
@@ -204,214 +219,251 @@ struct HermesABIVTable {
   /// Create a new instance of a Hermes Runtime, and return a pointer to its
   /// associated context. The context must be released with
   /// release_hermes_runtime when it is no longer needed.
-  HermesABIContext *(*make_hermes_runtime)(const HermesABIRuntimeConfig *);
+  HermesABIContext *(HERMES_CALL *make_hermes_runtime)(
+      const HermesABIRuntimeConfig *);
   /// Release the Hermes Runtime associated with the given context.
-  void (*release_hermes_runtime)(HermesABIContext *);
+  void(HERMES_CALL *release_hermes_runtime)(HermesABIContext *);
 
   /// Methods for retrieving and clearing exceptions. An exception should be
   /// retrieved if and only if some method returned an error value.
   /// Get and clear the stored JS exception value. The returned value is
   /// guaranteed to not be another exception. This should be called exactly once
   /// after an exception is thrown.
-  HermesABIValue (*get_and_clear_js_error_value)(HermesABIContext *);
-  HermesABIByteRef (*get_native_exception_message)(HermesABIContext *);
+  HermesABIValue(HERMES_CALL *get_and_clear_js_error_value)(HermesABIContext *);
+  HermesABIByteRef(HERMES_CALL *get_native_exception_message)(
+      HermesABIContext *);
   /// Clear the stored native exception message. This should be called exactly
   /// once after the message is retrieved.
-  void (*clear_native_exception_message)(HermesABIContext *);
+  void(HERMES_CALL *clear_native_exception_message)(HermesABIContext *);
 
   /// Set the current error before returning control to the ABI. These are
   /// intended to be used to throw exceptions from HostFunctions and
   /// HostObjects.
-  void (*set_js_error_value)(HermesABIContext *, const HermesABIValue *);
-  void (
-      *set_native_exception_message)(HermesABIContext *, const char *, size_t);
+  void(HERMES_CALL *set_js_error_value)(
+      HermesABIContext *,
+      const HermesABIValue *);
+  void(HERMES_CALL *set_native_exception_message)(
+      HermesABIContext *,
+      const char *,
+      size_t);
 
-  HermesABIPropNameID (
-      *clone_prop_name_id)(HermesABIContext *, HermesABIPropNameID);
-  HermesABIString (*clone_string)(HermesABIContext *, HermesABIString);
-  HermesABISymbol (*clone_symbol)(HermesABIContext *, HermesABISymbol);
-  HermesABIObject (*clone_object)(HermesABIContext *, HermesABIObject);
-  HermesABIBigInt (*clone_big_int)(HermesABIContext *, HermesABIBigInt);
+  HermesABIPropNameID(
+      HERMES_CALL *clone_prop_name_id)(HermesABIContext *, HermesABIPropNameID);
+  HermesABIString(
+      HERMES_CALL *clone_string)(HermesABIContext *, HermesABIString);
+  HermesABISymbol(
+      HERMES_CALL *clone_symbol)(HermesABIContext *, HermesABISymbol);
+  HermesABIObject(
+      HERMES_CALL *clone_object)(HermesABIContext *, HermesABIObject);
+  HermesABIBigInt(
+      HERMES_CALL *clone_big_int)(HermesABIContext *, HermesABIBigInt);
 
   /// Check if the given buffer contains Hermes bytecode.
-  bool (*is_hermes_bytecode)(const uint8_t *, size_t);
+  bool(HERMES_CALL *is_hermes_bytecode)(const uint8_t *, size_t);
 
   /// Evaluate the given JavaScript source or Hermes bytecode with an associated
   /// source URL in the given context, and return the result. The caller must
   /// ensure that bytecode passed to \c evaluate_hermes_bytecode is valid
   /// bytecode.
-  HermesABIValueOrError (*evaluate_javascript_source)(
+  HermesABIValueOrError(HERMES_CALL *evaluate_javascript_source)(
       HermesABIContext *,
       HermesABIBuffer *,
       const char *,
       size_t);
-  HermesABIValueOrError (*evaluate_hermes_bytecode)(
+  HermesABIValueOrError(HERMES_CALL *evaluate_hermes_bytecode)(
       HermesABIContext *,
       HermesABIBuffer *,
       const char *,
       size_t);
 
-  HermesABIObject (*get_global_object)(HermesABIContext *);
-  HermesABIStringOrError (
-      *create_string_from_ascii)(HermesABIContext *, const char *, size_t);
-  HermesABIStringOrError (
-      *create_string_from_utf8)(HermesABIContext *, const uint8_t *, size_t);
+  HermesABIObject(HERMES_CALL *get_global_object)(HermesABIContext *);
+  HermesABIStringOrError(HERMES_CALL *create_string_from_ascii)(
+      HermesABIContext *,
+      const char *,
+      size_t);
+  HermesABIStringOrError(HERMES_CALL *create_string_from_utf8)(
+      HermesABIContext *,
+      const uint8_t *,
+      size_t);
 
-  HermesABIObjectOrError (*create_object)(HermesABIContext *);
+  HermesABIObjectOrError(HERMES_CALL *create_object)(HermesABIContext *);
 
-  HermesABIBoolOrError (*has_object_property_from_string)(
+  HermesABIBoolOrError(HERMES_CALL *has_object_property_from_string)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIString);
-  HermesABIBoolOrError (*has_object_property_from_prop_name_id)(
+  HermesABIBoolOrError(HERMES_CALL *has_object_property_from_prop_name_id)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIPropNameID);
 
-  HermesABIValueOrError (*get_object_property_from_string)(
+  HermesABIValueOrError(HERMES_CALL *get_object_property_from_string)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIString);
-  HermesABIValueOrError (*get_object_property_from_prop_name_id)(
+  HermesABIValueOrError(HERMES_CALL *get_object_property_from_prop_name_id)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIPropNameID);
-  HermesABIVoidOrError (*set_object_property_from_string)(
+  HermesABIVoidOrError(HERMES_CALL *set_object_property_from_string)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIString,
       const HermesABIValue *);
-  HermesABIVoidOrError (*set_object_property_from_prop_name_id)(
+  HermesABIVoidOrError(HERMES_CALL *set_object_property_from_prop_name_id)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIPropNameID,
       const HermesABIValue *);
 
-  HermesABIArrayOrError (
-      *get_object_property_names)(HermesABIContext *, HermesABIObject);
+  HermesABIArrayOrError(HERMES_CALL *get_object_property_names)(
+      HermesABIContext *,
+      HermesABIObject);
 
-  HermesABIArrayOrError (*create_array)(HermesABIContext *, size_t);
-  size_t (*get_array_length)(HermesABIContext *, HermesABIArray);
-  HermesABIValueOrError (
-      *get_array_value_at_index)(HermesABIContext *, HermesABIArray, size_t);
-  HermesABIVoidOrError (*set_array_value_at_index)(
+  HermesABIArrayOrError(HERMES_CALL *create_array)(HermesABIContext *, size_t);
+  size_t(HERMES_CALL *get_array_length)(HermesABIContext *, HermesABIArray);
+  HermesABIValueOrError(HERMES_CALL *get_array_value_at_index)(
+      HermesABIContext *,
+      HermesABIArray,
+      size_t);
+  HermesABIVoidOrError(HERMES_CALL *set_array_value_at_index)(
       HermesABIContext *,
       HermesABIArray,
       size_t,
       const HermesABIValue *);
 
-  HermesABIArrayBufferOrError (*create_array_buffer_from_external_data)(
+  HermesABIArrayBufferOrError(
+      HERMES_CALL *create_array_buffer_from_external_data)(
       HermesABIContext *,
       HermesABIMutableBuffer *);
-  HermesABIUint8PtrOrError (
-      *get_array_buffer_data)(HermesABIContext *, HermesABIArrayBuffer);
-  HermesABISizeTOrError (
-      *get_array_buffer_size)(HermesABIContext *, HermesABIArrayBuffer);
+  HermesABIUint8PtrOrError(HERMES_CALL *get_array_buffer_data)(
+      HermesABIContext *,
+      HermesABIArrayBuffer);
+  HermesABISizeTOrError(HERMES_CALL *get_array_buffer_size)(
+      HermesABIContext *,
+      HermesABIArrayBuffer);
 
-  HermesABIPropNameIDOrError (*create_prop_name_id_from_ascii)(
+  HermesABIPropNameIDOrError(HERMES_CALL *create_prop_name_id_from_ascii)(
       HermesABIContext *,
       const char *,
       size_t);
-  HermesABIPropNameIDOrError (*create_prop_name_id_from_utf8)(
+  HermesABIPropNameIDOrError(HERMES_CALL *create_prop_name_id_from_utf8)(
       HermesABIContext *,
       const uint8_t *,
       size_t);
-  HermesABIPropNameIDOrError (
-      *create_prop_name_id_from_string)(HermesABIContext *, HermesABIString);
-  HermesABIPropNameIDOrError (
-      *create_prop_name_id_from_symbol)(HermesABIContext *, HermesABISymbol);
-  bool (*prop_name_id_equals)(
+  HermesABIPropNameIDOrError(HERMES_CALL *create_prop_name_id_from_string)(
+      HermesABIContext *,
+      HermesABIString);
+  HermesABIPropNameIDOrError(HERMES_CALL *create_prop_name_id_from_symbol)(
+      HermesABIContext *,
+      HermesABISymbol);
+  bool(HERMES_CALL *prop_name_id_equals)(
       HermesABIContext *,
       HermesABIPropNameID,
       HermesABIPropNameID);
 
-  bool (*object_is_array)(HermesABIContext *, HermesABIObject);
-  bool (*object_is_array_buffer)(HermesABIContext *, HermesABIObject);
-  bool (*object_is_function)(HermesABIContext *, HermesABIObject);
-  bool (*object_is_host_object)(HermesABIContext *, HermesABIObject);
-  bool (*function_is_host_function)(HermesABIContext *, HermesABIFunction);
+  bool(HERMES_CALL *object_is_array)(HermesABIContext *, HermesABIObject);
+  bool(
+      HERMES_CALL *object_is_array_buffer)(HermesABIContext *, HermesABIObject);
+  bool(HERMES_CALL *object_is_function)(HermesABIContext *, HermesABIObject);
+  bool(HERMES_CALL *object_is_host_object)(HermesABIContext *, HermesABIObject);
+  bool(HERMES_CALL *function_is_host_function)(
+      HermesABIContext *,
+      HermesABIFunction);
 
-  HermesABIValueOrError (*call)(
+  HermesABIValueOrError(HERMES_CALL *call)(
       HermesABIContext *,
       HermesABIFunction,
       const HermesABIValue *,
       const HermesABIValue *,
       size_t);
-  HermesABIValueOrError (*call_as_constructor)(
+  HermesABIValueOrError(HERMES_CALL *call_as_constructor)(
       HermesABIContext *,
       HermesABIFunction,
       const HermesABIValue *,
       size_t);
 
-  HermesABIFunctionOrError (*create_function_from_host_function)(
+  HermesABIFunctionOrError(HERMES_CALL *create_function_from_host_function)(
       HermesABIContext *,
       HermesABIPropNameID,
       unsigned int,
       HermesABIHostFunction *);
   HermesABIHostFunction *(
-      *get_host_function)(HermesABIContext *, HermesABIFunction);
+      HERMES_CALL *get_host_function)(HermesABIContext *, HermesABIFunction);
 
-  HermesABIObjectOrError (*create_object_from_host_object)(
+  HermesABIObjectOrError(HERMES_CALL *create_object_from_host_object)(
       HermesABIContext *,
       HermesABIHostObject *);
-  HermesABIHostObject *(*get_host_object)(HermesABIContext *, HermesABIObject);
+  HermesABIHostObject *(
+      HERMES_CALL *get_host_object)(HermesABIContext *, HermesABIObject);
 
-  bool (*has_native_state)(HermesABIContext *, HermesABIObject);
+  bool(HERMES_CALL *has_native_state)(HermesABIContext *, HermesABIObject);
   HermesABINativeState *(
-      *get_native_state)(HermesABIContext *, HermesABIObject);
-  HermesABIVoidOrError (*set_native_state)(
+      HERMES_CALL *get_native_state)(HermesABIContext *, HermesABIObject);
+  HermesABIVoidOrError(HERMES_CALL *set_native_state)(
       HermesABIContext *,
       HermesABIObject,
       HermesABINativeState *);
 
-  HermesABIWeakObjectOrError (
-      *create_weak_object)(HermesABIContext *, HermesABIObject);
-  HermesABIValue (*lock_weak_object)(HermesABIContext *, HermesABIWeakObject);
+  HermesABIWeakObjectOrError(
+      HERMES_CALL *create_weak_object)(HermesABIContext *, HermesABIObject);
+  HermesABIValue(
+      HERMES_CALL *lock_weak_object)(HermesABIContext *, HermesABIWeakObject);
 
-  void (*get_utf8_from_string)(
+  void(HERMES_CALL *get_utf8_from_string)(
       HermesABIContext *,
       HermesABIString,
       HermesABIByteBuffer *);
-  void (*get_utf8_from_prop_name_id)(
+  void(HERMES_CALL *get_utf8_from_prop_name_id)(
       HermesABIContext *,
       HermesABIPropNameID,
       HermesABIByteBuffer *);
-  void (*get_utf8_from_symbol)(
+  void(HERMES_CALL *get_utf8_from_symbol)(
       HermesABIContext *,
       HermesABISymbol,
       HermesABIByteBuffer *);
 
-  HermesABIBoolOrError (
-      *instance_of)(HermesABIContext *, HermesABIObject, HermesABIFunction);
+  HermesABIBoolOrError(HERMES_CALL *instance_of)(
+      HermesABIContext *,
+      HermesABIObject,
+      HermesABIFunction);
 
-  bool (*strict_equals_symbol)(
+  bool(HERMES_CALL *strict_equals_symbol)(
       HermesABIContext *,
       HermesABISymbol,
       HermesABISymbol);
-  bool (*strict_equals_bigint)(
+  bool(HERMES_CALL *strict_equals_bigint)(
       HermesABIContext *,
       HermesABIBigInt,
       HermesABIBigInt);
-  bool (*strict_equals_string)(
+  bool(HERMES_CALL *strict_equals_string)(
       HermesABIContext *,
       HermesABIString,
       HermesABIString);
-  bool (*strict_equals_object)(
+  bool(HERMES_CALL *strict_equals_object)(
       HermesABIContext *,
       HermesABIObject,
       HermesABIObject);
 
-  HermesABIBoolOrError (*drain_microtasks)(HermesABIContext *, int);
+  HermesABIBoolOrError(HERMES_CALL *drain_microtasks)(HermesABIContext *, int);
 
-  HermesABIBigIntOrError (
-      *create_bigint_from_int64)(HermesABIContext *, int64_t);
-  HermesABIBigIntOrError (
-      *create_bigint_from_uint64)(HermesABIContext *, uint64_t);
-  bool (*bigint_is_int64)(HermesABIContext *, HermesABIBigInt);
-  bool (*bigint_is_uint64)(HermesABIContext *, HermesABIBigInt);
-  uint64_t (*bigint_truncate_to_uint64)(HermesABIContext *, HermesABIBigInt);
-  HermesABIStringOrError (
-      *bigint_to_string)(HermesABIContext *, HermesABIBigInt, unsigned);
+  HermesABIBigIntOrError(
+      HERMES_CALL *create_bigint_from_int64)(HermesABIContext *, int64_t);
+  HermesABIBigIntOrError(
+      HERMES_CALL *create_bigint_from_uint64)(HermesABIContext *, uint64_t);
+  bool(HERMES_CALL *bigint_is_int64)(HermesABIContext *, HermesABIBigInt);
+  bool(HERMES_CALL *bigint_is_uint64)(HermesABIContext *, HermesABIBigInt);
+  uint64_t(HERMES_CALL *bigint_truncate_to_uint64)(
+      HermesABIContext *,
+      HermesABIBigInt);
+  HermesABIStringOrError(HERMES_CALL *bigint_to_string)(
+      HermesABIContext *,
+      HermesABIBigInt,
+      unsigned);
 };
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif // !HERMES_ABI_HERMES_ABI_H

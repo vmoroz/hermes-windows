@@ -22,13 +22,7 @@ namespace {
 class BufferWrapper : public HermesABIBuffer {
   std::shared_ptr<const Buffer> buf_;
 
-  static size_t size(const HermesABIBuffer *buf) {
-    return static_cast<const BufferWrapper *>(buf)->buf_->size();
-  }
-  static const uint8_t *data(const HermesABIBuffer *buf) {
-    return static_cast<const BufferWrapper *>(buf)->buf_->data();
-  }
-  static void release(HermesABIBuffer *buf) {
+  static void HERMES_CALL release(HermesABIBuffer *buf) {
     delete static_cast<const BufferWrapper *>(buf);
   }
   static constexpr HermesABIBufferVTable vt{
@@ -43,7 +37,7 @@ class BufferWrapper : public HermesABIBuffer {
 class MutableBufferWrapper : public HermesABIMutableBuffer {
   std::shared_ptr<MutableBuffer> buf_;
 
-  static void release(HermesABIMutableBuffer *buf) {
+  static void HERMES_CALL release(HermesABIMutableBuffer *buf) {
     delete static_cast<const MutableBufferWrapper *>(buf);
   }
   static constexpr HermesABIMutableBufferVTable vt{
@@ -156,7 +150,7 @@ class HermesABIRuntime : public Runtime {
   class StringByteBuffer : public HermesABIByteBuffer {
     std::string buf_;
 
-    static void grow_by(HermesABIByteBuffer *buf, size_t amount) {
+    static void HERMES_CALL grow_by(HermesABIByteBuffer *buf, size_t amount) {
       auto *self = static_cast<StringByteBuffer *>(buf);
       self->buf_.resize(self->buf_.size() + amount);
       self->data = (uint8_t *)self->buf_.data();
@@ -187,7 +181,7 @@ class HermesABIRuntime : public Runtime {
     HermesABIRuntime &rt_;
     HostFunctionType hf_;
 
-    static HermesABIValueOrError call(
+    static HermesABIValueOrError HERMES_CALL call(
         HermesABIHostFunction *hf,
         HermesABIContext *ctx,
         const HermesABIValue *thisArg,
@@ -219,7 +213,7 @@ class HermesABIRuntime : public Runtime {
         return abi::createValueOrError(HermesABIErrorCodeNativeException);
       }
     }
-    static void release(HermesABIHostFunction *hf) {
+    static void HERMES_CALL release(HermesABIHostFunction *hf) {
       delete static_cast<HostFunctionWrapper *>(hf);
     }
 
@@ -241,8 +235,8 @@ class HermesABIRuntime : public Runtime {
     HermesABIRuntime &rt_;
     std::shared_ptr<HostObject> ho_;
 
-    static HermesABIValueOrError get(
-        HermesABIHostObject *ho,
+    static HermesABIValueOrError HERMES_CALL
+    get(HermesABIHostObject *ho,
         HermesABIContext *ctx,
         HermesABIPropNameID name) {
       auto *self = static_cast<HostObjectWrapper *>(ho);
@@ -266,8 +260,8 @@ class HermesABIRuntime : public Runtime {
       }
     }
 
-    static HermesABIVoidOrError set(
-        HermesABIHostObject *ho,
+    static HermesABIVoidOrError HERMES_CALL
+    set(HermesABIHostObject *ho,
         HermesABIContext *ctx,
         HermesABIPropNameID name,
         const HermesABIValue *value) {
@@ -298,7 +292,7 @@ class HermesABIRuntime : public Runtime {
       std::vector<PropNameID> jsiPropsVec_;
       std::vector<HermesABIPropNameID> abiPropsVec_;
 
-      static void release(HermesABIPropNameIDList *self) {
+      static void HERMES_CALL release(HermesABIPropNameIDList *self) {
         delete static_cast<PropNameIDListWrapper *>(self);
       }
       static constexpr HermesABIPropNameIDListVTable vt{
@@ -317,9 +311,8 @@ class HermesABIRuntime : public Runtime {
       }
     };
 
-    static HermesABIPropNameIDListPtrOrError getPropertyNames(
-        HermesABIHostObject *ho,
-        HermesABIContext *ctx) {
+    static HermesABIPropNameIDListPtrOrError HERMES_CALL
+    getPropertyNames(HermesABIHostObject *ho, HermesABIContext *ctx) {
       auto *self = static_cast<HostObjectWrapper *>(ho);
       auto &rt = self->rt_;
 
@@ -349,7 +342,7 @@ class HermesABIRuntime : public Runtime {
       }
     }
 
-    static void release(HermesABIHostObject *ho) {
+    static void HERMES_CALL release(HermesABIHostObject *ho) {
       delete static_cast<HostObjectWrapper *>(ho);
     }
 
@@ -372,7 +365,7 @@ class HermesABIRuntime : public Runtime {
   class NativeStateWrapper : public HermesABINativeState {
     std::shared_ptr<NativeState> nativeState_;
 
-    static void release(HermesABINativeState *self) {
+    static void HERMES_CALL release(HermesABINativeState *self) {
       delete static_cast<NativeStateWrapper *>(self);
     }
 
@@ -431,11 +424,11 @@ class HermesABIRuntime : public Runtime {
   }
 
 #define DECLARE_POINTER_CONVERSIONS(name)                              \
-  name intoJSI##name(const HermesABI##name &p) {                         \
+  name intoJSI##name(const HermesABI##name &p) {                       \
     return make<name>(&managedPointers_.add(p.pointer));               \
   }                                                                    \
-  name intoJSI##name(const HermesABI##name##OrError &p) {                \
-    return intoJSI##name(unwrap(p));                                     \
+  name intoJSI##name(const HermesABI##name##OrError &p) {              \
+    return intoJSI##name(unwrap(p));                                   \
   }                                                                    \
   HermesABI##name toABI##name(const name &p) const {                   \
     return abi::create##name(                                          \
@@ -521,11 +514,14 @@ class HermesABIRuntime : public Runtime {
       case HermesABIValueKindNumber:
         return Value(abi::getNumberValue(v));
       case HermesABIValueKindString:
-        return intoJSIString(vtable_->clone_string(ctx_, abi::getStringValue(v)));
+        return intoJSIString(
+            vtable_->clone_string(ctx_, abi::getStringValue(v)));
       case HermesABIValueKindObject:
-        return intoJSIObject(vtable_->clone_object(ctx_, abi::getObjectValue(v)));
+        return intoJSIObject(
+            vtable_->clone_object(ctx_, abi::getObjectValue(v)));
       case HermesABIValueKindSymbol:
-        return intoJSISymbol(vtable_->clone_symbol(ctx_, abi::getSymbolValue(v)));
+        return intoJSISymbol(
+            vtable_->clone_symbol(ctx_, abi::getSymbolValue(v)));
       case HermesABIValueKindBigInt:
         return intoJSIBigInt(
             vtable_->clone_big_int(ctx_, abi::getBigIntValue(v)));
@@ -856,9 +852,8 @@ class HermesABIRuntime : public Runtime {
   }
   ArrayBuffer createArrayBuffer(
       std::shared_ptr<MutableBuffer> buffer) override {
-    return intoJSIArrayBuffer(
-        vtable_->create_array_buffer_from_external_data(
-            ctx_, new MutableBufferWrapper(std::move(buffer))));
+    return intoJSIArrayBuffer(vtable_->create_array_buffer_from_external_data(
+        ctx_, new MutableBufferWrapper(std::move(buffer))));
   }
   size_t size(const Array &arr) override {
     return vtable_->get_array_length(ctx_, toABIArray(arr));
