@@ -22,12 +22,6 @@ namespace {
 class BufferWrapper : public HermesABIBuffer {
   std::shared_ptr<const Buffer> buf_;
 
-  static size_t size(const HermesABIBuffer *buf) {
-    return static_cast<const BufferWrapper *>(buf)->buf_->size();
-  }
-  static const uint8_t *data(const HermesABIBuffer *buf) {
-    return static_cast<const BufferWrapper *>(buf)->buf_->data();
-  }
   static void release(HermesABIBuffer *buf) {
     delete static_cast<const BufferWrapper *>(buf);
   }
