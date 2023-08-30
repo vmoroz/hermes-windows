@@ -11,6 +11,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct HermesABIRuntimeConfig;
 struct HermesABIContext;
 struct HermesABIManagedPointer;
@@ -414,4 +418,8 @@ struct HermesABIVTable {
       *bigint_to_string)(HermesABIContext *, HermesABIBigInt, unsigned);
 };
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif // !HERMES_ABI_HERMES_ABI_H
