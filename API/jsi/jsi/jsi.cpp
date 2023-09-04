@@ -54,7 +54,7 @@ Value callGlobalFunction(Runtime& runtime, const char* name, const Value& arg) {
         std::string("callGlobalFunction: JS global property '") + name +
         "' is " + kindToString(v, &runtime) + ", expected a Function");
   }
-  Object o = v.getObject(runtime);
+  Object o = std::move(v).getObject(runtime);
   if (!o.isFunction(runtime)) {
     throw JSINativeException(
         std::string("callGlobalFunction: JS global property '") + name +
@@ -180,7 +180,7 @@ Object Object::getPropertyAsObject(Runtime& runtime, const char* name) const {
             kindToString(v, &runtime) + ", expected an Object");
   }
 
-  return v.getObject(runtime);
+  return std::move(v).getObject(runtime);
 }
 
 Function Object::getPropertyAsFunction(Runtime& runtime, const char* name)
