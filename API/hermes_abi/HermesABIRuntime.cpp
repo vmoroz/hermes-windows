@@ -536,6 +536,18 @@ class HermesABIRuntime : public Runtime {
     return cloneToJSIValue(abi::getValue(val));
   }
 
+  // TODO: Use C++23 std::unreachable() when it is available.
+  [[noreturn]] static void unreachable() {
+    // Uses compiler specific extensions if possible.
+    // Even if no extension is used, undefined behavior is still raised by
+    // an empty function body and the noreturn attribute.
+#ifdef __GNUC__ // GCC, Clang, ICC
+    __builtin_unreachable();
+#elif defined(_MSC_VER) // MSVC
+    __assume(false);
+#endif
+  }
+
   static HermesABIValue toABIValue(const Value &v) {
     if (v.isUndefined())
       return abi::createUndefinedValue();
@@ -559,6 +571,7 @@ class HermesABIRuntime : public Runtime {
       return abi::createBigIntValue(mp);
 
     assert(false && "Unexpected value type.");
+    unreachable();
   }
 
   HermesABIValue cloneToABIValue(const Value &v) {
@@ -588,6 +601,7 @@ class HermesABIRuntime : public Runtime {
           vtable_->clone_big_int(ctx_, abi::createBigInt(mp)));
 
     assert(false && "Unexpected value type.");
+    unreachable();
   }
 
  public:
