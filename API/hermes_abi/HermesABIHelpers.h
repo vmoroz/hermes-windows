@@ -203,7 +203,7 @@ static inline HermesABISymbol getSymbolValue(const HermesABIValue &val) {
 }
 static inline HermesABIManagedPointer *getPointerValue(
     const HermesABIValue &val) {
-  assert(getValueKind(val) | HERMES_ABI_POINTER_MASK);
+  assert(getValueKind(val) & HERMES_ABI_POINTER_MASK);
   return val.data.pointer;
 }
 
