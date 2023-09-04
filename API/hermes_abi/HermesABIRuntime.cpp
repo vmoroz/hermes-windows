@@ -105,14 +105,14 @@ class HermesABIRuntime : public Runtime {
     /// Get the next free element. Must not be called when this instance is
     /// occupied with a value.
     ManagedPointerHolder *getNextFree() {
-      assert(isFree() && "Free pointer unusuable while occupied");
+      assert(isFree() && "Free pointer unusable while occupied");
       return nextFree_;
     }
 
     /// Set the next free element. Must not be called when this instance is
     /// occupied with a value.
     void setNextFree(ManagedPointerHolder *nextFree) {
-      assert(isFree() && "Free pointer unusuable while occupied");
+      assert(isFree() && "Free pointer unusable while occupied");
       nextFree_ = nextFree;
     }
 

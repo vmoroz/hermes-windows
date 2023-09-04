@@ -28,7 +28,7 @@ namespace hermes {
 // - An \c emplace method to emplace a value in the \c Element
 // - An \c isFree method to return whether the value has been freed
 // - A \c setNextFree method to store a pointer to another \c Element
-// - A \c getNextFree mthod to return the previously-stored pointer to another
+// - A \c getNextFree method to return the previously-stored pointer to another
 //   \c Element.
 template <typename Element, size_t kElementsPerChunk = 16>
 class ManagedChunkedList {
@@ -72,7 +72,7 @@ class ManagedChunkedList {
       // a new chunk.
       if (chunkCount_ < targetChunkCount_) {
         // Garbage collection is scheduled to happen at a larger chunk count;
-        // just allocate a new chunk of unoccpied elements.
+        // just allocate a new chunk of unoccupied elements.
         allocateChunk();
       } else {
         // Reached the garbage collection threshold; collect.
@@ -166,7 +166,7 @@ class ManagedChunkedList {
       chunk = nextChunk;
     }
 
-    // Schedule the next collection at a multiple of the the number of suviving
+    // Schedule the next collection at a multiple of the the number of surviving
     // elements (using the occupancy ratio), averaged with previous target to
     // avoid drastic jumps.
     targetChunkCount_.update(
