@@ -29,3 +29,8 @@ endif()
 add_library(hermesAbiRuntime STATIC HermesABIRuntime.cpp)
 target_include_directories(hermesAbiRuntime PUBLIC ..)
 target_link_libraries(hermesAbiRuntime PUBLIC jsi hermesPublic)
+
+if (MSVC)
+  target_compile_options(hermesAbiRuntime PRIVATE /GR /EHsc)
+endif()
+
