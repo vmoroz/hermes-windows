@@ -4755,7 +4755,7 @@ napi_status NapiEnvironment::createNewInstance(
   //
   // Note that 13.2.2.1-4 are also handled by the call to newObject.
   vm::CallResult<vm::PseudoHandle<vm::JSObject>> thisRes =
-      vm::Callable::createThisForConstruct(ctorHandle, runtime_);
+      vm::Callable::createThisForConstruct_RJS(ctorHandle, runtime_);
   CHECK_NAPI(checkJSErrorStatus(thisRes));
   // We need to capture this in case the ctor doesn't return an object,
   // we need to return this object.
@@ -4778,7 +4778,7 @@ napi_status NapiEnvironment::createNewInstance(
     CHECK_NAPI(checkJSErrorStatus(runtime_.raiseStackOverflow(
         vm::Runtime::StackOverflowKind::NativeStack)));
   }
-  for (size_t i = 0; i != argCount; ++i) {
+  for (size_t i = 0; i < argCount; ++i) {
     newFrame->getArgRef(static_cast<int32_t>(i)) = *phv(args[i]);
   }
   // The last parameter indicates that this call should construct an object.
