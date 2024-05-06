@@ -21,7 +21,7 @@
 #include <hermes/hermes.h>
 #include <hermes/inspector/AsyncPauseState.h>
 #include <hermes/inspector/Exceptions.h>
-#include <hermes/inspector/RuntimeAdapter.h>
+#include <hermes/inspector/RuntimeAdapter72.h>
 #include <optional>
 
 namespace facebook {

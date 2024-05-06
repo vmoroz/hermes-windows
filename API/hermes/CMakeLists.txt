@@ -116,7 +116,14 @@ if (WIN32)
 endif()
 
 # Export the required header directory
-target_include_directories(libhermes PUBLIC .. ../../public ../node-api ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
+target_include_directories(libhermes PUBLIC
+  ..
+  ../../public
+  ../node-api
+  ${HERMES_JSI_DIR}
+  ${REACT_NATIVE_SOURCE}/ReactCommon
+  ${REACT_NATIVE_SOURCE}/ReactCommon/runtimeexecutor
+  ${REACT_NATIVE_SOURCE_72}/ReactCommon)
 
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
@@ -153,7 +160,14 @@ set_target_properties(libhermes PROPERTIES
 add_library(libhermes_lean ${api_sources})
 target_link_libraries(libhermes_lean PUBLIC jsi PRIVATE hermesVMRuntimeLean ${INSPECTOR_DEPS})
 target_link_options(libhermes_lean PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
-target_include_directories(libhermes_lean PUBLIC .. ../../public ../node-api ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
+target_include_directories(libhermes_lean PUBLIC
+  ..
+  ../../public
+  ../node-api
+  ${HERMES_JSI_DIR}
+  ${REACT_NATIVE_SOURCE}/ReactCommon
+  ${REACT_NATIVE_SOURCE}/ReactCommon/runtimeexecutor
+  ${REACT_NATIVE_SOURCE_72}/ReactCommon)
 set_target_properties(libhermes_lean PROPERTIES OUTPUT_NAME hermes_lean)
 
 if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)

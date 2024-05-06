@@ -14,7 +14,7 @@
 #include <unordered_set>
 
 #include <hermes/hermes.h>
-#include <hermes/inspector/RuntimeAdapter.h>
+#include <hermes/inspector/RuntimeAdapter72.h>
 #include <hermes/inspector/chrome/Connection.h>
 #include <hermes/inspector/chrome/Registration.h>
 #include <jsinspector/InspectorInterfaces.h>

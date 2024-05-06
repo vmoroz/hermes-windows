@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include "RuntimeAdapter.h"
+#include "RuntimeAdapter72.h"
 
 namespace facebook {
 namespace hermes {

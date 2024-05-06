@@ -15,7 +15,7 @@
 #include <string>
 
 #include <hermes/hermes.h>
-#include <hermes/inspector/RuntimeAdapter.h>
+#include <hermes/inspector/RuntimeAdapter72.h>
 #include <jsinspector/InspectorInterfaces.h>
 
 namespace facebook {
