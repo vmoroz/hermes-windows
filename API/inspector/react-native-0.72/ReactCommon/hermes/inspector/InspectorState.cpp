@@ -222,7 +222,7 @@ std::pair<NextStatePtr, CommandPtr> InspectorState::Running::didPause(
         makeContinueCommand());
   }
 
-  if (reason == debugger::PauseReason::AsyncTrigger) {
+  if (reason == debugger::PauseReason::AsyncTriggerExplicit) {
     AsyncPauseState &pendingPauseState = inspector_.pendingPauseState_;
 
     switch (pendingPauseState) {
@@ -363,7 +363,7 @@ void InspectorState::Paused::onEnter(InspectorState *prevState) {
 std::pair<NextStatePtr, CommandPtr> InspectorState::Paused::didPause(
     std::unique_lock<std::mutex> &lock) {
   switch (getPauseReason()) {
-    case debugger::PauseReason::AsyncTrigger:
+    case debugger::PauseReason::AsyncTriggerExplicit:
       inspector_.pendingPauseState_ = AsyncPauseState::None;
       break;
     case debugger::PauseReason::EvalComplete: {
