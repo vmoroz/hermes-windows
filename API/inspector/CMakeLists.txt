@@ -7,7 +7,7 @@
 
 add_subdirectory(boost)
 add_subdirectory(folly)
-add_subdirectory(react-native)
+add_subdirectory(react-native-0.72)
 
 include(CMakePrintHelpers)
 cmake_print_variables(BOOST_INCLUDES)
