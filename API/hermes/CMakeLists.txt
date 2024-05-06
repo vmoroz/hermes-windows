@@ -63,16 +63,20 @@ add_subdirectory(cdp)
 # against the internal functionality they need.
 set(api_sources
   hermes.cpp
-  hermes_napi.cpp
   DebuggerAPI.cpp
   AsyncDebuggerAPI.cpp
-  MurmurHash.cpp
   RuntimeTaskRunner.cpp
   ${INSPECTOR_API_SOURCES}
   )
 
-if (WIN32)
-  list(APPEND api_sources hermes_win.cpp)
+set(api_sources2
+  ${api_sources}
+  hermes_napi.cpp
+  MurmurHash.cpp
+  )
+
+if(WIN32)
+  list(APPEND api_sources2 hermes_win.cpp)
 endif()
 
 file(GLOB api_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
@@ -97,7 +101,12 @@ add_hermes_library(timerStats TimerStats.cpp LINK_LIBS jsi hermesSupport)
 add_hermes_library(traceInterpreter TraceInterpreter.cpp
   LINK_LIBS libhermes hermesInstrumentation synthTrace synthTraceParser)
 
-add_library(libhermes SHARED ${api_sources})
+add_library(libhermes2 ${api_sources})
+target_link_libraries(libhermes2 PUBLIC jsi PRIVATE hermesVMRuntime ${INSPECTOR_DEPS})
+target_link_options(libhermes2 PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
+target_include_directories(libhermes2 PUBLIC .. ../../public ${HERMES_JSI_DIR})
+
+add_library(libhermes SHARED ${api_sources2})
 target_link_libraries(libhermes PUBLIC jsi PRIVATE hermesVMRuntime hermesNapi hermesinspector ${INSPECTOR_DEPS})
 target_link_options(libhermes PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
 
@@ -107,7 +116,7 @@ if (WIN32)
 endif()
 
 # Export the required header directory
-target_include_directories(libhermes PUBLIC .. ../../public ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
+target_include_directories(libhermes PUBLIC .. ../../public ../node-api ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
 
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Same as above, but for windows. Note that there is no equivalent of -fvisibility=default.
@@ -144,7 +153,7 @@ set_target_properties(libhermes PROPERTIES
 add_library(libhermes_lean ${api_sources})
 target_link_libraries(libhermes_lean PUBLIC jsi PRIVATE hermesVMRuntimeLean ${INSPECTOR_DEPS})
 target_link_options(libhermes_lean PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
-target_include_directories(libhermes_lean PUBLIC .. ../../public ${HERMES_JSI_DIR})
+target_include_directories(libhermes_lean PUBLIC .. ../../public ../node-api ${HERMES_JSI_DIR} ${REACT_NATIVE_SOURCE}/ReactCommon)
 set_target_properties(libhermes_lean PROPERTIES OUTPUT_NAME hermes_lean)
 
 if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)

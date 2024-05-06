@@ -1986,8 +1986,12 @@ class NapiHostFunctionContext final {
   static vm::CallResult<vm::HermesValue>
   func(void *context, vm::Runtime &runtime, vm::NativeArgs hvArgs);
 
-  static void finalize(void *context) {
+  static void finalize(void* context) {
     delete reinterpret_cast<class NapiHostFunctionContext *>(context);
+  }
+
+  static void finalizeNS(vm::GC & /*gc*/, vm::NativeState *ns) {
+    delete reinterpret_cast<class NapiHostFunctionContext *>(ns->context());
   }
 
   void *nativeData() noexcept {
@@ -3218,7 +3222,7 @@ size_t convertUTF16ToUTF8WithReplacements(
         c32 = UNICODE_REPLACEMENT_CHARACTER;
       } else {
         // Decode surrogate pair and increment, because we consumed two chars.
-        c32 = decodeSurrogatePair(c, *cur++);
+        c32 = utf16SurrogatePairToCodePoint(c, *cur++);
       }
     } else {
       // Not a surrogate.
@@ -3738,7 +3742,7 @@ napi_status NapiEnvironment::createNumber(
     T value,
     napi_value *result) noexcept {
   return setResult(
-      vm::HermesValue::encodeNumberValue(static_cast<double>(value)), result);
+      vm::HermesValue::encodeUntrustedNumberValue(static_cast<double>(value)), result);
 }
 
 napi_status NapiEnvironment::getNumberValue(
@@ -5249,7 +5253,7 @@ napi_status NapiEnvironment::defineClass(
       makeHandle<vm::JSObject>(std::move(ctorRes));
 
   vm::NativeState *ns = vm::NativeState::create(
-      runtime_, context.release(), &NapiHostFunctionContext::finalize);
+      runtime_, context.release(), &NapiHostFunctionContext::finalizeNS);
 
   vm::CallResult<bool> res = vm::JSObject::defineOwnProperty(
       classHandle,
@@ -5826,9 +5830,9 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
         reinterpret_cast<uint8_t *>(externalData),
         byteLength,
         externalBuffer.release(),
-        [](void *context) {
+        [](vm::GC &/*gc*/, vm::NativeState *ns) {
           std::unique_ptr<NapiExternalBuffer> externalBuffer(
-              reinterpret_cast<NapiExternalBuffer *>(context));
+              reinterpret_cast<NapiExternalBuffer *>(ns->context()));
         });
   }
   return scope.setResult(std::move(buffer));
@@ -6659,7 +6663,7 @@ vm::Handle<> NapiEnvironment::makeHandle(vm::Handle<> value) noexcept {
 
 // Useful for converting index to a name/index handle.
 vm::Handle<> NapiEnvironment::makeHandle(uint32_t value) noexcept {
-  return makeHandle(vm::HermesValue::encodeDoubleValue(value));
+  return makeHandle(vm::HermesValue::encodeTrustedNumberValue(value));
 }
 
 template <class T>

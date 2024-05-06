@@ -13,7 +13,7 @@ add_hermes_tool(synth
 
 target_link_libraries(synth
   hermesConsoleHost
-  libhermes
+  libhermes2
   traceInterpreter
 )
 

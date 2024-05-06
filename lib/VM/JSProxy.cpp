@@ -1437,7 +1437,7 @@ CallResult<PseudoHandle<JSArray>> JSProxy::ownPropertyKeys(
                   // Convert index keys
                   if (strAsIndexOpt) {
                     HermesValue strAsIndexValue =
-                        HermesValue::encodeDoubleValue(
+                        HermesValue::encodeTrustedNumberValue(
                             static_cast<double>(strAsIndexOpt.getValue()));
                     JSArray::setElementAt(
                         trapResult,
