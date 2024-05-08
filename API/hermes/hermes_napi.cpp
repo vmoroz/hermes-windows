@@ -1986,7 +1986,7 @@ class NapiHostFunctionContext final {
   static vm::CallResult<vm::HermesValue>
   func(void *context, vm::Runtime &runtime, vm::NativeArgs hvArgs);
 
-  static void finalize(void* context) {
+  static void finalize(void *context) {
     delete reinterpret_cast<class NapiHostFunctionContext *>(context);
   }
 
@@ -3257,6 +3257,9 @@ NapiEnvironment::NapiEnvironment(
       isInspectable_(isInspectable),
       scriptCache_(std::move(scriptCache)),
       pendingFinalizers_(NapiPendingFinalizers::create()) {
+  if (isInspectable) {
+    compileFlags_.debug = true;
+  }
   switch (runtimeConfig.getCompilationMode()) {
     case vm::SmartCompilation:
       compileFlags_.lazy = true;
@@ -3742,7 +3745,8 @@ napi_status NapiEnvironment::createNumber(
     T value,
     napi_value *result) noexcept {
   return setResult(
-      vm::HermesValue::encodeUntrustedNumberValue(static_cast<double>(value)), result);
+      vm::HermesValue::encodeUntrustedNumberValue(static_cast<double>(value)),
+      result);
 }
 
 napi_status NapiEnvironment::getNumberValue(
@@ -5830,7 +5834,7 @@ napi_status NapiEnvironment::createExternalArrayBuffer(
         reinterpret_cast<uint8_t *>(externalData),
         byteLength,
         externalBuffer.release(),
-        [](vm::GC &/*gc*/, vm::NativeState *ns) {
+        [](vm::GC & /*gc*/, vm::NativeState *ns) {
           std::unique_ptr<NapiExternalBuffer> externalBuffer(
               reinterpret_cast<NapiExternalBuffer *>(ns->context()));
         });
