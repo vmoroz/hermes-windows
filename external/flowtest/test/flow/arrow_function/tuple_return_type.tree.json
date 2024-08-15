@@ -57,9 +57,11 @@
                   "range":[15,19]
                 },
                 "rest":null,
-                "typeParameters":null
+                "typeParameters":null,
+                "this":null
               }
-            ]
+            ],
+            "inexact":false
           }
         },
         "typeParameters":null

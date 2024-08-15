@@ -28,14 +28,6 @@ if (EMSCRIPTEN AND EMSCRIPTEN_FASTCOMP)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s BINARYEN_TRAP_MODE=clamp")
 endif()
 
-# For compatibility, CMake adds /EHsc, /GR and /DUNICODE by default for MSVC. We want to set those
-# flags per target, so remove them.
-if (MSVC)
-#  string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-#  string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-#  string(REPLACE "/DUNICODE" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-endif (MSVC)
-
 # set stack reserved size to ~10MB
 if (MSVC)
   # CMake previously automatically set this value for MSVC builds, but the
@@ -88,13 +80,13 @@ function(hermes_update_compile_flags name)
 
   set(flags "")
 
-  #if (MSVC)
+  if (MSVC)
     # enable function-level linking
     set(flags "${flags} /Gy")
     
     # Ensure debug symbols are generated for all sources.
     set(flags "${flags} /Zi")
-  #endif ()
+  endif ()
 
   if (NOT HERMES_ENABLE_EH_RTTI)
     if (GCC_COMPATIBLE)

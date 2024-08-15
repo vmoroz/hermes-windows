@@ -239,6 +239,11 @@ inline void Object::setExternalMemoryPressure(Runtime& runtime, size_t amt)
 }
 #endif
 
+inline void Object::setExternalMemoryPressure(Runtime& runtime, size_t amt)
+    const {
+  runtime.setExternalMemoryPressure(*this, amt);
+}
+
 inline Array Object::getPropertyNames(Runtime& runtime) const {
   return runtime.getPropertyNames(*this);
 }

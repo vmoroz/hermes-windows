@@ -5,7 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// This file includes shared code between Apple and Windows implementation of Intl APIs
+// This file includes shared code between Apple and ICU implementation of
+// Intl APIs
+#include "hermes/Platform/Intl/BCP47Parser.h"
 #include "hermes/Platform/Intl/PlatformIntl.h"
 
 using namespace ::hermes;
@@ -13,7 +15,53 @@ using namespace ::hermes;
 namespace hermes {
 namespace platform_intl {
 
-// https://402.ecma-international.org/8.0/#sec-bestavailablelocale
+/// https://402.ecma-international.org/8.0/#sec-canonicalizelocalelist
+vm::CallResult<std::vector<std::u16string>> canonicalizeLocaleList(
+    vm::Runtime &runtime,
+    const std::vector<std::u16string> &locales) {
+  // 1. If locales is undefined, then a. Return a new empty list
+  if (locales.empty()) {
+    return std::vector<std::u16string>{};
+  }
+  // 2. Let seen be a new empty List
+  std::vector<std::u16string> seen;
+
+  // 3. If Type(locales) is String or Type(locales) is Object and locales has an
+  // [[InitializedLocale]] internal slot, then
+  // 4. Else
+  // We don't yet support Locale object -
+  // https://402.ecma-international.org/8.0/#locale-objects As of now, 'locales'
+  // can only be a string list/array. Validation occurs in normalizeLocaleList,
+  // so this function just takes a vector of strings.
+  // 5. Let len be ? ToLength(? Get(O, "length")).
+  // 6. Let k be 0.
+  // 7. Repeat, while k < len
+  for (const auto &locale : locales) {
+    // 7.c.vi. Let canonicalizedTag be CanonicalizeUnicodeLocaleId(tag).
+    auto parsedOpt = ParsedLocaleIdentifier::parse(locale);
+    if (!parsedOpt)
+      return runtime.raiseRangeError(
+          vm::TwineChar16("Invalid language tag: ") +
+          vm::TwineChar16(locale.c_str()));
+    auto canonicalizedTag = parsedOpt->canonicalize();
+
+    // 7.c.vii. If canonicalizedTag is not an element of seen, append
+    // canonicalizedTag as the last element of seen.
+    if (std::find(seen.begin(), seen.end(), canonicalizedTag) == seen.end()) {
+      seen.push_back(std::move(canonicalizedTag));
+    }
+  }
+  return seen;
+}
+
+/// https://402.ecma-international.org/8.0/#sec-intl.getcanonicallocales
+vm::CallResult<std::vector<std::u16string>> getCanonicalLocales(
+    vm::Runtime &runtime,
+    const std::vector<std::u16string> &locales) {
+  return canonicalizeLocaleList(runtime, locales);
+}
+
+/// https://402.ecma-international.org/8.0/#sec-bestavailablelocale
 std::optional<std::u16string> bestAvailableLocale(
     const std::vector<std::u16string> &availableLocales,
     const std::u16string &locale) {
@@ -45,7 +93,7 @@ std::optional<std::u16string> bestAvailableLocale(
   }
 }
 
-// https://402.ecma-international.org/8.0/#sec-lookupsupportedlocales
+/// https://402.ecma-international.org/8.0/#sec-lookupsupportedlocales
 std::vector<std::u16string> lookupSupportedLocales(
     const std::vector<std::u16string> &availableLocales,
     const std::vector<std::u16string> &requestedLocales) {
@@ -70,6 +118,57 @@ std::vector<std::u16string> lookupSupportedLocales(
   return subset;
 }
 
+/// https://402.ecma-international.org/8.0/#sec-supportedlocales
+std::vector<std::u16string> supportedLocales(
+    const std::vector<std::u16string> &availableLocales,
+    const std::vector<std::u16string> &requestedLocales) {
+  // 1. Set options to ? CoerceOptionsToObject(options).
+  // 2. Let matcher be ? GetOption(options, "localeMatcher", "string", «
+  //    "lookup", "best fit" », "best fit").
+  // 3. If matcher is "best fit", then
+  //   a. Let supportedLocales be BestFitSupportedLocales(availableLocales,
+  //      requestedLocales).
+  // 4. Else,
+  //   a. Let supportedLocales be LookupSupportedLocales(availableLocales,
+  //      requestedLocales).
+  // 5. Return CreateArrayFromList(supportedLocales).
+
+  // We do not implement a BestFitMatcher, so we can just use LookupMatcher.
+  return lookupSupportedLocales(availableLocales, requestedLocales);
+}
+
+/// https://402.ecma-international.org/8.0/#sec-getoption
+/// Split into getOptionString and getOptionBool to help readability
+vm::CallResult<std::optional<std::u16string>> getOptionString(
+    vm::Runtime &runtime,
+    const Options &options,
+    const std::u16string &property,
+    llvh::ArrayRef<std::u16string_view> values,
+    std::optional<std::u16string_view> fallback) {
+  // 1. Assert type(options) is object
+  // 2. Let value be ? Get(options, property).
+  auto valueIt = options.find(property);
+  // 3. If value is undefined, return fallback.
+  if (valueIt == options.end())
+    return std::optional<std::u16string>(fallback);
+
+  const auto &value = valueIt->second.getString();
+  // 4. Assert: type is "boolean" or "string".
+  // 5. If type is "boolean", then
+  // a. Set value to ! ToBoolean(value).
+  // 6. If type is "string", then
+  // a. Set value to ? ToString(value).
+  // 7. If values is not undefined and values does not contain an element equal
+  // to value, throw a RangeError exception.
+  if (!values.empty() && llvh::find(values, value) == values.end())
+    return runtime.raiseRangeError(
+        vm::TwineChar16(property.c_str()) +
+        vm::TwineChar16(" value is invalid."));
+
+  // 8. Return value.
+  return std::optional<std::u16string>(value);
+}
+
 std::optional<bool> getOptionBool(
     vm::Runtime &runtime,
     const Options &options,
@@ -86,8 +185,57 @@ std::optional<bool> getOptionBool(
   return value->second.getBool();
 }
 
+/// https://402.ecma-international.org/8.0/#sec-defaultnumberoption
+vm::CallResult<std::optional<uint8_t>> defaultNumberOption(
+    vm::Runtime &runtime,
+    const std::u16string &property,
+    std::optional<Option> value,
+    const std::uint8_t minimum,
+    const std::uint8_t maximum,
+    std::optional<uint8_t> fallback) {
+  //  1. If value is undefined, return fallback.
+  if (!value) {
+    return fallback;
+  }
+  //  2. Set value to ? ToNumber(value).
+  //  3. If value is NaN or less than minimum or greater than maximum, throw a
+  //  RangeError exception.
+  if (std::isnan(value->getNumber()) || value->getNumber() < minimum ||
+      value->getNumber() > maximum) {
+    return runtime.raiseRangeError(
+        vm::TwineChar16(property.c_str()) +
+        vm::TwineChar16(" value is invalid."));
+  }
+  //  4. Return floor(value).
+  return std::optional<uint8_t>(std::floor(value->getNumber()));
+}
+
+/// https://402.ecma-international.org/8.0/#sec-getnumberoption
+vm::CallResult<std::optional<uint8_t>> getNumberOption(
+    vm::Runtime &runtime,
+    const Options &options,
+    const std::u16string &property,
+    const std::uint8_t minimum,
+    const std::uint8_t maximum,
+    std::optional<uint8_t> fallback) {
+  //  1. Assert: Type(options) is Object.
+  //  2. Let value be ? Get(options, property).
+  std::optional<Option> value;
+  auto iter = options.find(property);
+  if (iter != options.end()) {
+    value = Option(iter->second);
+  }
+  //  3. Return ? DefaultNumberOption(value, minimum, maximum, fallback).
+  auto defaultNumber =
+      defaultNumberOption(runtime, property, value, minimum, maximum, fallback);
+  if (LLVM_UNLIKELY(defaultNumber == vm::ExecutionStatus::EXCEPTION)) {
+    return vm::ExecutionStatus::EXCEPTION;
+  }
+  return std::optional<uint8_t>(defaultNumber.getValue());
+}
+
 // Implementation of
-// https://402.ecma-international.org/8.0/#sec-todatetimeoptions
+/// https://402.ecma-international.org/8.0/#sec-todatetimeoptions
 vm::CallResult<Options> toDateTimeOptions(
     vm::Runtime &runtime,
     Options options,
@@ -170,6 +318,20 @@ vm::CallResult<Options> toDateTimeOptions(
   }
   // 13. return options
   return options;
+}
+
+/// https://402.ecma-international.org/8.0/#sec-case-sensitivity-and-case-mapping
+std::u16string toASCIIUppercase(std::u16string_view tz) {
+  std::u16string result;
+  std::uint8_t offset = 'a' - 'A';
+  for (char16_t c16 : tz) {
+    if (c16 >= 'a' && c16 <= 'z') {
+      result.push_back((char)c16 - offset);
+    } else {
+      result.push_back(c16);
+    }
+  }
+  return result;
 }
 
 } // namespace platform_intl
