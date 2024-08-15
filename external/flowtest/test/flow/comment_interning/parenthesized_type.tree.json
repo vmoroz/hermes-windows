@@ -522,7 +522,6 @@
             "optional":false
           }
         ],
-        "this":null,
         "returnType":{
           "type":"AnyTypeAnnotation",
           "loc":{"source":null,"start":{"line":27,"column":45},"end":{"line":27,"column":48}},
