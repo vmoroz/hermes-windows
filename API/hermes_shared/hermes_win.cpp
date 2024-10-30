@@ -44,9 +44,6 @@ napi_status jsr_env_unref(napi_env env);
 
 namespace facebook::hermes {
 
-// Forward declaration
-extern ::hermes::vm::Runtime &getVMRuntime(HermesRuntime &runtime) noexcept;
-
 class CrashManagerImpl : public ::hermes::vm::CrashManager {
  public:
   void registerMemory(void *mem, size_t length) override {
@@ -172,7 +169,7 @@ class CrashManagerImpl : public ::hermes::vm::CrashManager {
 };
 
 void hermesCrashHandler(HermesRuntime &runtime, int fd) {
-  ::hermes::vm::Runtime &vmRuntime = getVMRuntime(runtime);
+  ::hermes::vm::Runtime &vmRuntime = *(runtime.getVMRuntimeUnsafe());
 
   // Run all callbacks registered to the crash manager
   auto &crashManager = vmRuntime.getCrashManager();
@@ -462,7 +459,7 @@ class RuntimeWrapper {
  public:
   explicit RuntimeWrapper(const ConfigWrapper &config)
       : hermesRuntime_(makeHermesRuntime(config.getRuntimeConfig())),
-        vmRuntime_(getVMRuntime(*hermesRuntime_)) {
+        vmRuntime_(*hermesRuntime_->getVMRuntimeUnsafe()) {
     hermes_create_napi_env(
         vmRuntime_, config.enableInspector(), config.scriptCache(), {}, &env_);
 
