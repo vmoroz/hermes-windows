@@ -70,7 +70,10 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       size_t len);
 
   /// Enable sampling profiler.
-  static void __cdecl enableSamplingProfiler();
+  /// Starts a separate thread that polls VM state with \p meanHzFreq frequency.
+  /// Any subsequent call to \c enableSamplingProfiler() is ignored until
+  /// next call to \c disableSamplingProfiler()
+  static void __cdecl enableSamplingProfiler(double meanHzFreq = 100);
 
   /// Disable the sampling profiler
   static void __cdecl disableSamplingProfiler();
@@ -176,7 +179,10 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       const DebugFlags &debugFlags);
 #endif
 
-  /// Register this runtime for sampling profiler.
+  /// Register this runtime and thread for sampling profiler. Before using the
+  /// runtime on another thread, invoke this function again from the new thread
+  /// to make the sampling profiler target the new thread (and forget the old
+  /// thread).
   void registerForProfiling();
   /// Unregister this runtime for sampling profiler.
   void unregisterForProfiling();

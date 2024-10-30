@@ -508,11 +508,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
     } else if (value.isNumber()) {
       return vm::HermesValue::encodeUntrustedNumberValue(value.getNumber());
     } else if (
-        value.isSymbol() ||
-#if JSI_VERSION >= 6
-        value.isBigInt() ||
-#endif
-        value.isString() || value.isObject()) {
+        value.isSymbol() || value.isBigInt() || value.isString() ||
+        value.isObject()) {
       return phv(value);
     } else {
       llvm_unreachable("unknown value kind");
@@ -530,11 +527,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return runtime_.makeHandle(
           vm::HermesValue::encodeUntrustedNumberValue(value.getNumber()));
     } else if (
-        value.isSymbol() ||
-#if JSI_VERSION >= 6
-        value.isBigInt() ||
-#endif
-        value.isString() || value.isObject()) {
+        value.isSymbol() || value.isBigInt() || value.isString() ||
+        value.isObject()) {
       return vm::Handle<vm::HermesValue>(&phv(value));
     } else {
       llvm_unreachable("unknown value kind");
@@ -552,10 +546,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return hv.getDouble();
     } else if (hv.isSymbol()) {
       return add<jsi::Symbol>(hv);
-#if JSI_VERSION >= 6
     } else if (hv.isBigInt()) {
       return add<jsi::BigInt>(hv);
-#endif
     } else if (hv.isString()) {
       return add<jsi::String>(hv);
     } else if (hv.isObject()) {
@@ -581,12 +573,8 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::Value evaluateJavaScript(
       const std::shared_ptr<const jsi::Buffer> &buffer,
       const std::string &sourceURL) override;
-#if JSI_VERSION >= 12
   void queueMicrotask(const jsi::Function &callback) override;
-#endif
-#if JSI_VERSION >= 4
   bool drainMicrotasks(int maxMicrotasksHint = -1) override;
-#endif
   jsi::Object global() override;
 
   std::string description() override;
@@ -594,9 +582,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::Instrumentation &instrumentation() override;
 
   PointerValue *cloneSymbol(const Runtime::PointerValue *pv) override;
-#if JSI_VERSION >= 6
   PointerValue *cloneBigInt(const Runtime::PointerValue *pv) override;
-#endif
   PointerValue *cloneString(const Runtime::PointerValue *pv) override;
   PointerValue *cloneObject(const Runtime::PointerValue *pv) override;
   PointerValue *clonePropNameID(const Runtime::PointerValue *pv) override;
@@ -606,57 +592,47 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::PropNameID createPropNameIDFromUtf8(const uint8_t *utf8, size_t length)
       override;
   jsi::PropNameID createPropNameIDFromString(const jsi::String &str) override;
-#if JSI_VERSION >= 5
   jsi::PropNameID createPropNameIDFromSymbol(const jsi::Symbol &sym) override;
-#endif
   std::string utf8(const jsi::PropNameID &) override;
   bool compare(const jsi::PropNameID &, const jsi::PropNameID &) override;
 
   std::string symbolToString(const jsi::Symbol &) override;
 
-#if JSI_VERSION >= 8
   jsi::BigInt createBigIntFromInt64(int64_t) override;
   jsi::BigInt createBigIntFromUint64(uint64_t) override;
   bool bigintIsInt64(const jsi::BigInt &) override;
   bool bigintIsUint64(const jsi::BigInt &) override;
   uint64_t truncate(const jsi::BigInt &) override;
   jsi::String bigintToString(const jsi::BigInt &, int) override;
-#endif
 
   jsi::String createStringFromAscii(const char *str, size_t length) override;
   jsi::String createStringFromUtf8(const uint8_t *utf8, size_t length) override;
   std::string utf8(const jsi::String &) override;
 
-#if JSI_VERSION >= 2
   jsi::Value createValueFromJsonUtf8(const uint8_t *json, size_t length)
       override;
-#endif
 
   jsi::Object createObject() override;
   jsi::Object createObject(std::shared_ptr<jsi::HostObject> ho) override;
   std::shared_ptr<jsi::HostObject> getHostObject(const jsi::Object &) override;
   jsi::HostFunctionType &getHostFunction(const jsi::Function &) override;
-
-#if JSI_VERSION >= 7
   bool hasNativeState(const jsi::Object &) override;
   std::shared_ptr<jsi::NativeState> getNativeState(
       const jsi::Object &) override;
   void setNativeState(const jsi::Object &, std::shared_ptr<jsi::NativeState>)
       override;
-#endif
   void setExternalMemoryPressure(const jsi::Object &, size_t) override;
-
   jsi::Value getProperty(const jsi::Object &, const jsi::PropNameID &name)
       override;
   jsi::Value getProperty(const jsi::Object &, const jsi::String &name) override;
   bool hasProperty(const jsi::Object &, const jsi::PropNameID &name) override;
   bool hasProperty(const jsi::Object &, const jsi::String &name) override;
   void setPropertyValue(
-      JSI_CONST_10 jsi::Object &,
+      const jsi::Object &,
       const jsi::PropNameID &name,
       const jsi::Value &value) override;
   void setPropertyValue(
-      JSI_CONST_10 jsi::Object &,
+      const jsi::Object &,
       const jsi::String &name,
       const jsi::Value &value) override;
   bool isArray(const jsi::Object &) const override;
@@ -667,20 +643,17 @@ class HermesRuntimeImpl final : public HermesRuntime,
   jsi::Array getPropertyNames(const jsi::Object &) override;
 
   jsi::WeakObject createWeakObject(const jsi::Object &) override;
-  jsi::Value lockWeakObject(
-      JSI_NO_CONST_3 JSI_CONST_10 jsi::WeakObject &wo) override;
+  jsi::Value lockWeakObject(const jsi::WeakObject &) override;
 
   jsi::Array createArray(size_t length) override;
-#if JSI_VERSION >= 9
   jsi::ArrayBuffer createArrayBuffer(
       std::shared_ptr<jsi::MutableBuffer> buffer) override;
-#endif
   size_t size(const jsi::Array &) override;
   size_t size(const jsi::ArrayBuffer &) override;
   uint8_t *data(const jsi::ArrayBuffer &) override;
   jsi::Value getValueAtIndex(const jsi::Array &, size_t i) override;
   void setValueAtIndexImpl(
-      JSI_CONST_10 jsi::Array &,
+      const jsi::Array &,
       size_t i,
       const jsi::Value &value) override;
 
@@ -699,9 +672,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       size_t count) override;
 
   bool strictEquals(const jsi::Symbol &a, const jsi::Symbol &b) const override;
-#if JSI_VERSION >= 6
   bool strictEquals(const jsi::BigInt &a, const jsi::BigInt &b) const override;
-#endif
   bool strictEquals(const jsi::String &a, const jsi::String &b) const override;
   bool strictEquals(const jsi::Object &a, const jsi::Object &b) const override;
 
@@ -890,7 +861,18 @@ class HermesRuntimeImpl final : public HermesRuntime,
 
     // Determine whether the element is occupied by inspecting the refcount.
     bool isFree() const {
+      // In general, it is safe to use relaxed operations here because there
+      // will be a control dependency between this load and any store that needs
+      // to be ordered. However, TSAN does not analyse control dependencies,
+      // since they are technically not part of C++, so use acquire under TSAN
+      // to enforce the ordering of subsequent writes resulting from deleting a
+      // freed element. (see the comment on dec() for more information)
+
+#if LLVM_THREAD_SANITIZER_BUILD
+      return refCount_.load(std::memory_order_acquire) == 0;
+#else
       return refCount_.load(std::memory_order_relaxed) == 0;
+#endif
     }
 
     // Store a value and start the refcount at 1. After invocation, this
@@ -930,7 +912,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
     void invalidate() override {
 #ifdef ASSERT_ON_DANGLING_VM_REFS
       assert(
-          ((1 << 31) & refCount_) == 0 &&
+          ((1u << 31) & refCount_) == 0 &&
           "This PointerValue was left dangling after the Runtime was destroyed.");
 #endif
       dec();
@@ -956,7 +938,14 @@ class HermesRuntimeImpl final : public HermesRuntime,
       // this value to be freed. We get this ordering from the fact that the
       // vtable read and the reference count update form a load-store control
       // dependency, which preserves their ordering on any reasonable hardware.
+      // TSAN does not analyse control dependencies, so we use release under
+      // TSAN to enforce the ordering of the preceding vtable load.
+
+#if LLVM_THREAD_SANITIZER_BUILD
+      auto oldCount = refCount_.fetch_sub(1, std::memory_order_release);
+#else
       auto oldCount = refCount_.fetch_sub(1, std::memory_order_relaxed);
+#endif
       assert(oldCount > 0 && "Ref count underflow");
       (void)oldCount;
     }
@@ -968,7 +957,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       // dangling. Setting the second-top bit ensures that accidental
       // over-calling the dec() function doesn't clear the top bit without
       // complicating the implementation of dec().
-      refCount_ |= 0b11 << 30;
+      refCount_ |= 0b11u << 30;
     }
 #endif
 
@@ -1058,10 +1047,6 @@ class HermesRuntimeImpl final : public HermesRuntime,
   ::hermes::hbc::CompileFlags compileFlags_{};
 };
 
-::hermes::vm::Runtime &getVMRuntime(HermesRuntime &runtime) noexcept {
-  return static_cast<HermesRuntimeImpl &>(runtime).runtime_;
-}
-
 namespace {
 
 inline HermesRuntimeImpl *impl(HermesRuntime *rt) {
@@ -1110,9 +1095,9 @@ std::pair<const uint8_t *, size_t> HermesRuntime::getBytecodeEpilogue(
   return std::make_pair(epi.data(), epi.size());
 }
 
-void HermesRuntime::enableSamplingProfiler() {
+void HermesRuntime::enableSamplingProfiler(double meanHzFreq) {
 #if HERMESVM_SAMPLING_PROFILER_AVAILABLE
-  ::hermes::vm::SamplingProfiler::enable();
+  ::hermes::vm::SamplingProfiler::enable(meanHzFreq);
 #else
   throwHermesNotCompiledWithSamplingProfilerSupport();
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
@@ -1248,14 +1233,10 @@ uint64_t HermesRuntime::getUniqueID(const jsi::Object &o) const {
   return impl(this)->runtime_.getHeap().getObjectID(
       static_cast<vm::GCCell *>(impl(this)->phv(o).getObject()));
 }
-
-#if JSI_VERSION >= 8
 uint64_t HermesRuntime::getUniqueID(const jsi::BigInt &s) const {
   return impl(this)->runtime_.getHeap().getObjectID(
       static_cast<vm::GCCell *>(impl(this)->phv(s).getBigInt()));
 }
-#endif
-
 uint64_t HermesRuntime::getUniqueID(const jsi::String &s) const {
   return impl(this)->runtime_.getHeap().getObjectID(
       static_cast<vm::GCCell *>(impl(this)->phv(s).getString()));
@@ -1345,10 +1326,10 @@ void HermesRuntime::registerForProfiling() {
 #if HERMESVM_SAMPLING_PROFILER_AVAILABLE
   vm::Runtime &runtime = impl(this)->runtime_;
   if (runtime.samplingProfiler) {
-    ::hermes::hermes_fatal(
-        "re-registering HermesVMs for profiling is not allowed");
+    runtime.samplingProfiler->setRuntimeThread();
+  } else {
+    runtime.samplingProfiler = ::hermes::vm::SamplingProfiler::create(runtime);
   }
-  runtime.samplingProfiler = ::hermes::vm::SamplingProfiler::create(runtime);
 #else
   throwHermesNotCompiledWithSamplingProfilerSupport();
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
@@ -1448,11 +1429,6 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
   hermesLog(
       "HermesVM", "Prepare JS on %s.", isBytecode ? "bytecode" : "source");
 #endif
-  // Save the first few bytes of the buffer so that we can later append them
-  // to any error message.
-  uint8_t bufPrefix[16];
-  const size_t bufSize = buffer->size();
-  memcpy(bufPrefix, buffer->data(), std::min(sizeof(bufPrefix), bufSize));
 
   // Construct the BC provider either from buffer or source.
   if (isBytecode) {
@@ -1487,24 +1463,9 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
 #endif
   }
   if (!bcErr.first) {
-    std::string storage;
-    llvh::raw_string_ostream os(storage);
-    os << " Buffer size " << bufSize << " starts with: ";
-    for (size_t i = 0; i < sizeof(bufPrefix) && i < bufSize; ++i)
-      os << llvh::format_hex_no_prefix(bufPrefix[i], 2);
-    std::string bufferModes = "";
-    for (const auto &mode : ::hermes::oscompat::get_vm_protect_modes(
-             jsiBuffer->data(), jsiBuffer->size())) {
-      // We only expect one match, but if there are multiple, we want to know.
-      bufferModes += mode;
-    }
-    if (!bufferModes.empty()) {
-      os << " and has protection mode(s): " << bufferModes;
-    }
-    LOG_EXCEPTION_CAUSE(
-        "Compiling JS failed: %s, %s", bcErr.second.c_str(), os.str().c_str());
+    LOG_EXCEPTION_CAUSE("Compiling JS failed: %s", bcErr.second.c_str());
     throw jsi::JSINativeException(
-        "Compiling JS failed: " + std::move(bcErr.second) + os.str());
+        "Compiling JS failed: " + std::move(bcErr.second));
   }
   return std::make_shared<const HermesPreparedJavaScript>(
       std::move(bcErr.first), runtimeFlags, std::move(sourceURL));
@@ -1540,7 +1501,6 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
   return evaluateJavaScriptWithSourceMap(buffer, nullptr, sourceURL);
 }
 
-#if JSI_VERSION >= 12
 void HermesRuntimeImpl::queueMicrotask(const jsi::Function &callback) {
   if (LLVM_UNLIKELY(!runtime_.hasMicrotaskQueue())) {
     throw jsi::JSINativeException(
@@ -1551,9 +1511,7 @@ void HermesRuntimeImpl::queueMicrotask(const jsi::Function &callback) {
       vm::Handle<vm::Callable>::vmcast(&phv(callback));
   runtime_.enqueueJob(handle.get());
 }
-#endif
 
-#if JSI_VERSION >= 4
 bool HermesRuntimeImpl::drainMicrotasks(int maxMicrotasksHint) {
   if (runtime_.hasMicrotaskQueue()) {
     checkStatus(runtime_.drainJobs());
@@ -1563,7 +1521,6 @@ bool HermesRuntimeImpl::drainMicrotasks(int maxMicrotasksHint) {
   runtime_.clearKeptObjects();
   return true;
 }
-#endif
 
 jsi::Object HermesRuntimeImpl::global() {
   return add<jsi::Object>(runtime_.getGlobal().getHermesValue());
@@ -1595,12 +1552,10 @@ jsi::Runtime::PointerValue *HermesRuntimeImpl::cloneSymbol(
   return clone(pv);
 }
 
-#if JSI_VERSION >= 6
 jsi::Runtime::PointerValue *HermesRuntimeImpl::cloneBigInt(
     const Runtime::PointerValue *pv) {
   return clone(pv);
 }
-#endif
 
 jsi::Runtime::PointerValue *HermesRuntimeImpl::cloneString(
     const Runtime::PointerValue *pv) {
@@ -1657,12 +1612,10 @@ jsi::PropNameID HermesRuntimeImpl::createPropNameIDFromString(
   return add<jsi::PropNameID>(cr->getHermesValue());
 }
 
-#if JSI_VERSION >= 5
 jsi::PropNameID HermesRuntimeImpl::createPropNameIDFromSymbol(
     const jsi::Symbol &sym) {
   return add<jsi::PropNameID>(phv(sym));
 }
-#endif
 
 std::string HermesRuntimeImpl::utf8(const jsi::PropNameID &sym) {
   vm::GCScope gcScope(runtime_);
@@ -1710,7 +1663,6 @@ std::string HermesRuntimeImpl::symbolToString(const jsi::Symbol &sym) {
       vm::StringPrimitive::createStringView(runtime_, *res));
 }
 
-#if JSI_VERSION >= 8
 jsi::BigInt HermesRuntimeImpl::createBigIntFromInt64(int64_t value) {
   vm::GCScope gcScope(runtime_);
   vm::CallResult<vm::HermesValue> res =
@@ -1761,7 +1713,6 @@ jsi::String HermesRuntimeImpl::bigintToString(
   checkStatus(toStringRes.getStatus());
   return add<jsi::String>(*toStringRes);
 }
-#endif
 
 jsi::String HermesRuntimeImpl::createStringFromAscii(
     const char *str,
@@ -1789,7 +1740,6 @@ std::string HermesRuntimeImpl::utf8(const jsi::String &str) {
       vm::StringPrimitive::createStringView(runtime_, stringHandle(str)));
 }
 
-#if JSI_VERSION >= 2
 jsi::Value HermesRuntimeImpl::createValueFromJsonUtf8(
     const uint8_t *json,
     size_t length) {
@@ -1800,7 +1750,6 @@ jsi::Value HermesRuntimeImpl::createValueFromJsonUtf8(
   checkStatus(res.getStatus());
   return valueFromHermesValue(*res);
 }
-#endif
 
 jsi::Object HermesRuntimeImpl::createObject() {
   vm::GCScope gcScope(runtime_);
@@ -1824,7 +1773,6 @@ std::shared_ptr<jsi::HostObject> HermesRuntimeImpl::getHostObject(
   return static_cast<const JsiProxy *>(proxy)->ho_;
 }
 
-#if JSI_VERSION >= 7
 bool HermesRuntimeImpl::hasNativeState(const jsi::Object &obj) {
   vm::GCScope gcScope(runtime_);
   auto h = handle(obj);
@@ -1894,77 +1842,6 @@ std::shared_ptr<jsi::NativeState> HermesRuntimeImpl::getNativeState(
           .getObject(runtime_));
   return std::shared_ptr(
       *reinterpret_cast<std::shared_ptr<jsi::NativeState> *>(ns->context()));
-}
-#endif
-
-void HermesRuntimeImpl::setExternalMemoryPressure(
-    const jsi::Object &obj,
-    size_t amt) {
-  vm::GCScope gcScope(runtime_);
-  auto h = handle(obj);
-  if (h->isProxyObject())
-    throw jsi::JSINativeException("Cannot set external memory on Proxy");
-
-  // Check if the internal property is already set. If so, we can update the
-  // associated external memory in place.
-  vm::NamedPropertyDescriptor desc;
-  bool exists = vm::JSObject::getOwnNamedDescriptor(
-      h,
-      runtime_,
-      vm::Predefined::getSymbolID(
-          vm::Predefined::InternalPropertyExternalMemoryPressure),
-      desc);
-
-  vm::NativeState *ns;
-  if (exists) {
-    ns = vm::vmcast<vm::NativeState>(
-        vm::JSObject::getNamedSlotValueUnsafe(*h, runtime_, desc)
-            .getObject(runtime_));
-  } else {
-    auto debitMem = [](vm::GC &gc, vm::NativeState *ns) {
-      auto amt = reinterpret_cast<uintptr_t>(ns->context());
-      gc.debitExternalMemory(ns, amt);
-    };
-
-    // This is the first time adding external memory to this object. Create a
-    // new NativeState. We use the context pointer to store the external memory
-    // amount.
-    auto nsHnd = runtime_.makeHandle(vm::NativeState::create(
-        runtime_, reinterpret_cast<void *>(0), debitMem));
-
-    // Use defineNewOwnProperty to create the new property since we know it
-    // doesn't exist. Note that this also bypasses the extensibility check on
-    // the object.
-    auto res = vm::JSObject::defineNewOwnProperty(
-        h,
-        runtime_,
-        vm::Predefined::getSymbolID(
-            vm::Predefined::InternalPropertyExternalMemoryPressure),
-        vm::PropertyFlags::defaultNewNamedPropertyFlags(),
-        nsHnd);
-    checkStatus(res);
-    ns = *nsHnd;
-  }
-
-  auto curAmt = reinterpret_cast<uintptr_t>(ns->context());
-  assert(llvh::isUInt<32>(curAmt) && "Amount is too large.");
-
-  // The GC does not support adding more than a 32 bit amount.
-  if (!llvh::isUInt<32>(amt))
-    throw jsi::JSINativeException("Amount is too large.");
-
-  // Try to credit or debit the delta depending on whether the new amount is
-  // larger.
-  if (amt > curAmt) {
-    auto delta = amt - curAmt;
-    if (!runtime_.getHeap().canAllocExternalMemory(delta))
-      throw jsi::JSINativeException("External memory is too high.");
-    runtime_.getHeap().creditExternalMemory(ns, delta);
-  } else {
-    runtime_.getHeap().debitExternalMemory(ns, curAmt - amt);
-  }
-
-  ns->setContext(reinterpret_cast<void *>(amt));
 }
 
 void HermesRuntimeImpl::setExternalMemoryPressure(
@@ -2080,7 +1957,7 @@ bool HermesRuntimeImpl::hasProperty(
 }
 
 void HermesRuntimeImpl::setPropertyValue(
-    JSI_CONST_10 jsi::Object &obj,
+    const jsi::Object &obj,
     const jsi::String &name,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
@@ -2095,7 +1972,7 @@ void HermesRuntimeImpl::setPropertyValue(
 }
 
 void HermesRuntimeImpl::setPropertyValue(
-    JSI_CONST_10 jsi::Object &obj,
+    const jsi::Object &obj,
     const jsi::PropNameID &name,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
@@ -2164,8 +2041,7 @@ jsi::WeakObject HermesRuntimeImpl::createWeakObject(const jsi::Object &obj) {
       static_cast<vm::JSObject *>(phv(obj).getObject()), runtime_));
 }
 
-jsi::Value HermesRuntimeImpl::lockWeakObject(
-    JSI_NO_CONST_3 JSI_CONST_10 jsi::WeakObject &wo) {
+jsi::Value HermesRuntimeImpl::lockWeakObject(const jsi::WeakObject &wo) {
   const vm::WeakRoot<vm::JSObject> &wr = weakRoot(wo);
 
   if (const auto ptr = wr.get(runtime_, runtime_.getHeap()))
@@ -2181,7 +2057,6 @@ jsi::Array HermesRuntimeImpl::createArray(size_t length) {
   return add<jsi::Array>(result->getHermesValue());
 }
 
-#if JSI_VERSION >= 9
 jsi::ArrayBuffer HermesRuntimeImpl::createArrayBuffer(
     std::shared_ptr<jsi::MutableBuffer> buffer) {
   vm::GCScope gcScope(runtime_);
@@ -2199,7 +2074,6 @@ jsi::ArrayBuffer HermesRuntimeImpl::createArrayBuffer(
   checkStatus(res);
   return add<jsi::ArrayBuffer>(buf.getHermesValue());
 }
-#endif
 
 size_t HermesRuntimeImpl::size(const jsi::Array &arr) {
   return vm::JSArray::getLength(*arrayHandle(arr), runtime_);
@@ -2236,7 +2110,7 @@ jsi::Value HermesRuntimeImpl::getValueAtIndex(const jsi::Array &arr, size_t i) {
 }
 
 void HermesRuntimeImpl::setValueAtIndexImpl(
-    JSI_CONST_10 jsi::Array &arr,
+    const jsi::Array &arr,
     size_t i,
     const jsi::Value &value) {
   vm::GCScope gcScope(runtime_);
@@ -2397,12 +2271,10 @@ bool HermesRuntimeImpl::strictEquals(const jsi::Symbol &a, const jsi::Symbol &b)
   return phv(a).getSymbol() == phv(b).getSymbol();
 }
 
-#if JSI_VERSION >= 6
 bool HermesRuntimeImpl::strictEquals(const jsi::BigInt &a, const jsi::BigInt &b)
     const {
   return phv(a).getBigInt()->compare(phv(b).getBigInt()) == 0;
 }
-#endif
 
 bool HermesRuntimeImpl::strictEquals(const jsi::String &a, const jsi::String &b)
     const {
@@ -2585,7 +2457,7 @@ std::unique_ptr<HermesRuntime> makeHermesRuntime(
   // the setter and not using make_unique, so the call to new is here
   // in this function, which is a friend of debugger::Debugger.
   ret->setDebugger(std::unique_ptr<debugger::Debugger>(
-      new debugger::Debugger(ret.get(), &(ret->runtime_.getDebugger()))));
+      new debugger::Debugger(ret.get(), ret->runtime_)));
 #else
   ret->setDebugger(std::make_unique<debugger::Debugger>());
 #endif
@@ -2617,7 +2489,7 @@ std::unique_ptr<jsi::ThreadSafeRuntime> makeThreadSafeHermesRuntime(
   // the setter and not using make_unique, so the call to new is here
   // in this function, which is a friend of debugger::Debugger.
   hermesRt.setDebugger(std::unique_ptr<debugger::Debugger>(
-      new debugger::Debugger(&hermesRt, &(hermesRt.runtime_.getDebugger()))));
+      new debugger::Debugger(&hermesRt, hermesRt.runtime_)));
 #else
   hermesRt.setDebugger(std::make_unique<debugger::Debugger>());
 #endif
