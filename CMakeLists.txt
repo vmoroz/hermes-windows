@@ -355,12 +355,12 @@ if (NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
   CHECK_CXX_COMPILER_FLAG("" HAVE_GC_SECTIONS)
 
-  # Only check for -dead_strip on Apple because some linkers may interpret it
-  # as "-d -e ad_strip".
-  if(APPLE)
-    set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
-    CHECK_CXX_COMPILER_FLAG("" HAVE_DEAD_STRIP)
-  endif()
+# Only check for -dead_strip on Apple because some linkers may interpret it
+# as "-d -e ad_strip".
+if(APPLE)
+  set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
+  CHECK_CXX_COMPILER_FLAG("" HAVE_DEAD_STRIP)
+endif()
 
   set(CMAKE_EXE_LINKER_FLAGS "${OLD_CMAKE_EXE_LINKER_FLAGS} -Wl,--icf=safe")
   CHECK_CXX_COMPILER_FLAG("" HAVE_ICF)

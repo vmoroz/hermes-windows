@@ -29,9 +29,7 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
       std::unique_ptr<llvh::raw_ostream> traceStream);
 
   virtual SynthTrace::ObjectID getUniqueID(const jsi::Object &o) = 0;
-#if JSI_VERSION >= 8
   virtual SynthTrace::ObjectID getUniqueID(const jsi::BigInt &s) = 0;
-#endif
   virtual SynthTrace::ObjectID getUniqueID(const jsi::String &s) = 0;
   virtual SynthTrace::ObjectID getUniqueID(const jsi::PropNameID &pni) = 0;
   virtual SynthTrace::ObjectID getUniqueID(const jsi::Symbol &sym) = 0;
@@ -45,12 +43,8 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
       const std::shared_ptr<const jsi::Buffer> &buffer,
       const std::string &sourceURL) override;
 
-#if JSI_VERSION >= 12
   void queueMicrotask(const jsi::Function &callback) override;
-#endif
-#if JSI_VERSION >= 4
   bool drainMicrotasks(int maxMicrotasksHint = -1) override;
-#endif
 
   jsi::Object createObject() override;
   jsi::Object createObject(std::shared_ptr<jsi::HostObject> ho) override;
@@ -58,11 +52,9 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
   // Note that the NativeState methods do not need to be traced since they
   // cannot be observed in JS.
 
-#if JSI_VERSION >= 8
   jsi::BigInt createBigIntFromInt64(int64_t value) override;
   jsi::BigInt createBigIntFromUint64(uint64_t value) override;
   jsi::String bigintToString(const jsi::BigInt &bigint, int radix) override;
-#endif
 
   jsi::String createStringFromAscii(const char *str, size_t length) override;
   jsi::String createStringFromUtf8(const uint8_t *utf8, size_t length) override;
@@ -72,9 +64,7 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
   jsi::PropNameID createPropNameIDFromUtf8(const uint8_t *utf8, size_t length)
       override;
   jsi::PropNameID createPropNameIDFromString(const jsi::String &str) override;
-#if JSI_VERSION >= 5
   jsi::PropNameID createPropNameIDFromSymbol(const jsi::Symbol &sym) override;
-#endif
 
   jsi::Value getProperty(const jsi::Object &obj, const jsi::String &name)
       override;
@@ -86,11 +76,11 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
       override;
 
   void setPropertyValue(
-      JSI_CONST_10 jsi::Object &obj,
+      const jsi::Object &obj,
       const jsi::String &name,
       const jsi::Value &value) override;
   void setPropertyValue(
-      JSI_CONST_10 jsi::Object &obj,
+      const jsi::Object &obj,
       const jsi::PropNameID &name,
       const jsi::Value &value) override;
 
@@ -98,14 +88,12 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
 
   jsi::WeakObject createWeakObject(const jsi::Object &o) override;
 
-  jsi::Value lockWeakObject(
-      JSI_NO_CONST_3 JSI_CONST_10 jsi::WeakObject &wo) override;
+  jsi::Value lockWeakObject(const jsi::WeakObject &wo) override;
 
   jsi::Array createArray(size_t length) override;
-#if JSI_VERSION >= 9
   jsi::ArrayBuffer createArrayBuffer(
       std::shared_ptr<jsi::MutableBuffer> buffer) override;
-#endif
+
   size_t size(const jsi::Array &arr) override;
   size_t size(const jsi::ArrayBuffer &buf) override;
 
@@ -114,7 +102,7 @@ class TracingRuntime : public jsi::RuntimeDecorator<jsi::Runtime> {
   jsi::Value getValueAtIndex(const jsi::Array &arr, size_t i) override;
 
   void setValueAtIndexImpl(
-      JSI_CONST_10 jsi::Array &arr,
+      const jsi::Array &arr,
       size_t i,
       const jsi::Value &value) override;
 
@@ -204,11 +192,9 @@ class TracingHermesRuntime final : public TracingRuntime {
   SynthTrace::ObjectID getUniqueID(const jsi::Object &o) override {
     return static_cast<SynthTrace::ObjectID>(hermesRuntime().getUniqueID(o));
   }
-#if JSI_VERSION >= 8
   SynthTrace::ObjectID getUniqueID(const jsi::BigInt &b) override {
     return static_cast<SynthTrace::ObjectID>(hermesRuntime().getUniqueID(b));
   }
-#endif
   SynthTrace::ObjectID getUniqueID(const jsi::String &s) override {
     return static_cast<SynthTrace::ObjectID>(hermesRuntime().getUniqueID(s));
   }
