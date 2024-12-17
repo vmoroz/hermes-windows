@@ -9,6 +9,7 @@
 #include "CDPDebugAPI.h"
 #include "ConsoleMessage.h"
 #include "DebuggerDomainAgent.h"
+#include "HeapProfilerDomainAgent.h"
 #include "ProfilerDomainAgent.h"
 #include "RuntimeDomainAgent.h"
 
@@ -67,7 +68,8 @@ class CDPAgentImpl {
       CDPDebugAPI &cdpDebugAPI,
       EnqueueRuntimeTaskFunc enqueueRuntimeTaskCallback,
       SynchronizedOutboundCallback messageCallback,
-      State &state);
+      State &state,
+      std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl);
   ~CDPAgentImpl();
 
   /// Schedule initialization of handlers for each message domain.
@@ -92,19 +94,21 @@ class CDPAgentImpl {
   /// exclusive access to the runtime (whereas the CDP Agent can be used from)
   /// arbitrary threads), so all methods on this struct are expected to be
   /// called with exclusive access to the runtime.
-  struct DomainAgents {
+  struct DomainAgentsImpl {
     // Create a new collection of domain agents.
-    DomainAgents(
+    DomainAgentsImpl(
         int32_t executionContextID,
-        CDPDebugAPI &cdpDebugAPI,
+        HermesRuntime &runtime,
+        debugger::AsyncDebuggerAPI &asyncDebuggerAPI,
+        ConsoleMessageStorage &consoleMessageStorage,
+        ConsoleMessageDispatcher &consoleMessageDispatcher,
         SynchronizedOutboundCallback messageCallback,
-        std::unique_ptr<DomainState> debuggerAgentState);
+        std::unique_ptr<DomainState> debuggerAgentState,
+        std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl);
+    ~DomainAgentsImpl();
 
     /// Create the domain handlers and subscribing to any external events.
     void initialize();
-
-    /// Releasing any domain handlers and event subscriptions.
-    void dispose();
 
     /// Process a CDP \p command encoded in JSON using the appropriate domain
     /// handler.
@@ -145,8 +149,48 @@ class CDPAgentImpl {
     std::unique_ptr<DebuggerDomainAgent> debuggerAgent_;
     std::unique_ptr<RuntimeDomainAgent> runtimeAgent_;
     std::unique_ptr<ProfilerDomainAgent> profilerAgent_;
+    std::unique_ptr<HeapProfilerDomainAgent> heapProfilerAgent_;
 
     std::unique_ptr<DomainState> debuggerAgentState_;
+
+    std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl_;
+  };
+
+  /// Wrapper for DomainAgentsImpl. This is used to ensure the entirety of
+  /// DomainAgentsImpl gets cleaned up on the runtime thread. Since
+  /// DomainAgentsImpl and domain agents might hold onto JSI values, via
+  /// RemoteObjectsTable, we want to be sure that everything is cleaned up prior
+  /// to the HermesRuntime going away.
+  struct DomainAgents {
+    // Create a new collection of domain agents.
+    DomainAgents(
+        int32_t executionContextID,
+        CDPDebugAPI &cdpDebugAPI,
+        SynchronizedOutboundCallback messageCallback,
+        std::unique_ptr<DomainState> debuggerAgentState,
+        std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl);
+
+    /// Forwards the call to the underlying DomainAgentsImpl.
+    void initialize();
+
+    /// Releasing any domain handlers and event subscriptions.
+    void dispose();
+
+    /// Get the Debugger domain state to be persisted.
+    std::unique_ptr<DomainState> getDebuggerAgentState();
+
+    /// Whenever we need to schedule tasks with RuntimeTaskRunner, we must only
+    /// pass weak pointer of DomainAgentsImpl and not a strong reference. Using
+    /// a weak pointer will not prevent DomainAgents::dispose() from destroying
+    /// DomainAgentsImpl if there is no Runtime.evaluate running. If there is
+    /// Runtime.evaluate running, then the weak pointer would need to be upgrade
+    /// to a strong reference and then the actual destruction of
+    /// DomainAgentsImpl would happen at the end of the Runtime.evaluate.
+    std::weak_ptr<DomainAgentsImpl> getImplWeakPtr() const;
+
+   private:
+    /// This is a shared_ptr so that we can give out weak_ptr.
+    std::shared_ptr<DomainAgentsImpl> impl_{};
   };
 
   /// Callback function for sending CDP response back. This is using the
@@ -166,7 +210,8 @@ CDPAgentImpl::CDPAgentImpl(
     CDPDebugAPI &cdpDebugAPI,
     EnqueueRuntimeTaskFunc enqueueRuntimeTaskCallback,
     SynchronizedOutboundCallback messageCallback,
-    State &state)
+    State &state,
+    std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl)
     : messageCallback_(std::move(messageCallback)),
       runtimeTaskRunner_(
           cdpDebugAPI.asyncDebuggerAPI(),
@@ -177,7 +222,8 @@ CDPAgentImpl::CDPAgentImpl(
           messageCallback_,
           (state && state->debuggerAgentState)
               ? std::move(state->debuggerAgentState)
-              : std::make_unique<DomainState>())) {}
+              : std::make_unique<DomainState>(),
+          std::move(destroyedDomainAgentsImpl))) {}
 
 CDPAgentImpl::~CDPAgentImpl() {
   // Call DomainAgents::dispose on the runtime thread, only keeping a copy of
@@ -225,24 +271,32 @@ void CDPAgentImpl::handleCommand(std::string json) {
 
   // Call DomainAgents::handleCommand on the runtime thread.
   TaskQueues queues = messageTaskQueues(command->method);
-  RuntimeTask task = [domainAgents = domainAgents_,
+  RuntimeTask task = [weakDomainAgentsImpl = domainAgents_->getImplWeakPtr(),
                       command = std::move(command)](HermesRuntime &) mutable {
-    domainAgents->handleCommand(std::move(command));
+    if (auto strongDomainAgents = weakDomainAgentsImpl.lock()) {
+      strongDomainAgents->handleCommand(std::move(command));
+    }
   };
   runtimeTaskRunner_.enqueueTask(task, queues);
 }
 
 void CDPAgentImpl::enableRuntimeDomain() {
   runtimeTaskRunner_.enqueueTask(
-      [domainAgents = domainAgents_](HermesRuntime &) {
-        domainAgents->enableRuntimeDomain();
+      [weakDomainAgentsImpl =
+           domainAgents_->getImplWeakPtr()](HermesRuntime &) {
+        if (auto strongDomainAgents = weakDomainAgentsImpl.lock()) {
+          strongDomainAgents->enableRuntimeDomain();
+        }
       });
 }
 
 void CDPAgentImpl::enableDebuggerDomain() {
   runtimeTaskRunner_.enqueueTask(
-      [domainAgents = domainAgents_](HermesRuntime &) {
-        domainAgents->enableDebuggerDomain();
+      [weakDomainAgentsImpl =
+           domainAgents_->getImplWeakPtr()](HermesRuntime &) {
+        if (auto strongDomainAgents = weakDomainAgentsImpl.lock()) {
+          strongDomainAgents->enableDebuggerDomain();
+        }
       });
 }
 
@@ -251,25 +305,30 @@ State CDPAgentImpl::getState() {
       std::make_unique<State::Private>(domainAgents_->getDebuggerAgentState()));
 }
 
-CDPAgentImpl::DomainAgents::DomainAgents(
+CDPAgentImpl::DomainAgentsImpl::DomainAgentsImpl(
     int32_t executionContextID,
-    CDPDebugAPI &cdpDebugAPI,
+    HermesRuntime &runtime,
+    debugger::AsyncDebuggerAPI &asyncDebuggerAPI,
+    ConsoleMessageStorage &consoleMessageStorage,
+    ConsoleMessageDispatcher &consoleMessageDispatcher,
     SynchronizedOutboundCallback messageCallback,
-    std::unique_ptr<DomainState> debuggerAgentState)
+    std::unique_ptr<DomainState> debuggerAgentState,
+    std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl)
     : executionContextID_(executionContextID),
-      runtime_(cdpDebugAPI.runtime()),
-      asyncDebuggerAPI_(cdpDebugAPI.asyncDebuggerAPI()),
-      consoleMessageStorage_(cdpDebugAPI.consoleMessageStorage_),
-      consoleMessageDispatcher_(cdpDebugAPI.consoleMessageDispatcher_),
+      runtime_(runtime),
+      asyncDebuggerAPI_(asyncDebuggerAPI),
+      consoleMessageStorage_(consoleMessageStorage),
+      consoleMessageDispatcher_(consoleMessageDispatcher),
       messageCallback_(std::move(messageCallback)),
       objTable_(std::make_shared<RemoteObjectsTable>()),
-      debuggerAgentState_(std::move(debuggerAgentState)) {
+      debuggerAgentState_(std::move(debuggerAgentState)),
+      destroyedDomainAgentsImpl_(std::move(destroyedDomainAgentsImpl)) {
   assert(
       debuggerAgentState_ != nullptr &&
       "debuggerAgentState_ shouldn't ever be null");
 }
 
-void CDPAgentImpl::DomainAgents::initialize() {
+void CDPAgentImpl::DomainAgentsImpl::initialize() {
   debuggerAgent_ = std::make_unique<DebuggerDomainAgent>(
       executionContextID_,
       runtime_,
@@ -287,15 +346,28 @@ void CDPAgentImpl::DomainAgents::initialize() {
       consoleMessageDispatcher_);
   profilerAgent_ = std::make_unique<ProfilerDomainAgent>(
       executionContextID_, runtime_, messageCallback_, objTable_);
+  heapProfilerAgent_ = std::make_unique<HeapProfilerDomainAgent>(
+      executionContextID_, runtime_, messageCallback_, objTable_);
 }
 
-void CDPAgentImpl::DomainAgents::dispose() {
-  debuggerAgent_.reset();
-  runtimeAgent_.reset();
-  profilerAgent_.reset();
+CDPAgentImpl::DomainAgentsImpl::~DomainAgentsImpl() {
+  if (destroyedDomainAgentsImpl_) {
+    *destroyedDomainAgentsImpl_ = true;
+  }
 }
 
-void CDPAgentImpl::DomainAgents::handleCommand(
+/// Remove the prefix \p prefix from \p str if it exists. \returns true if the
+/// prefix was matched and removed, false otherwise.
+static bool removePrefix(std::string_view &str, std::string_view prefix) {
+  // TODO: Use starts_with when we can use C++20.
+  if (str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix) {
+    str.remove_prefix(prefix.size());
+    return true;
+  }
+  return false;
+}
+
+void CDPAgentImpl::DomainAgentsImpl::handleCommand(
     std::shared_ptr<message::Request> command) {
   size_t domainLength = command->method.find('.');
   if (domainLength == std::string::npos) {
@@ -306,72 +378,135 @@ void CDPAgentImpl::DomainAgents::handleCommand(
                          .toJsonStr());
     return;
   }
-  std::string domain = command->method.substr(0, domainLength);
-
-  // TODO: Do better dispatch
-  if (command->method == "Debugger.enable") {
-    debuggerAgent_->enable(static_cast<m::debugger::EnableRequest &>(*command));
-  } else if (command->method == "Debugger.disable") {
-    debuggerAgent_->disable(
-        static_cast<m::debugger::DisableRequest &>(*command));
-  } else if (command->method == "Debugger.pause") {
-    debuggerAgent_->pause(static_cast<m::debugger::PauseRequest &>(*command));
-  } else if (command->method == "Debugger.resume") {
-    debuggerAgent_->resume(static_cast<m::debugger::ResumeRequest &>(*command));
-  } else if (command->method == "Debugger.stepInto") {
-    debuggerAgent_->stepInto(
-        static_cast<m::debugger::StepIntoRequest &>(*command));
-  } else if (command->method == "Debugger.stepOut") {
-    debuggerAgent_->stepOut(
-        static_cast<m::debugger::StepOutRequest &>(*command));
-  } else if (command->method == "Debugger.stepOver") {
-    debuggerAgent_->stepOver(
-        static_cast<m::debugger::StepOverRequest &>(*command));
-  } else if (command->method == "Debugger.setPauseOnExceptions") {
-    debuggerAgent_->setPauseOnExceptions(
-        static_cast<m::debugger::SetPauseOnExceptionsRequest &>(*command));
-  } else if (command->method == "Debugger.evaluateOnCallFrame") {
-    debuggerAgent_->evaluateOnCallFrame(
-        static_cast<m::debugger::EvaluateOnCallFrameRequest &>(*command));
-  } else if (command->method == "Debugger.setBreakpoint") {
-    debuggerAgent_->setBreakpoint(
-        static_cast<m::debugger::SetBreakpointRequest &>(*command));
-  } else if (command->method == "Debugger.setBreakpointByUrl") {
-    debuggerAgent_->setBreakpointByUrl(
-        static_cast<m::debugger::SetBreakpointByUrlRequest &>(*command));
-  } else if (command->method == "Debugger.removeBreakpoint") {
-    debuggerAgent_->removeBreakpoint(
-        static_cast<m::debugger::RemoveBreakpointRequest &>(*command));
-  } else if (command->method == "Debugger.setBreakpointsActive") {
-    debuggerAgent_->setBreakpointsActive(
-        static_cast<m::debugger::SetBreakpointsActiveRequest &>(*command));
-  } else if (command->method == "Runtime.enable") {
-    runtimeAgent_->enable(static_cast<m::runtime::EnableRequest &>(*command));
-  } else if (command->method == "Runtime.disable") {
-    runtimeAgent_->disable(static_cast<m::runtime::DisableRequest &>(*command));
-  } else if (command->method == "Runtime.getHeapUsage") {
-    runtimeAgent_->getHeapUsage(
-        static_cast<m::runtime::GetHeapUsageRequest &>(*command));
-  } else if (command->method == "Runtime.globalLexicalScopeNames") {
-    runtimeAgent_->globalLexicalScopeNames(
-        static_cast<m::runtime::GlobalLexicalScopeNamesRequest &>(*command));
-  } else if (command->method == "Runtime.compileScript") {
-    runtimeAgent_->compileScript(
-        static_cast<m::runtime::CompileScriptRequest &>(*command));
-  } else if (command->method == "Runtime.getProperties") {
-    runtimeAgent_->getProperties(
-        static_cast<m::runtime::GetPropertiesRequest &>(*command));
-  } else if (command->method == "Runtime.evaluate") {
-    runtimeAgent_->evaluate(
-        static_cast<m::runtime::EvaluateRequest &>(*command));
-  } else if (command->method == "Runtime.callFunctionOn") {
-    runtimeAgent_->callFunctionOn(
-        static_cast<m::runtime::CallFunctionOnRequest &>(*command));
-  } else if (command->method == "Profiler.start") {
-    profilerAgent_->start(static_cast<m::profiler::StartRequest &>(*command));
-  } else if (command->method == "Profiler.stop") {
-    profilerAgent_->stop(static_cast<m::profiler::StopRequest &>(*command));
+  std::string_view method = command->method;
+  bool handled = true;
+  if (removePrefix(method, "Debugger.")) {
+    if (method == "enable") {
+      debuggerAgent_->enable(
+          static_cast<m::debugger::EnableRequest &>(*command));
+    } else if (method == "disable") {
+      debuggerAgent_->disable(
+          static_cast<m::debugger::DisableRequest &>(*command));
+    } else if (method == "pause") {
+      debuggerAgent_->pause(static_cast<m::debugger::PauseRequest &>(*command));
+    } else if (method == "resume") {
+      debuggerAgent_->resume(
+          static_cast<m::debugger::ResumeRequest &>(*command));
+    } else if (method == "stepInto") {
+      debuggerAgent_->stepInto(
+          static_cast<m::debugger::StepIntoRequest &>(*command));
+    } else if (method == "stepOut") {
+      debuggerAgent_->stepOut(
+          static_cast<m::debugger::StepOutRequest &>(*command));
+    } else if (method == "stepOver") {
+      debuggerAgent_->stepOver(
+          static_cast<m::debugger::StepOverRequest &>(*command));
+    } else if (method == "setBlackboxedRanges") {
+      debuggerAgent_->setBlackboxedRanges(
+          static_cast<m::debugger::SetBlackboxedRangesRequest &>(*command));
+    } else if (method == "setBlackboxPatterns") {
+      debuggerAgent_->setBlackboxPatterns(
+          static_cast<m::debugger::SetBlackboxPatternsRequest &>(*command));
+    } else if (method == "setPauseOnExceptions") {
+      debuggerAgent_->setPauseOnExceptions(
+          static_cast<m::debugger::SetPauseOnExceptionsRequest &>(*command));
+    } else if (method == "evaluateOnCallFrame") {
+      debuggerAgent_->evaluateOnCallFrame(
+          static_cast<m::debugger::EvaluateOnCallFrameRequest &>(*command));
+    } else if (method == "setBreakpoint") {
+      debuggerAgent_->setBreakpoint(
+          static_cast<m::debugger::SetBreakpointRequest &>(*command));
+    } else if (method == "setBreakpointByUrl") {
+      debuggerAgent_->setBreakpointByUrl(
+          static_cast<m::debugger::SetBreakpointByUrlRequest &>(*command));
+    } else if (method == "removeBreakpoint") {
+      debuggerAgent_->removeBreakpoint(
+          static_cast<m::debugger::RemoveBreakpointRequest &>(*command));
+    } else if (method == "setBreakpointsActive") {
+      debuggerAgent_->setBreakpointsActive(
+          static_cast<m::debugger::SetBreakpointsActiveRequest &>(*command));
+    } else {
+      handled = false;
+    }
+  } else if (removePrefix(method, "Runtime.")) {
+    if (method == "enable") {
+      runtimeAgent_->enable(static_cast<m::runtime::EnableRequest &>(*command));
+    } else if (method == "disable") {
+      runtimeAgent_->disable(
+          static_cast<m::runtime::DisableRequest &>(*command));
+    } else if (method == "getHeapUsage") {
+      runtimeAgent_->getHeapUsage(
+          static_cast<m::runtime::GetHeapUsageRequest &>(*command));
+    } else if (method == "globalLexicalScopeNames") {
+      runtimeAgent_->globalLexicalScopeNames(
+          static_cast<m::runtime::GlobalLexicalScopeNamesRequest &>(*command));
+    } else if (method == "compileScript") {
+      runtimeAgent_->compileScript(
+          static_cast<m::runtime::CompileScriptRequest &>(*command));
+    } else if (method == "getProperties") {
+      runtimeAgent_->getProperties(
+          static_cast<m::runtime::GetPropertiesRequest &>(*command));
+    } else if (method == "evaluate") {
+      runtimeAgent_->evaluate(
+          static_cast<m::runtime::EvaluateRequest &>(*command));
+    } else if (method == "callFunctionOn") {
+      runtimeAgent_->callFunctionOn(
+          static_cast<m::runtime::CallFunctionOnRequest &>(*command));
+    } else if (method == "discardConsoleEntries") {
+      runtimeAgent_->discardConsoleEntries(
+          static_cast<m::runtime::DiscardConsoleEntriesRequest &>(*command));
+    } else if (method == "releaseObject") {
+      runtimeAgent_->releaseObject(
+          static_cast<m::runtime::ReleaseObjectRequest &>(*command));
+    } else if (method == "releaseObjectGroup") {
+      runtimeAgent_->releaseObjectGroup(
+          static_cast<m::runtime::ReleaseObjectGroupRequest &>(*command));
+    } else {
+      handled = false;
+    }
+  } else if (removePrefix(method, "Profiler.")) {
+    if (method == "start") {
+      profilerAgent_->start(static_cast<m::profiler::StartRequest &>(*command));
+    } else if (method == "stop") {
+      profilerAgent_->stop(static_cast<m::profiler::StopRequest &>(*command));
+    } else {
+      handled = false;
+    }
+  } else if (removePrefix(method, "HeapProfiler.")) {
+    if (method == "takeHeapSnapshot") {
+      heapProfilerAgent_->takeHeapSnapshot(
+          static_cast<m::heapProfiler::TakeHeapSnapshotRequest &>(*command));
+    } else if (method == "getObjectByHeapObjectId") {
+      heapProfilerAgent_->getObjectByHeapObjectId(
+          static_cast<m::heapProfiler::GetObjectByHeapObjectIdRequest &>(
+              *command));
+    } else if (method == "getHeapObjectId") {
+      heapProfilerAgent_->getHeapObjectId(
+          static_cast<m::heapProfiler::GetHeapObjectIdRequest &>(*command));
+    } else if (method == "collectGarbage") {
+      heapProfilerAgent_->collectGarbage(
+          static_cast<m::heapProfiler::CollectGarbageRequest &>(*command));
+    } else if (method == "startTrackingHeapObjects") {
+      heapProfilerAgent_->startTrackingHeapObjects(
+          static_cast<m::heapProfiler::StartTrackingHeapObjectsRequest &>(
+              *command));
+    } else if (method == "stopTrackingHeapObjects") {
+      heapProfilerAgent_->stopTrackingHeapObjects(
+          static_cast<m::heapProfiler::StopTrackingHeapObjectsRequest &>(
+              *command));
+    } else if (method == "startSampling") {
+      heapProfilerAgent_->startSampling(
+          static_cast<m::heapProfiler::StartSamplingRequest &>(*command));
+    } else if (method == "stopSampling") {
+      heapProfilerAgent_->stopSampling(
+          static_cast<m::heapProfiler::StopSamplingRequest &>(*command));
+    } else {
+      handled = false;
+    }
   } else {
+    handled = false;
+  }
+  if (!handled) {
     messageCallback_(message::makeErrorResponse(
                          command->id,
                          message::ErrorCode::MethodNotFound,
@@ -380,17 +515,57 @@ void CDPAgentImpl::DomainAgents::handleCommand(
   }
 }
 
-void CDPAgentImpl::DomainAgents::enableRuntimeDomain() {
+void CDPAgentImpl::DomainAgentsImpl::enableRuntimeDomain() {
   runtimeAgent_->enable();
 }
 
-void CDPAgentImpl::DomainAgents::enableDebuggerDomain() {
+void CDPAgentImpl::DomainAgentsImpl::enableDebuggerDomain() {
   debuggerAgent_->enable();
 }
 
 std::unique_ptr<DomainState>
-CDPAgentImpl::DomainAgents::getDebuggerAgentState() {
+CDPAgentImpl::DomainAgentsImpl::getDebuggerAgentState() {
   return debuggerAgentState_->copy();
+}
+
+CDPAgentImpl::DomainAgents::DomainAgents(
+    int32_t executionContextID,
+    CDPDebugAPI &cdpDebugAPI,
+    SynchronizedOutboundCallback messageCallback,
+    std::unique_ptr<DomainState> debuggerAgentState,
+    std::shared_ptr<std::atomic_bool> destroyedDomainAgentsImpl)
+    // Allocate using new to ensure the memory is separate from the shared_ptr
+    // control block. Since we don't control when the integrator queue discards
+    // their queued tasks, allocating this way allows us to be in control of
+    // when DomainAgentsImpl gets cleaned up.
+    : impl_(std::shared_ptr<DomainAgentsImpl>(new DomainAgentsImpl(
+          executionContextID,
+          cdpDebugAPI.runtime(),
+          cdpDebugAPI.asyncDebuggerAPI(),
+          cdpDebugAPI.consoleMessageStorage_,
+          cdpDebugAPI.consoleMessageDispatcher_,
+          std::move(messageCallback),
+          std::move(debuggerAgentState),
+          std::move(destroyedDomainAgentsImpl)))) {}
+
+void CDPAgentImpl::DomainAgents::initialize() {
+  impl_->initialize();
+}
+
+void CDPAgentImpl::DomainAgents::dispose() {
+  impl_.reset();
+}
+
+std::unique_ptr<DomainState>
+CDPAgentImpl::DomainAgents::getDebuggerAgentState() {
+  assert(impl_ != nullptr);
+  return impl_->getDebuggerAgentState();
+}
+
+std::weak_ptr<CDPAgentImpl::DomainAgentsImpl>
+CDPAgentImpl::DomainAgents::getImplWeakPtr() const {
+  assert(impl_ != nullptr);
+  return impl_;
 }
 
 std::unique_ptr<CDPAgent> CDPAgent::create(
@@ -404,7 +579,8 @@ std::unique_ptr<CDPAgent> CDPAgent::create(
       cdpDebugAPI,
       enqueueRuntimeTaskCallback,
       messageCallback,
-      std::move(state)));
+      std::move(state),
+      nullptr));
 }
 
 CDPAgent::CDPAgent(
@@ -412,13 +588,15 @@ CDPAgent::CDPAgent(
     CDPDebugAPI &cdpDebugAPI,
     EnqueueRuntimeTaskFunc enqueueRuntimeTaskCallback,
     OutboundMessageFunc messageCallback,
-    State state)
+    State state,
+    std::shared_ptr<std::atomic_bool> destroyedDomainAgents)
     : impl_(std::make_unique<CDPAgentImpl>(
           executionContextID,
           cdpDebugAPI,
           enqueueRuntimeTaskCallback,
           SynchronizedOutboundCallback(messageCallback),
-          state)) {
+          state,
+          destroyedDomainAgents)) {
   impl_->initializeDomainAgents();
 }
 

@@ -61,10 +61,7 @@ export function TSDefToFlowDef(
     interpreter: null,
     tokens: [],
     loc: ast.loc,
-    docblock: {
-      comment: {...DUMMY_COMMON, type: 'Block', value: ''},
-      directives: {flow: []},
-    },
+    docblock: null,
   };
 
   const [transform, code] = getTransforms(originalCode, opts);
@@ -1061,7 +1058,9 @@ const getTransforms = (originalCode: string, opts: TranslationOptions) => {
           objectType: base,
           indexType: constructFlowNode<FlowESTree.StringLiteralTypeAnnotation>({
             type: 'StringLiteralTypeAnnotation',
+            // $FlowFixMe[incompatible-call]
             value: name,
+            // $FlowFixMe[incompatible-type]
             raw: `'${name}'`,
           }),
         });
@@ -1438,6 +1437,7 @@ const getTransforms = (originalCode: string, opts: TranslationOptions) => {
       return constructFlowNode<FlowESTree.TupleTypeAnnotation>({
         type: 'TupleTypeAnnotation',
         types: node.elementTypes.map(node => Transform.TSTypeAnnotation(node)),
+        inexact: false,
       });
     }
 
@@ -1943,7 +1943,7 @@ const getTransforms = (originalCode: string, opts: TranslationOptions) => {
                 typeAnnotation: null,
               })
             : Transform.Identifier(node.parameterName, false),
-        asserts: node.asserts,
+        kind: node.asserts ? 'asserts' : null,
         typeAnnotation:
           node.typeAnnotation == null
             ? null

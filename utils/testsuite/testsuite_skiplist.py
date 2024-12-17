@@ -1092,8 +1092,6 @@ SKIP_LIST = [
     "test262/test/intl402/BigInt/prototype/toLocaleString/returns-same-results-as-NumberFormat.js",
     "test262/test/intl402/BigInt/prototype/toLocaleString/throws-same-exceptions-as-NumberFormat.js",
     "test262/test/intl402/Collator/subclassing.js",
-    "test262/test/intl402/Collator/unicode-ext-value-collation.js",
-    "test262/test/intl402/Collator/ignore-invalid-unicode-ext-values.js",
     "test262/test/intl402/Collator/proto-from-ctor-realm.js",
     "test262/test/intl402/Collator/prototype/resolvedOptions/order.js",
     "test262/test/intl402/String/prototype/toLocaleLowerCase/special_casing_Lithuanian.js",
@@ -1115,7 +1113,11 @@ SKIP_LIST = [
     "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/order-dayPeriod.js",
     "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/hourCycle-timeStyle.js",
     "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/order-style.js",
-    "test262/test/intl402/DateTimeFormat/prototype/formatToParts",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/related-year-zh.js",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/dayPeriod-narrow-en.js",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/dayPeriod-long-en.js",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/dayPeriod-short-en.js",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/fractionalSecondDigits.js",
     "test262/test/intl402/DateTimeFormat/prototype/format/timedatestyle-en.js",
     "test262/test/intl402/DateTimeFormat/prototype/format/dayPeriod-long-en.js",
     "test262/test/intl402/DateTimeFormat/prototype/format/dayPeriod-narrow-en.js",
@@ -1125,6 +1127,7 @@ SKIP_LIST = [
     # This test assumes that "year" has some default value. That is an implementation-defined behavior.
     # In our case it remains undefined, which causes this test to fail.
     "test262/test/intl402/DateTimeFormat/default-options-object-prototype.js",
+    "test262/test/intl402/DateTimeFormat/prototype/formatToParts/related-year.js",
     "test262/test/intl402/DateTimeFormat/prototype/format/proleptic-gregorian-calendar.js",
     "test262/test/intl402/DateTimeFormat/prototype/formatRange",
     "test262/test/intl402/DateTimeFormat/prototype/formatRangeToParts",
@@ -1287,6 +1290,8 @@ SKIP_LIST = [
     "mjsunit/regress/regress-prepare-break-while-recompile.js",
     # Fails when ASAN/UBSAN are limiting the max native stack depth.
     "mjsunit/compiler/regress-lazy-deopt.js",
+    # Error stack getter is on Error.prototype in Hermes.
+    "mjsunit/regress/regress-3404.js",
     # Uncategorized mjsunit failures
     "mjsunit/accessor-map-sharing.js",
     "mjsunit/accessors-on-global-object.js",
@@ -1944,6 +1949,25 @@ SKIP_LIST = [
     ### Failing Flow tests end ###
 ]
 
+# Tests to skip on specific platforms. Keys are sys.platform values.
+PLATFORM_SKIP_LISTS = {
+    "linux": [
+        # Intl features that are not yet supported on Linux.
+        "test262/test/built-ins/String/prototype/toLocaleLowerCase",
+        "test262/test/built-ins/String/prototype/toLocaleUpperCase",
+        "test262/test/intl402/Number/prototype/toLocaleString",
+        "test262/test/intl402/NumberFormat",
+        "test262/test/intl402/String/prototype/toLocaleLowerCase",
+        "test262/test/intl402/String/prototype/toLocaleUpperCase",
+        "test262/test/intl402/DateTimeFormat/prototype/formatToParts",
+    ],
+    "darwin": [
+        # Intl implementation issues on Apple.
+        "test262/test/intl402/Collator/ignore-invalid-unicode-ext-values.js",
+        "test262/test/intl402/Collator/unicode-ext-value-collation.js",
+        "test262/test/intl402/DateTimeFormat/prototype/formatToParts/offset-timezone-correct.js",
+    ],
+}
 
 # Tests that we want to skip only when testing lazy compilation.
 LAZY_SKIP_LIST = [
@@ -2157,7 +2181,7 @@ UNSUPPORTED_FEATURES = [
     "json-superset",
     "let",
     "new.target",
-    "regexp-unicode-property-escapes",
+    "regexp-v-flag",
     "resizable-arraybuffer",
     "string-trimming",
     "super",
@@ -2178,6 +2202,12 @@ UNSUPPORTED_FEATURES = [
     "array-grouping",
     "symbols-as-weakmap-keys",
 ]
+
+# Mapping of Hermes features to test262 features, for use in dynamic feature
+# skipping.
+CONFIGURABLE_HERMES_FEATURES = {
+    "Unicode RegExp Property Escapes": "regexp-unicode-property-escapes",
+}
 
 PERMANENT_UNSUPPORTED_FEATURES = [
     "Atomics",

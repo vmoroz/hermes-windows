@@ -23,12 +23,13 @@ module.name_mapper='^hermes-eslint$' -> '<PROJECT_ROOT>/hermes-eslint/src/index.
 module.name_mapper='^hermes-transform$' -> '<PROJECT_ROOT>/hermes-transform/src/index.js'
 module.name_mapper='^prettier-plugin-hermes-parser$' -> '<PROJECT_ROOT>/prettier-plugin-hermes-parser/src/index.js'
 
-experimental.component_syntax=parsing
-experimental.global_find_ref=true
+component_syntax=true
 enums=true
 
+experimental.natural_inference.exports.primitive_const=true
+
 [version]
-^0.233.0
+^0.256.0
 
 [lints]
 untyped-type-import=error

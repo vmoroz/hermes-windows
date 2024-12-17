@@ -116,6 +116,7 @@ void JSParserImpl::initializeIdentifiers() {
 
   checksIdent_ = lexer_.getIdentifier("%checks");
   assertsIdent_ = lexer_.getIdentifier("asserts");
+  impliesIdent_ = lexer_.getIdentifier("implies");
 
   // Flow Component syntax
   componentIdent_ = lexer_.getIdentifier("component");
@@ -123,6 +124,10 @@ void JSParserImpl::initializeIdentifiers() {
   rendersMaybeOperator_ = lexer_.getIdentifier("renders?");
   rendersStarOperator_ = lexer_.getIdentifier("renders*");
   hookIdent_ = lexer_.getIdentifier("hook");
+
+  // Flow match expressions and statements
+  matchIdent_ = lexer_.getIdentifier("match");
+  underscoreIdent_ = lexer_.getIdentifier("_");
 #endif
 
 #if HERMES_PARSE_TS
@@ -677,6 +682,10 @@ Optional<ESTree::Node *> JSParserImpl::parseStatement(Param param) {
     case TokenKind::rw_break:
       _RET(parseBreakStatement());
     case TokenKind::rw_return:
+      if (!param.has(ParamReturn) && !context_.allowReturnOutsideFunction()) {
+        // Illegal location for a return statement, but we can keep parsing.
+        error(tok_->getSourceRange(), "'return' not in a function");
+      }
       _RET(parseReturnStatement());
     case TokenKind::rw_with:
       _RET(parseWithStatement(param.get(ParamReturn)));
@@ -690,6 +699,16 @@ Optional<ESTree::Node *> JSParserImpl::parseStatement(Param param) {
       _RET(parseDebuggerStatement());
 
     default:
+#if HERMES_PARSE_FLOW
+      if (context_.getParseFlow() && context_.getParseFlowMatch() &&
+          LLVM_UNLIKELY(checkMaybeFlowMatch())) {
+        auto optMatch = tryParseMatchStatementFlow(param.get(ParamReturn));
+        if (!optMatch)
+          return None;
+        if (*optMatch)
+          return *optMatch;
+      }
+#endif
       _RET(parseExpressionOrLabelledStatement(param.get(ParamReturn)));
   }
 
@@ -2329,6 +2348,12 @@ Optional<ESTree::Node *> JSParserImpl::parsePrimaryExpression() {
           return None;
         return func.getValue();
       }
+#if HERMES_PARSE_FLOW
+      if (context_.getParseFlow() && context_.getParseFlowMatch() &&
+          checkMaybeFlowMatch()) {
+        return parseMatchCallOrMatchExpressionFlow();
+      }
+#endif
       auto *res = setLocation(
           tok_,
           tok_,
@@ -2897,6 +2922,11 @@ Optional<ESTree::Node *> JSParserImpl::parsePropertyAssignment(bool eagerly) {
           new (context_)
               ESTree::PropertyNode(key, value, initIdent_, false, false, true));
     } else {
+      if (lexer_.isNewLineBeforeCurrentToken()) {
+        error(
+            tok_->getSourceRange(),
+            "newline not allowed after 'async' in a method definition");
+      }
       // This is an async function, parse the key and set `async` to true.
       async = true;
       method = true;
@@ -3796,8 +3826,13 @@ Optional<ESTree::Node *> JSParserImpl::parseLeftHandSideExpression() {
   auto optExpr = parseNewExpressionOrOptionalExpression(IsConstructorCall::No);
   if (!optExpr)
     return None;
-  auto *expr = optExpr.getValue();
 
+  return parseLeftHandSideExpressionTail(startLoc, optExpr.getValue());
+}
+
+Optional<ESTree::Node *> JSParserImpl::parseLeftHandSideExpressionTail(
+    SMLoc startLoc,
+    ESTree::Node *expr) {
   bool optional = checkAndEat(TokenKind::questiondot);
   bool seenOptionalChain = optional ||
       (expr->getParens() == 0 &&
@@ -3942,6 +3977,7 @@ Optional<ESTree::Node *> JSParserImpl::parseUnaryExpression() {
             getPrevTokenEndLoc(),
             new (context_) ESTree::TSTypeAssertionNode(*optType, *optExpr));
       }
+      break;
 #endif
 
     case TokenKind::identifier:
@@ -3956,12 +3992,13 @@ Optional<ESTree::Node *> JSParserImpl::parseUnaryExpression() {
             getPrevTokenEndLoc(),
             new (context_) ESTree::AwaitExpressionNode(optExpr.getValue()));
       }
-      // Fall-through to default for all other identifiers.
-      LLVM_FALLTHROUGH;
+      // Default for all other identifiers.
+      break;
 
     default:
-      return parsePostfixExpression();
+      break;
   }
+  return parsePostfixExpression();
 }
 
 namespace {
@@ -4708,7 +4745,7 @@ Optional<ESTree::ClassBodyNode *> JSParserImpl::parseClassBody(SMLoc startLoc) {
           isStatic = true;
           advance();
         }
-        // intentional fallthrough
+        LLVM_FALLTHROUGH;
       default: {
         // ClassElement
         auto optElem = parseClassElement(
@@ -4876,6 +4913,42 @@ Optional<ESTree::Node *> JSParserImpl::parseClassElement(
     }
   } else if (checkAndEat(TokenKind::star)) {
     special = SpecialKind::Generator;
+  } else if (isStatic && checkAndEat(TokenKind::l_brace)) {
+    // This is a static block.
+    // ES14.0 15.7
+    // ClassStaticBlock :
+    //   static { ClassStaticBlockBody }
+    //          ^
+    SMLoc braceLoc = tok_->getStartLoc();
+    ESTree::NodeList body;
+
+    {
+      // ClassStaticBlockStatementList :
+      //   StatementList[~Yield, +Await, ~Return]opt
+      //   ^
+      llvh::SaveAndRestore oldParamYield{paramYield_, false};
+      llvh::SaveAndRestore oldParamAwait{paramAwait_, true};
+      if (!parseStatementList(
+              Param{},
+              TokenKind::r_brace,
+              /* parseDirectives */ false,
+              AllowImportExport::No,
+              body)) {
+        return None;
+      }
+    }
+    if (!eat(
+            TokenKind::r_brace,
+            JSLexer::GrammarContext::AllowRegExp,
+            "at end of static block",
+            "static block starts here",
+            braceLoc))
+      return None;
+
+    return setLocation(
+        startLoc,
+        getPrevTokenEndLoc(),
+        new (context_) ESTree::StaticBlockNode(std::move(body)));
   } else if (isStatic && staticIsPropertyName()) {
     // This is the name of the property/method.
     // We've already parsed 'static', but it must be used as the
@@ -4956,6 +5029,12 @@ Optional<ESTree::Node *> JSParserImpl::parseClassElement(
     if (checkAndEat(TokenKind::equal)) {
       // ClassElementName Initializer[opt]
       //                  ^
+      // NOTE: This is technically non-compliant, but having yield/await in the
+      // field initializer doesn't make sense.
+      // See https://github.com/tc39/ecma262/issues/3333
+      // Do [~Yield, +Await, ~Return] as suggested and error in resolution.
+      llvh::SaveAndRestore<bool> saveParamYield{paramYield_, false};
+      llvh::SaveAndRestore<bool> saveParamAwait{paramAwait_, true};
       auto optValue = parseAssignmentExpression();
       if (!optValue)
         return None;

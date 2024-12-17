@@ -390,14 +390,16 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   // Overridden from jsi::Instrumentation
-  void createSnapshotToFile(const std::string &path) override {
+  void createSnapshotToFile(
+      const std::string &path,
+      const HeapSnapshotOptions &options) override {
 #ifdef HERMES_MEMORY_INSTRUMENTATION
     std::error_code code;
     llvh::raw_fd_ostream os(path, code, llvh::sys::fs::FileAccess::FA_Write);
     if (code) {
       throw std::system_error(code);
     }
-    runtime_.getHeap().createSnapshot(os);
+    runtime_.getHeap().createSnapshot(os, options.captureNumericValue);
 #else
     throw std::logic_error(
         "Cannot create heap snapshots if Hermes isn't built with "
@@ -406,10 +408,12 @@ class HermesRuntimeImpl final : public HermesRuntime,
   }
 
   // Overridden from jsi::Instrumentation
-  void createSnapshotToStream(std::ostream &os) override {
+  void createSnapshotToStream(
+      std::ostream &os,
+      const HeapSnapshotOptions &options) override {
 #ifdef HERMES_MEMORY_INSTRUMENTATION
     llvh::raw_os_ostream ros(os);
-    runtime_.getHeap().createSnapshot(ros);
+    runtime_.getHeap().createSnapshot(ros, options.captureNumericValue);
 #else
     throw std::logic_error(
         "Cannot create heap snapshots if Hermes isn't built with "
@@ -909,7 +913,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       return value_;
     }
 
-    void invalidate() override {
+    void invalidate() noexcept override {
 #ifdef ASSERT_ON_DANGLING_VM_REFS
       assert(
           ((1u << 31) & refCount_) == 0 &&
@@ -918,7 +922,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       dec();
     }
 
-    void inc() {
+    void inc() noexcept {
       // It is always safe to use relaxed operations for incrementing the
       // reference count, because the only operation that may occur concurrently
       // with it is decrementing the reference count, and we do not need to
@@ -929,7 +933,7 @@ class HermesRuntimeImpl final : public HermesRuntime,
       (void)oldCount;
     }
 
-    void dec() {
+    void dec() noexcept {
       // It is safe to use relaxed operations here because decrementing the
       // reference count is the only access that may be performed without proper
       // synchronisation. As a result, the only ordering we need to enforce when
@@ -1095,9 +1099,9 @@ std::pair<const uint8_t *, size_t> HermesRuntime::getBytecodeEpilogue(
   return std::make_pair(epi.data(), epi.size());
 }
 
-void HermesRuntime::enableSamplingProfiler() {
+void HermesRuntime::enableSamplingProfiler(double meanHzFreq) {
 #if HERMESVM_SAMPLING_PROFILER_AVAILABLE
-  ::hermes::vm::SamplingProfiler::enable();
+  ::hermes::vm::SamplingProfiler::enable(meanHzFreq);
 #else
   throwHermesNotCompiledWithSamplingProfilerSupport();
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
@@ -1193,15 +1197,25 @@ void HermesRuntime::setFatalHandler(void (*handler)(const std::string &)) {
 }
 
 namespace {
-// A class which adapts a jsi buffer to a Hermes buffer.
+
+/// A class which adapts a jsi buffer to a Hermes buffer.
+/// It also provides the ability to create a partial "view" into the buffer.
 class BufferAdapter final : public ::hermes::Buffer {
  public:
-  BufferAdapter(std::shared_ptr<const jsi::Buffer> buf) : buf_(std::move(buf)) {
-    data_ = buf_->data();
-    size_ = buf_->size();
+  explicit BufferAdapter(
+      const std::shared_ptr<const jsi::Buffer> &buf,
+      const uint8_t *data,
+      size_t size)
+      : buf_(buf) {
+    data_ = data;
+    size_ = size;
   }
 
+  explicit BufferAdapter(const std::shared_ptr<const jsi::Buffer> &buf)
+      : BufferAdapter(buf, buf->data(), buf->size()) {}
+
  private:
+  /// The buffer we are "adapting".
   std::shared_ptr<const jsi::Buffer> buf_;
 };
 } // namespace
@@ -1326,10 +1340,10 @@ void HermesRuntime::registerForProfiling() {
 #if HERMESVM_SAMPLING_PROFILER_AVAILABLE
   vm::Runtime &runtime = impl(this)->runtime_;
   if (runtime.samplingProfiler) {
-    ::hermes::hermes_fatal(
-        "re-registering HermesVMs for profiling is not allowed");
+    runtime.samplingProfiler->setRuntimeThread();
+  } else {
+    runtime.samplingProfiler = ::hermes::vm::SamplingProfiler::create(runtime);
   }
-  runtime.samplingProfiler = ::hermes::vm::SamplingProfiler::create(runtime);
 #else
   throwHermesNotCompiledWithSamplingProfilerSupport();
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
@@ -1378,6 +1392,10 @@ jsi::Value HermesRuntime::evaluateJavaScriptWithSourceMap(
           buffer, sourceMapBuf, sourceURL));
 }
 
+::hermes::vm::Runtime *HermesRuntime::getVMRuntimeUnsafe() const {
+  return impl(this)->rt_.get();
+}
+
 size_t HermesRuntime::rootsListLengthForTests() const {
   return impl(this)->hermesValues_.sizeForTests();
 }
@@ -1412,6 +1430,28 @@ class HermesPreparedJavaScript final : public jsi::PreparedJavaScript {
   }
 };
 
+#ifndef HERMESVM_LEAN
+
+/// If the buffer contains an embedded terminating zero, shrink it, so it is
+/// one past the size, as per the LLVM MemoryBuffer convention. Otherwise, copy
+/// it into a new zero-terminated buffer.
+std::unique_ptr<BufferAdapter> ensureZeroTerminated(
+    const std::shared_ptr<const jsi::Buffer> &buf) {
+  size_t size = buf->size();
+  const uint8_t *data = buf->data();
+
+  // Check for zero termination
+  if (size != 0 && data[size - 1] == 0) {
+    return std::make_unique<BufferAdapter>(buf, data, size - 1);
+  } else {
+    // Copy into a zero-terminated instance.
+    return std::make_unique<BufferAdapter>(std::make_shared<jsi::StringBuffer>(
+        std::string((const char *)data, size)));
+  }
+}
+
+#endif
+
 } // namespace
 
 std::shared_ptr<const jsi::PreparedJavaScript>
@@ -1420,11 +1460,10 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
     const std::shared_ptr<const jsi::Buffer> &sourceMapBuf,
     std::string sourceURL) {
   std::pair<std::unique_ptr<hbc::BCProvider>, std::string> bcErr{};
-  auto buffer = std::make_unique<BufferAdapter>(jsiBuffer);
   vm::RuntimeModuleFlags runtimeFlags{};
   runtimeFlags.persistent = true;
 
-  bool isBytecode = isHermesBytecode(buffer->data(), buffer->size());
+  bool isBytecode = isHermesBytecode(jsiBuffer->data(), jsiBuffer->size());
 #ifdef HERMESVM_PLATFORM_LOGGING
   hermesLog(
       "HermesVM", "Prepare JS on %s.", isBytecode ? "bytecode" : "source");
@@ -1436,18 +1475,17 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
       throw std::logic_error("Source map cannot be specified with bytecode");
     }
     bcErr = hbc::BCProviderFromBuffer::createBCProviderFromBuffer(
-        std::move(buffer));
+        std::make_unique<BufferAdapter>(jsiBuffer));
   } else {
 #if defined(HERMESVM_LEAN)
     bcErr.second = "prepareJavaScript source compilation not supported";
 #else
     std::unique_ptr<::hermes::SourceMap> sourceMap{};
     if (sourceMapBuf) {
+      auto buf0 = ensureZeroTerminated(sourceMapBuf);
       // Convert the buffer into a form the parser needs.
       llvh::MemoryBufferRef mbref(
-          llvh::StringRef(
-              (const char *)sourceMapBuf->data(), sourceMapBuf->size()),
-          "");
+          llvh::StringRef((const char *)buf0->data(), buf0->size()), "");
       ::hermes::SimpleDiagHandler diag;
       ::hermes::SourceErrorManager sm;
       diag.installInto(sm);
@@ -1459,7 +1497,10 @@ HermesRuntimeImpl::prepareJavaScriptWithSourceMap(
       }
     }
     bcErr = hbc::BCProviderFromSrc::createBCProviderFromSrc(
-        std::move(buffer), sourceURL, std::move(sourceMap), compileFlags_);
+        ensureZeroTerminated(jsiBuffer),
+        sourceURL,
+        std::move(sourceMap),
+        compileFlags_);
 #endif
   }
   if (!bcErr.first) {

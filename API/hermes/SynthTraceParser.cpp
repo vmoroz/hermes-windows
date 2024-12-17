@@ -22,6 +22,27 @@ using namespace ::hermes::parser;
 
 namespace {
 
+/// Converts the data in the JSONString \p str into a u16string
+std::u16string jsonStringToU16String(
+    const ::hermes::parser::JSONString &jsonStr) {
+  auto strRef = jsonStr.str();
+  std::u16string ret;
+  ::hermes::convertUTF8WithSurrogatesToUTF16(
+      std::back_inserter(ret), strRef.begin(), strRef.end());
+  return ret;
+}
+
+/// Converts the data in the JSONString \p str into a u8string. Each code unit
+/// encoded in the JSONString is expected to represent each byte of the UTF-8
+/// String.
+std::string jsonStringToU8String(const ::hermes::parser::JSONString &jsonStr) {
+  auto strRef = jsonStr.str();
+  std::string ret;
+  ::hermes::convertUTF8WithSurrogatesToUTF16(
+      std::back_inserter(ret), strRef.begin(), strRef.end());
+  return ret;
+}
+
 ::hermes::SHA1 parseHashStrAsNumber(llvh::StringRef hashStr) {
   ::hermes::SHA1 sourceHash{};
   // Each byte is 2 characters.
@@ -42,8 +63,7 @@ JSONObject *parseJSON(
     std::unique_ptr<llvh::MemoryBuffer> stream) {
   JSONFactory factory(alloc);
   ::hermes::SourceErrorManager sm;
-  // Convert surrogates, since JSI deals in UTF-8.
-  JSONParser parser(factory, std::move(stream), sm, /*convertSurrogates*/ true);
+  JSONParser parser(factory, std::move(stream), sm);
   auto rootObj = parser.parse();
   if (!rootObj) {
     // The source error manager will print to stderr.
@@ -187,9 +207,12 @@ Collection<std::string, std::allocator<std::string>> getListOfStrings(
   return strings;
 }
 
-SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
+SynthTrace getTrace(
+    JSONArray *array,
+    std::optional<SynthTrace::ObjectID> globalObjID) {
   using RecordType = SynthTrace::RecordType;
-  SynthTrace trace(globalObjID, ::hermes::vm::RuntimeConfig());
+  SynthTrace trace(
+      ::hermes::vm::RuntimeConfig(), /* traceStream */ nullptr, globalObjID);
   auto getListOfTraceValues =
       [](JSONArray *array,
          SynthTrace &trace) -> std::vector<SynthTrace::TraceValue> {
@@ -206,14 +229,22 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
         });
     return values;
   };
+
+  auto strToRecordType = [](llvh::StringRef str) {
+#define CASE(t)           \
+  if (str == #t "Record") \
+    return RecordType::t;
+    SYNTH_TRACE_RECORD_TYPES(CASE)
+#undef CASE
+    ::hermes::hermes_fatal("Unknown record type");
+  };
+
   for (auto *val : *array) {
     auto *obj = llvh::cast<JSONObject>(val);
     auto timeFromStart =
         std::chrono::milliseconds(getNumberAs<uint64_t>(obj->get("time"), 0));
-    std::stringstream ss;
-    RecordType kind;
-    ss << llvh::cast<JSONString>(obj->get("type"))->c_str();
-    ss >> kind;
+    RecordType kind =
+        strToRecordType(llvh::cast<JSONString>(obj->get("type"))->str());
     // Common properties, they may not exist on all objects so use a
     // dynamic cast.
     auto *objID = llvh::dyn_cast_or_null<JSONNumber>(obj->get("objID"));
@@ -266,6 +297,15 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
         trace.emplace_back<SynthTrace::CreateObjectRecord>(
             timeFromStart, objID->getValue());
         break;
+      case RecordType::CreateObjectWithPrototype: {
+        auto *prototype =
+            llvh::dyn_cast_or_null<JSONString>(obj->get("prototype"));
+        trace.emplace_back<SynthTrace::CreateObjectWithPrototypeRecord>(
+            timeFromStart,
+            objID->getValue(),
+            SynthTrace::decode(prototype->c_str()));
+        break;
+      }
       case RecordType::QueueMicrotask: {
         auto callbackID =
             getNumberAs<SynthTrace::ObjectID>(obj->get("callbackID"));
@@ -322,11 +362,12 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
               str->str().data(),
               str->str().size());
         } else {
+          auto utf8Str = jsonStringToU8String(*str);
           trace.emplace_back<SynthTrace::CreateStringRecord>(
               timeFromStart,
               objID->getValue(),
-              reinterpret_cast<const uint8_t *>(str->str().data()),
-              str->str().size());
+              reinterpret_cast<const uint8_t *>(utf8Str.data()),
+              utf8Str.size());
         }
         break;
       }
@@ -352,11 +393,12 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
                 str->str().data(),
                 str->str().size());
           } else {
+            auto utf8Str = jsonStringToU8String(*str);
             trace.emplace_back<SynthTrace::CreatePropNameIDRecord>(
                 timeFromStart,
                 id->getValue(),
-                reinterpret_cast<const uint8_t *>(str->str().data()),
-                str->str().size());
+                reinterpret_cast<const uint8_t *>(utf8Str.data()),
+                utf8Str.size());
           }
         }
         break;
@@ -386,16 +428,18 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
             paramCount);
         break;
       }
-      case RecordType::GetProperty:
+      case RecordType::GetProperty: {
         trace.emplace_back<SynthTrace::GetPropertyRecord>(
             timeFromStart,
             objID->getValue(),
-            SynthTrace::decode(propID->str()),
+            SynthTrace::decode(propID->str())
 #ifdef HERMESVM_API_TRACE_DEBUG
+                ,
             std::string(propName->c_str()),
 #endif
-            trace.decode(propValue->c_str()));
+        );
         break;
+      }
       case RecordType::SetProperty:
         trace.emplace_back<SynthTrace::SetPropertyRecord>(
             timeFromStart,
@@ -417,25 +461,22 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
 #endif
         );
         break;
-      case RecordType::GetPropertyNames:
+      case RecordType::GetPropertyNames: {
         trace.emplace_back<SynthTrace::GetPropertyNamesRecord>(
-            timeFromStart,
-            objID->getValue(),
-            getNumberAs<SynthTrace::ObjectID>(obj->get("propNamesID")));
+            timeFromStart, objID->getValue());
         break;
+      }
       case RecordType::CreateArray:
         trace.emplace_back<SynthTrace::CreateArrayRecord>(
             timeFromStart,
             objID->getValue(),
             getNumberAs<uint64_t>(obj->get("length")));
         break;
-      case RecordType::ArrayRead:
+      case RecordType::ArrayRead: {
         trace.emplace_back<SynthTrace::ArrayReadRecord>(
-            timeFromStart,
-            objID->getValue(),
-            arrayIndex->getValue(),
-            trace.decode(propValue->c_str()));
+            timeFromStart, objID->getValue(), arrayIndex->getValue());
         break;
+      }
       case RecordType::ArrayWrite:
         trace.emplace_back<SynthTrace::ArrayWriteRecord>(
             timeFromStart,
@@ -499,16 +540,58 @@ SynthTrace getTrace(JSONArray *array, SynthTrace::ObjectID globalObjID) {
         trace.emplace_back<SynthTrace::GetNativePropertyNamesRecord>(
             timeFromStart, hostObjID->getValue());
         break;
-      case RecordType::GetNativePropertyNamesReturn:
+      case RecordType::GetNativePropertyNamesReturn: {
+        auto *pnids =
+            llvh::dyn_cast_or_null<JSONArray>(obj->get("propNameIDs"));
         trace.emplace_back<SynthTrace::GetNativePropertyNamesReturnRecord>(
-            timeFromStart,
-            getListOfStrings<std::vector>(
-                llvh::cast<JSONArray>(obj->get("properties"))));
+            timeFromStart, getListOfTraceValues(pnids, trace));
         break;
+      }
       case RecordType::SetExternalMemoryPressure: {
         size_t amount = getNumberAs<size_t>(obj->get("amount"));
         trace.emplace_back<SynthTrace::SetExternalMemoryPressureRecord>(
             timeFromStart, objID->getValue(), amount);
+        break;
+      }
+      case RecordType::Utf8: {
+        auto *objId = llvh::dyn_cast_or_null<JSONString>(obj->get("objID"));
+        trace.emplace_back<SynthTrace::Utf8Record>(
+            timeFromStart,
+            SynthTrace::decode(objId->str()),
+            jsonStringToU8String(*retval));
+        break;
+      }
+      case RecordType::Utf16: {
+        auto *objId = llvh::dyn_cast_or_null<JSONString>(obj->get("objID"));
+        trace.emplace_back<SynthTrace::Utf16Record>(
+            timeFromStart,
+            SynthTrace::decode(objId->str()),
+            jsonStringToU16String(*retval));
+        break;
+      }
+      case RecordType::GetStringData: {
+        auto *objId = llvh::dyn_cast_or_null<JSONString>(obj->get("objID"));
+        auto *strData = llvh::dyn_cast_or_null<JSONString>(obj->get("strData"));
+        trace.emplace_back<SynthTrace::GetStringDataRecord>(
+            timeFromStart,
+            SynthTrace::decode(objId->str()),
+            jsonStringToU16String(*strData));
+        break;
+      }
+      case RecordType::SetPrototype: {
+        trace.emplace_back<SynthTrace::SetPrototypeRecord>(
+            timeFromStart,
+            objID->getValue(),
+            SynthTrace::decode(propValue->c_str()));
+        break;
+      }
+      case RecordType::GetPrototype:
+        trace.emplace_back<SynthTrace::GetPrototypeRecord>(
+            timeFromStart, objID->getValue());
+        break;
+      case RecordType::Global: {
+        trace.emplace_back<SynthTrace::GlobalRecord>(
+            timeFromStart, objID->getValue());
         break;
       }
     }
@@ -525,10 +608,6 @@ std::tuple<
 parseSynthTrace(std::unique_ptr<llvh::MemoryBuffer> trace) {
   JSLexer::Allocator alloc;
   JSONObject *root = llvh::cast<JSONObject>(parseJSON(alloc, std::move(trace)));
-  if (!llvh::dyn_cast_or_null<JSONNumber>(root->get("globalObjID"))) {
-    ::hermes::hermes_fatal(
-        "Trace does not have a \"globalObjID\" value that is a number");
-  }
   if (auto *ver = root->get("version")) {
     // Version exists, validate that it is a number, and the correct version.
     if (auto *verNum = llvh::dyn_cast<JSONNumber>(ver)) {
@@ -549,8 +628,10 @@ parseSynthTrace(std::unique_ptr<llvh::MemoryBuffer> trace) {
   // Else, for backwards compatibility, allow no version to be specified, which
   // will imply "latest version".
 
-  auto globalObjID =
-      getNumberAs<SynthTrace::ObjectID>(root->get("globalObjID"));
+  auto *gid = llvh::dyn_cast_or_null<JSONNumber>(root->get("globalObjID"));
+  std::optional<SynthTrace::ObjectID> globalObjID = gid
+      ? getNumberAs<SynthTrace::ObjectID>(gid)
+      : std::optional<SynthTrace::ObjectID>();
   // Get and parse the records list.
   JSONObject *const rtConfig =
       llvh::cast_or_null<JSONObject>(root->get("runtimeConfig"));

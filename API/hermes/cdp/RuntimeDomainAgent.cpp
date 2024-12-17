@@ -6,6 +6,7 @@
  */
 
 #include <sstream>
+#include <unordered_set>
 
 #include <hermes/cdp/MessageConverters.h>
 #include <hermes/cdp/RemoteObjectConverters.h>
@@ -38,7 +39,7 @@ class CallFunctionOnArgument {
   /// Computes the real value for this argument, which can be an object
   /// referenced by maybeObjectId_, or the given evaldValue. Throws if
   /// maybeObjectId_ is not empty but references an unknown object.
-  jsi::Value value(
+  std::optional<jsi::Value> value(
       jsi::Runtime &rt,
       RemoteObjectsTable &objTable,
       jsi::Value evaldValue) const {
@@ -53,12 +54,20 @@ class CallFunctionOnArgument {
  private:
   /// Returns the jsi::Object for the given objId. Throws if such object can't
   /// be found.
-  static jsi::Value getValueFromId(
+  static std::optional<jsi::Value> getValueFromId(
       jsi::Runtime &rt,
       RemoteObjectsTable &objTable,
       m::runtime::RemoteObjectId objId) {
-    if (const jsi::Value *ptr = objTable.getValue(objId)) {
-      return jsi::Value(rt, *ptr);
+    if (objTable.isScopeId(objId)) {
+      if (objTable.getScope(objId) != nullptr) {
+        // Scope is found, but since scope IDs are not actual objects of the
+        // running program, there isn't an actual value associated with it.
+        return std::nullopt;
+      }
+    } else {
+      if (const jsi::Value *ptr = objTable.getValue(objId)) {
+        return jsi::Value(rt, *ptr);
+      }
     }
 
     throw std::runtime_error("unknown object id " + objId);
@@ -98,24 +107,35 @@ class CallFunctionOnRunner {
     // now resolve the arguments to the call, including "this".
     std::vector<jsi::Value> arguments(thisAndArguments_.size() - 1);
 
-    jsi::Object jsThis =
+    std::optional<jsi::Object> jsThis =
         getJsThis(rt, objTable, argsAndFunc.getValueAtIndex(rt, kJsThisIndex));
 
     size_t i = kFirstArgIndex;
     for (/*i points to the first param*/; i < thisAndArguments_.size(); ++i) {
-      arguments[i - kFirstArgIndex] = thisAndArguments_[i].value(
+      std::optional<jsi::Value> value = thisAndArguments_[i].value(
           rt, objTable, argsAndFunc.getValueAtIndex(rt, i));
+      assert(
+          value.has_value() &&
+          "Expect RemoteObjectId to be referencing real objects and are not scope IDs");
+      arguments[i - kFirstArgIndex] = std::move(value.value());
     }
 
     // i is now func's index.
     jsi::Function func =
         argsAndFunc.getValueAtIndex(rt, i).getObject(rt).getFunction(rt);
 
-    return func.callWithThis(
-        rt,
-        std::move(jsThis),
-        static_cast<const jsi::Value *>(arguments.data()),
-        arguments.size());
+    if (jsThis) {
+      return func.callWithThis(
+          rt,
+          std::move(*jsThis),
+          static_cast<const jsi::Value *>(arguments.data()),
+          arguments.size());
+    } else {
+      return func.call(
+          rt,
+          static_cast<const jsi::Value *>(arguments.data()),
+          arguments.size());
+    }
   }
 
  private:
@@ -133,7 +153,7 @@ class CallFunctionOnRunner {
   /// Resolves the js "this" for the request, which lives in
   /// thisAndArguments_[kJsThisIndex]. \p evaldThis should either be
   /// undefined, or the placeholder indicating that globalThis should be used.
-  jsi::Object getJsThis(
+  std::optional<jsi::Object> getJsThis(
       jsi::Runtime &rt,
       RemoteObjectsTable &objTable,
       jsi::Value evaldThis) const {
@@ -150,12 +170,26 @@ class CallFunctionOnRunner {
           evaldThis.getString(rt).utf8(rt) == kJsThisArgPlaceholder)) &&
         "unexpected value for jsThis argument placeholder");
 
-    // Need to save this information because of the std::move() below.
     const bool useGlobalThis = evaldThis.isString();
-    jsi::Value value = thisAndArguments_[kJsThisIndex].value(
-        rt, objTable, std::move(evaldThis));
+    if (useGlobalThis)
+      return rt.global();
 
-    return useGlobalThis ? rt.global() : value.getObject(rt);
+    std::optional<jsi::Value> value = thisAndArguments_[kJsThisIndex].value(
+        rt, objTable, std::move(evaldThis));
+    if (!value.has_value()) {
+      // VS Code's node.js debugger could pass a scope ID as 'this'. It doesn't
+      // make any sense because those RemoteObjects are not real. Still need to
+      // handle it so things don't crash.
+      return std::nullopt;
+    }
+
+    // TODO: Support any type of RemoteObject. Currently we're limited by what's
+    // available through jsi::Function.
+    assert(
+        value.value().isObject() &&
+        "jsi::Function only supports callWithThis with a jsi::Object");
+
+    return value.value().getObject(rt);
   }
 
   std::vector<CallFunctionOnArgument> thisAndArguments_;
@@ -251,6 +285,86 @@ class CallFunctionOnBuilder {
   std::optional<m::runtime::ExecutionContextId> executionContextId_;
 };
 
+template <typename Fn>
+std::pair<m::runtime::RemoteObject, std::optional<m::runtime::ExceptionDetails>>
+evaluateAndWrapResult(
+    jsi::Runtime &runtime,
+    RemoteObjectsTable &objTable,
+    const std::string &objectGroup,
+    const ObjectSerializationOptions &serializationOptions,
+    Fn &&fn) {
+  m::runtime::RemoteObject remoteObj;
+  std::optional<m::runtime::ExceptionDetails> exceptionDetails;
+  try {
+    jsi::Value result = fn(runtime);
+    remoteObj = m::runtime::makeRemoteObject(
+        runtime, result, objTable, objectGroup, serializationOptions);
+  } catch (const jsi::JSError &error) {
+    exceptionDetails =
+        m::runtime::makeExceptionDetails(runtime, error, objTable, objectGroup);
+    // In V8, @cdp Runtime.evaluate and @cdp Runtime.callFunctionOn populate the
+    // `result` field with the exception value, and some code paths in Chrome
+    // DevTools depend on this.
+    // See
+    // https://github.com/facebookexperimental/rn-chrome-devtools-frontend/blob/35aa264a622e853bb28b4c83a7b5cc3b2a9747bc/front_end/core/sdk/RemoteObject.ts#L574-L592
+    remoteObj = m::runtime::makeRemoteObjectForError(
+        runtime, error.value(), objTable, objectGroup);
+  } catch (const jsi::JSIException &err) {
+    exceptionDetails = m::runtime::makeExceptionDetails(err);
+  }
+
+  return std::make_pair(std::move(remoteObj), std::move(exceptionDetails));
+}
+
+/// A grow-only unordered set of jsi::PropNameID (String / Symbol).
+/// Must not outlive the \c jsi::Runtime reference provided to the constructor.
+class JSIPropNameIDSet {
+ public:
+  explicit JSIPropNameIDSet(jsi::Runtime &rt);
+
+  /// Inserts a PropNameID into the set.
+  /// \return true if the name was not already in the set.
+  bool insert(jsi::PropNameID &&name);
+
+ private:
+  class Hash {
+   public:
+    explicit Hash(jsi::Runtime &rt) : runtime_(rt) {}
+    size_t operator()(const jsi::PropNameID &name) const {
+      return std::hash<std::string>{}(name.utf8(runtime_));
+    }
+
+   private:
+    jsi::Runtime &runtime_;
+  };
+
+  class IsEqual {
+   public:
+    explicit IsEqual(jsi::Runtime &rt) : runtime_(rt) {}
+    bool operator()(const jsi::PropNameID &lhs, const jsi::PropNameID &rhs)
+        const {
+      return jsi::PropNameID::compare(runtime_, lhs, rhs);
+    }
+
+   private:
+    jsi::Runtime &runtime_;
+  };
+
+  jsi::Runtime &runtime_;
+  std::unordered_set<jsi::PropNameID, Hash, IsEqual> names_;
+};
+
+JSIPropNameIDSet::JSIPropNameIDSet(jsi::Runtime &rt)
+    : runtime_(rt),
+      names_(
+          /* bucket_count */ 32,
+          Hash(runtime_),
+          IsEqual(runtime_)) {}
+
+bool JSIPropNameIDSet::insert(jsi::PropNameID &&name) {
+  return names_.insert(std::move(name)).second;
+}
+
 } // namespace
 
 RuntimeDomainAgent::RuntimeDomainAgent(
@@ -269,10 +383,11 @@ RuntimeDomainAgent::RuntimeDomainAgent(
       asyncDebuggerAPI_(asyncDebuggerAPI),
       consoleMessageStorage_(consoleMessageStorage),
       consoleMessageDispatcher_(consoleMessageDispatcher),
-      enabled_(false) {
+      enabled_(false),
+      helpers_(runtime_) {
   consoleMessageRegistration_ = consoleMessageDispatcher_.subscribe(
       [this](const ConsoleMessage &message) {
-        this->consoleAPICalled(message);
+        this->consoleAPICalled(message, /* isBuffered */ false);
       });
 }
 
@@ -303,14 +418,16 @@ void RuntimeDomainAgent::enable() {
     std::vector<jsi::Value> args;
     args.push_back(std::move(arg));
 
-    consoleAPICalled(ConsoleMessage(
-        *consoleMessageStorage_.oldestTimestamp() - 0.1,
-        ConsoleAPIType::kWarning,
-        std::move(args)));
+    consoleAPICalled(
+        ConsoleMessage(
+            *consoleMessageStorage_.oldestTimestamp() - 0.1,
+            ConsoleAPIType::kWarning,
+            std::move(args)),
+        /* isBuffered */ true);
   }
 
   for (auto &message : consoleMessageStorage_.messages()) {
-    consoleAPICalled(message);
+    consoleAPICalled(message, /* isBuffered */ true);
   }
 }
 
@@ -323,6 +440,14 @@ void RuntimeDomainAgent::enable(const m::runtime::EnableRequest &req) {
 void RuntimeDomainAgent::disable(const m::runtime::DisableRequest &req) {
   // Match V8 behavior of returning success even if domain is already disabled
   enabled_ = false;
+  sendResponseToClient(m::makeOkResponse(req.id));
+}
+
+void RuntimeDomainAgent::discardConsoleEntries(
+    const m::runtime::DiscardConsoleEntriesRequest &req) {
+  // Allow this message even if domain is not enabled to match V8 behavior.
+
+  consoleMessageStorage_.clear();
   sendResponseToClient(m::makeOkResponse(req.id));
 }
 
@@ -403,8 +528,7 @@ void RuntimeDomainAgent::compileScript(
   try {
     preparedScript = runtime_.prepareJavaScript(source, req.sourceURL);
   } catch (const jsi::JSIException &err) {
-    resp.exceptionDetails = m::runtime::ExceptionDetails();
-    resp.exceptionDetails->text = err.what();
+    resp.exceptionDetails = m::runtime::makeExceptionDetails(err);
     sendResponseToClient(resp);
     return;
   }
@@ -422,8 +546,10 @@ void RuntimeDomainAgent::getProperties(
     const m::runtime::GetPropertiesRequest &req) {
   // Allow this to be used when domain is not enabled to match V8 behavior.
 
-  bool generatePreview = req.generatePreview.value_or(false);
-  bool ownProperties = req.ownProperties.value_or(true);
+  ObjectSerializationOptions serializationOptions;
+  serializationOptions.generatePreview = req.generatePreview.value_or(false);
+  bool ownProperties = req.ownProperties.value_or(false);
+  bool accessorPropertiesOnly = req.accessorPropertiesOnly.value_or(false);
 
   std::string objGroup = objTable_->getObjectGroup(req.objectId);
   auto scopePtr = objTable_->getScope(req.objectId);
@@ -431,30 +557,54 @@ void RuntimeDomainAgent::getProperties(
 
   m::runtime::GetPropertiesResponse resp;
   resp.id = req.id;
-  if (scopePtr != nullptr) {
-    if (!asyncDebuggerAPI_.isPaused()) {
-      sendResponseToClient(m::makeErrorResponse(
-          req.id,
-          m::ErrorCode::InvalidRequest,
-          "Cannot get scope properties unless execution is paused"));
-      return;
-    }
-    const debugger::ProgramState &state =
-        runtime_.getDebugger().getProgramState();
-    auto result =
-        makePropsFromScope(*scopePtr, objGroup, state, generatePreview);
-    if (!result) {
-      sendResponseToClient(m::makeErrorResponse(
-          req.id,
-          m::ErrorCode::InvalidRequest,
-          "Could not inspect specified scope"));
-      return;
-    }
-    resp.result = std::move(*result);
+  try {
+    if (scopePtr != nullptr) {
+      if (!asyncDebuggerAPI_.isPaused()) {
+        sendResponseToClient(m::makeErrorResponse(
+            req.id,
+            m::ErrorCode::InvalidRequest,
+            "Cannot get scope properties unless execution is paused"));
+        return;
+      }
+      const debugger::ProgramState &state =
+          runtime_.getDebugger().getProgramState();
+      auto result =
+          makePropsFromScope(*scopePtr, objGroup, state, serializationOptions);
+      if (!result) {
+        sendResponseToClient(m::makeErrorResponse(
+            req.id,
+            m::ErrorCode::InvalidRequest,
+            "Could not inspect specified scope"));
+        return;
+      }
+      resp.result = std::move(*result);
 
-  } else if (valuePtr != nullptr) {
-    resp.result =
-        makePropsFromValue(*valuePtr, objGroup, ownProperties, generatePreview);
+    } else if (valuePtr != nullptr) {
+      resp.result = makePropsFromValue(
+          *valuePtr,
+          objGroup,
+          ownProperties,
+          accessorPropertiesOnly,
+          serializationOptions);
+      if (!accessorPropertiesOnly) {
+        auto internalProps = makeInternalPropsFromValue(
+            *valuePtr, objGroup, serializationOptions);
+        if (internalProps.size()) {
+          resp.internalProperties = std::move(internalProps);
+        }
+      }
+    } else {
+      sendResponseToClient(m::makeErrorResponse(
+          req.id,
+          m::ErrorCode::ServerError,
+          "Could not find an object with the given ID"));
+      return;
+    }
+  } catch (const jsi::JSError &error) {
+    resp.exceptionDetails =
+        m::runtime::makeExceptionDetails(runtime_, error, *objTable_, objGroup);
+  } catch (const jsi::JSIException &err) {
+    resp.exceptionDetails = m::runtime::makeExceptionDetails(err);
   }
   sendResponseToClient(resp);
 }
@@ -470,30 +620,23 @@ void RuntimeDomainAgent::evaluate(const m::runtime::EvaluateRequest &req) {
   m::runtime::EvaluateResponse resp;
   resp.id = req.id;
 
-  std::string objectGroup = req.objectGroup.value_or("");
-  try {
-    // Evaluate the expression using the runtime's normal script evaluation
-    // mechanism. This ensures the expression is evaluated in the global scope,
-    // regardless of where the runtime happens to be paused.
-    jsi::Value result = runtime_.evaluateJavaScript(
-        std::unique_ptr<jsi::StringBuffer>(
-            new jsi::StringBuffer(req.expression)),
-        kEvaluatedCodeUrl);
+  ObjectSerializationOptions serializationOptions;
+  serializationOptions.returnByValue = req.returnByValue.value_or(false);
+  serializationOptions.generatePreview = req.generatePreview.value_or(false);
 
-    bool byValue = req.returnByValue.value_or(false);
-    bool generatePreview = req.generatePreview.value_or(false);
-    auto remoteObjPtr = m::runtime::makeRemoteObject(
-        runtime_, result, *objTable_, objectGroup, byValue, generatePreview);
-    resp.result = std::move(remoteObjPtr);
-  } catch (const jsi::JSError &error) {
-    resp.exceptionDetails = m::runtime::ExceptionDetails();
-    resp.exceptionDetails->text = error.getMessage() + "\n" + error.getStack();
-    resp.exceptionDetails->exception = m::runtime::makeRemoteObject(
-        runtime_, error.value(), *objTable_, objectGroup, false, false);
-  } catch (const jsi::JSIException &err) {
-    resp.exceptionDetails = m::runtime::ExceptionDetails();
-    resp.exceptionDetails->text = err.what();
-  }
+  std::string objectGroup = req.objectGroup.value_or("");
+
+  std::tie(resp.result, resp.exceptionDetails) = evaluateAndWrapResult(
+      runtime_,
+      *objTable_,
+      objectGroup,
+      serializationOptions,
+      [&req](jsi::Runtime &runtime) {
+        return runtime.evaluateJavaScript(
+            std::unique_ptr<jsi::StringBuffer>(
+                new jsi::StringBuffer(req.expression)),
+            kEvaluatedCodeUrl);
+      });
 
   sendResponseToClient(resp);
 }
@@ -538,7 +681,7 @@ void RuntimeDomainAgent::callFunctionOn(
     evalResult = runtime_.evaluateJavaScript(
         std::unique_ptr<jsi::StringBuffer>(new jsi::StringBuffer(expression)),
         kEvaluatedCodeUrl);
-  } catch (const jsi::JSIException &error) {
+  } catch (const jsi::JSIException &) {
     sendResponseToClient(m::makeErrorResponse(
         req.id,
         m::ErrorCode::InternalError,
@@ -547,18 +690,21 @@ void RuntimeDomainAgent::callFunctionOn(
   }
 
   auto objectGroup = req.objectGroup.value_or("");
-  auto byValue = req.returnByValue.value_or(false);
-  auto generatePreview = req.generatePreview.value_or(false);
+  ObjectSerializationOptions serializationOptions;
+  serializationOptions.returnByValue = req.returnByValue.value_or(false);
+  serializationOptions.generatePreview = req.generatePreview.value_or(false);
 
   m::runtime::CallFunctionOnResponse resp;
   resp.id = req.id;
-  resp.result = m::runtime::makeRemoteObject(
+  std::tie(resp.result, resp.exceptionDetails) = evaluateAndWrapResult(
       runtime_,
-      (runner)(runtime_, *objTable_, evalResult),
       *objTable_,
       objectGroup,
-      byValue,
-      generatePreview);
+      serializationOptions,
+      [&](jsi::Runtime &runtime) {
+        return runner(runtime, *objTable_, evalResult);
+      });
+
   sendResponseToClient(resp);
 }
 
@@ -590,7 +736,7 @@ RuntimeDomainAgent::makePropsFromScope(
     std::pair<uint32_t, uint32_t> frameAndScopeIndex,
     const std::string &objectGroup,
     const debugger::ProgramState &state,
-    bool generatePreview) {
+    const ObjectSerializationOptions &serializationOptions) {
   // Chrome represents variables in a scope as properties on a dummy object.
   // We don't instantiate such dummy objects, we just pretended to have one.
   // Chrome has now asked for its properties, so it's time to synthesize
@@ -608,23 +754,6 @@ RuntimeDomainAgent::makePropsFromScope(
   }
   uint32_t varCount = lexicalInfo.getVariablesCountInScope(scopeIndex);
 
-  // If this is the frame's local scope, include 'this'.
-  if (scopeIndex == 0) {
-    auto varInfo = state.getVariableInfoForThis(frameIndex);
-    m::runtime::PropertyDescriptor desc;
-    desc.name = varInfo.name;
-    desc.value = m::runtime::makeRemoteObject(
-        runtime_,
-        varInfo.value,
-        *objTable_,
-        objectGroup,
-        false,
-        generatePreview);
-    // Chrome only shows enumerable properties.
-    desc.enumerable = true;
-    result.emplace_back(std::move(desc));
-  }
-
   // Then add each of the variables in this lexical scope.
   for (uint32_t varIndex = 0; varIndex < varCount; varIndex++) {
     debugger::VariableInfo varInfo =
@@ -633,13 +762,11 @@ RuntimeDomainAgent::makePropsFromScope(
     m::runtime::PropertyDescriptor desc;
     desc.name = varInfo.name;
     desc.value = m::runtime::makeRemoteObject(
-        runtime_,
-        varInfo.value,
-        *objTable_,
-        objectGroup,
-        false,
-        generatePreview);
+        runtime_, varInfo.value, *objTable_, objectGroup, serializationOptions);
     desc.enumerable = true;
+    desc.configurable = true;
+    desc.writable = true;
+    desc.isOwn = true;
 
     result.emplace_back(std::move(desc));
   }
@@ -652,72 +779,161 @@ RuntimeDomainAgent::makePropsFromValue(
     const jsi::Value &value,
     const std::string &objectGroup,
     bool onlyOwnProperties,
-    bool generatePreview) {
+    bool accessorPropertiesOnly,
+    const ObjectSerializationOptions &serializationOptions) {
   std::vector<m::runtime::PropertyDescriptor> result;
 
   if (value.isObject()) {
     jsi::Runtime &runtime = runtime_;
-    jsi::Object obj = value.getObject(runtime);
 
-    // TODO(hypuk): obj.getPropertyNames only returns enumerable properties.
-    jsi::Array propNames = onlyOwnProperties
-        ? runtime.global()
-              .getPropertyAsObject(runtime, "Object")
-              .getPropertyAsFunction(runtime, "getOwnPropertyNames")
-              .call(runtime, obj)
-              .getObject(runtime)
-              .getArray(runtime)
-        : obj.getPropertyNames(runtime);
-
-    size_t propCount = propNames.length(runtime);
-    for (size_t i = 0; i < propCount; i++) {
-      jsi::String propName =
-          propNames.getValueAtIndex(runtime, i).getString(runtime);
-
-      m::runtime::PropertyDescriptor desc;
-      desc.name = propName.utf8(runtime);
-
-      try {
-        // Currently, we fetch the property even if it runs code.
-        // Chrome instead detects getters and makes you click to invoke.
-        jsi::Value propValue = obj.getProperty(runtime, propName);
-        desc.value = m::runtime::makeRemoteObject(
-            runtime,
-            propValue,
-            *objTable_,
-            objectGroup,
-            false,
-            generatePreview);
-      } catch (const jsi::JSIException &err) {
-        // We fetched a property with a getter that threw. Show a placeholder.
-        // We could have added additional info, but the UI quickly gets messy.
-        desc.value = m::runtime::makeRemoteObject(
-            runtime,
-            jsi::String::createFromUtf8(runtime, "(Exception)"),
-            *objTable_,
-            objectGroup,
-            false,
-            generatePreview);
+    jsi::Value current{runtime, value};
+    bool isOwn = true;
+    // Keep track of the properties we've emitted so far to avoid duplicates
+    // in the case of prototype shadowing.
+    JSIPropNameIDSet emittedPropIDs(runtime);
+    // Walk up the prototype chain.
+    do {
+      jsi::Object obj = current.getObject(runtime);
+      std::array<jsi::Array, 2> propArrays{
+          helpers_.objectGetOwnPropertyNames.call(runtime, obj)
+              .asObject(runtime)
+              .asArray(runtime),
+          helpers_.objectGetOwnPropertySymbols.call(runtime, obj)
+              .asObject(runtime)
+              .asArray(runtime)};
+      // Loop through all own property descriptors and convert them to CDP
+      // format.
+      for (auto &propArray : propArrays) {
+        size_t propCount = propArray.length(runtime);
+        for (size_t i = 0; i < propCount; i++) {
+          m::runtime::PropertyDescriptor desc;
+          desc.isOwn = isOwn;
+          jsi::Value propNameOrSymbol = propArray.getValueAtIndex(runtime, i);
+          jsi::Object descriptor = helpers_.objectGetOwnPropertyDescriptor
+                                       .call(runtime, obj, propNameOrSymbol)
+                                       .asObject(runtime);
+          if (accessorPropertiesOnly &&
+              !descriptor.hasProperty(runtime, "get") &&
+              !descriptor.hasProperty(runtime, "set")) {
+            continue;
+          }
+          if (propNameOrSymbol.isString()) {
+            auto propName = propNameOrSymbol.getString(runtime);
+            if (
+                // Short-circuit the shadowing check if we're emitting only
+                // own properties.
+                !onlyOwnProperties &&
+                !emittedPropIDs.insert(
+                    jsi::PropNameID::forString(runtime, propName))) {
+              // This property has already been emitted somewhere down the
+              // prototype chain.
+              continue;
+            }
+            desc.name = propName.utf8(runtime);
+          } else if (propNameOrSymbol.isSymbol()) {
+            auto propSymbol = propNameOrSymbol.getSymbol(runtime);
+            if (
+                // Short-circuit the shadowing check if we're emitting only
+                // own properties.
+                !onlyOwnProperties &&
+                !emittedPropIDs.insert(
+                    jsi::PropNameID::forSymbol(runtime, propSymbol))) {
+              // This property has already been emitted somewhere down the
+              // prototype chain.
+              continue;
+            }
+            desc.name = propSymbol.toString(runtime);
+            desc.symbol = m::runtime::makeRemoteObject(
+                runtime,
+                propNameOrSymbol,
+                *objTable_,
+                objectGroup,
+                serializationOptions);
+          } else {
+            assert(false && "unexpected non-string non-symbol property key");
+          }
+          try {
+            desc.enumerable =
+                descriptor.getProperty(runtime, "enumerable").asBool();
+            desc.configurable =
+                descriptor.getProperty(runtime, "configurable").asBool();
+            if (descriptor.hasProperty(runtime, "value")) {
+              desc.value = m::runtime::makeRemoteObject(
+                  runtime,
+                  descriptor.getProperty(runtime, "value"),
+                  *objTable_,
+                  objectGroup,
+                  serializationOptions);
+            }
+            if (descriptor.hasProperty(runtime, "get")) {
+              desc.get = m::runtime::makeRemoteObject(
+                  runtime,
+                  descriptor.getProperty(runtime, "get"),
+                  *objTable_,
+                  objectGroup,
+                  serializationOptions);
+            }
+            if (descriptor.hasProperty(runtime, "set")) {
+              desc.set = m::runtime::makeRemoteObject(
+                  runtime,
+                  descriptor.getProperty(runtime, "set"),
+                  *objTable_,
+                  objectGroup,
+                  serializationOptions);
+            }
+            if (descriptor.hasProperty(runtime, "writable")) {
+              desc.writable =
+                  descriptor.getProperty(runtime, "writable").asBool();
+            }
+          } catch (const jsi::JSError &err) {
+            desc.wasThrown = true;
+            desc.value = m::runtime::makeRemoteObjectForError(
+                runtime, err.value(), *objTable_, objectGroup);
+          } catch (const jsi::JSIException &) {
+            desc.wasThrown = true;
+            desc.value = m::runtime::makeRemoteObject(
+                runtime,
+                jsi::String::createFromUtf8(runtime, "(Exception)"),
+                *objTable_,
+                objectGroup,
+                ObjectSerializationOptions{});
+          }
+          result.emplace_back(std::move(desc));
+        }
       }
-
-      result.emplace_back(std::move(desc));
-    }
-
-    if (onlyOwnProperties) {
-      jsi::Value proto = runtime.global()
-                             .getPropertyAsObject(runtime, "Object")
-                             .getPropertyAsFunction(runtime, "getPrototypeOf")
-                             .call(runtime, obj);
-      if (!proto.isNull()) {
-        m::runtime::PropertyDescriptor desc;
-        desc.name = "__proto__";
-        desc.value = m::runtime::makeRemoteObject(
-            runtime, proto, *objTable_, objectGroup, false, generatePreview);
-        result.emplace_back(std::move(desc));
+      if (onlyOwnProperties) {
+        // The client requested own properties only, so stop walking up the
+        // prototype chain.
+        break;
       }
-    }
+      current = helpers_.objectGetPrototypeOf.call(runtime, obj);
+      isOwn = false;
+    } while (current.isObject());
   }
 
+  return result;
+}
+
+std::vector<m::runtime::InternalPropertyDescriptor>
+RuntimeDomainAgent::makeInternalPropsFromValue(
+    const jsi::Value &value,
+    const std::string &objectGroup,
+    const ObjectSerializationOptions &serializationOptions) {
+  std::vector<m::runtime::InternalPropertyDescriptor> result;
+  if (value.isObject()) {
+    jsi::Runtime &runtime = runtime_;
+
+    jsi::Object obj = value.getObject(runtime);
+
+    jsi::Value proto = helpers_.objectGetPrototypeOf.call(runtime, obj);
+    if (!proto.isNull()) {
+      m::runtime::InternalPropertyDescriptor desc;
+      desc.name = "[[Prototype]]";
+      desc.value = m::runtime::makeRemoteObject(
+          runtime, proto, *objTable_, objectGroup, serializationOptions);
+      result.emplace_back(std::move(desc));
+    }
+  }
   return result;
 }
 
@@ -761,7 +977,9 @@ static std::string consoleMessageTypeName(ConsoleAPIType type) {
   }
 }
 
-void RuntimeDomainAgent::consoleAPICalled(const ConsoleMessage &message) {
+void RuntimeDomainAgent::consoleAPICalled(
+    const ConsoleMessage &message,
+    bool isBuffered) {
   if (!enabled_) {
     return;
   }
@@ -775,14 +993,57 @@ void RuntimeDomainAgent::consoleAPICalled(const ConsoleMessage &message) {
     note.stackTrace->callFrames =
         m::runtime::makeCallFrames(message.stackTrace);
   }
-
+  ObjectSerializationOptions serializationOptions;
+  serializationOptions.generatePreview = !isBuffered;
   for (auto &arg : message.args) {
     note.args.push_back(m::runtime::makeRemoteObject(
-        runtime_, arg, *objTable_, "ConsoleObjectGroup", false, false));
+        runtime_, arg, *objTable_, "ConsoleObjectGroup", serializationOptions));
   }
 
   sendNotificationToClient(note);
 }
+
+void RuntimeDomainAgent::releaseObject(
+    const m::runtime::ReleaseObjectRequest &req) {
+  // Allow this to be used when domain is not enabled to match V8 behavior
+
+  if (objTable_->releaseObject(req.objectId)) {
+    sendResponseToClient(m::makeOkResponse(req.id));
+  } else {
+    sendResponseToClient(m::makeErrorResponse(
+        req.id,
+        m::ErrorCode::ServerError,
+        "Could not find an object with the given ID"));
+  }
+}
+
+void RuntimeDomainAgent::releaseObjectGroup(
+    const m::runtime::ReleaseObjectGroupRequest &req) {
+  // Allow this to be used when domain is not enabled to match V8 behavior.
+
+  objTable_->releaseObjectGroup(req.objectGroup);
+  sendResponseToClient(m::makeOkResponse(req.id));
+}
+
+RuntimeDomainAgent::Helpers::Helpers(jsi::Runtime &runtime)
+    : // TODO(moti): The best place to read and cache these helpers is in
+      // CDPDebugAPI, before user code ever runs.
+      objectGetOwnPropertySymbols(
+          runtime.global()
+              .getPropertyAsObject(runtime, "Object")
+              .getPropertyAsFunction(runtime, "getOwnPropertySymbols")),
+      objectGetOwnPropertyNames(
+          runtime.global()
+              .getPropertyAsObject(runtime, "Object")
+              .getPropertyAsFunction(runtime, "getOwnPropertyNames")),
+      objectGetOwnPropertyDescriptor(
+          runtime.global()
+              .getPropertyAsObject(runtime, "Object")
+              .getPropertyAsFunction(runtime, "getOwnPropertyDescriptor")),
+      objectGetPrototypeOf(
+          runtime.global()
+              .getPropertyAsObject(runtime, "Object")
+              .getPropertyAsFunction(runtime, "getPrototypeOf")) {}
 
 } // namespace cdp
 } // namespace hermes

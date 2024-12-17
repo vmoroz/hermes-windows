@@ -12,6 +12,7 @@
 
 #include "CDPDebugAPI.h"
 #include "DomainAgent.h"
+#include "RemoteObjectConverters.h"
 
 namespace facebook {
 namespace hermes {
@@ -41,6 +42,9 @@ class RuntimeDomainAgent : public DomainAgent {
   /// Handles Runtime.enable request
   /// @cdp Runtime.enable If domain is already enabled, will return success.
   void enable(const m::runtime::EnableRequest &req);
+  /// @cdp Runtime.discardConsoleEntries
+  void discardConsoleEntries(
+      const m::runtime::DiscardConsoleEntriesRequest &req);
   /// Handles Runtime.disable request
   /// @cdp Runtime.disable If domain is already disabled, will return success.
   void disable(const m::runtime::DisableRequest &req);
@@ -65,9 +69,24 @@ class RuntimeDomainAgent : public DomainAgent {
   /// @cdp Runtime.callFunctionOn Allowed even if domain is not enabled.
   void callFunctionOn(const m::runtime::CallFunctionOnRequest &req);
   /// Dispatches a Runtime.consoleAPICalled notification
-  void consoleAPICalled(const ConsoleMessage &message);
+  void consoleAPICalled(const ConsoleMessage &message, bool isBuffered);
+  /// Handles Runtime.releaseObject request
+  /// @cdp Runtime.releaseObject Allowed even if domain is not enabled.
+  void releaseObject(const m::runtime::ReleaseObjectRequest &req);
+  /// Handles Runtime.releaseObjectGroup request
+  /// @cdp Runtime.releaseObjectGroup Allowed even if domain is not enabled.
+  void releaseObjectGroup(const m::runtime::ReleaseObjectGroupRequest &req);
 
  private:
+  struct Helpers {
+    jsi::Function objectGetOwnPropertySymbols;
+    jsi::Function objectGetOwnPropertyNames;
+    jsi::Function objectGetOwnPropertyDescriptor;
+    jsi::Function objectGetPrototypeOf;
+
+    explicit Helpers(jsi::Runtime &runtime);
+  };
+
   bool checkRuntimeEnabled(const m::Request &req);
 
   /// Ensure the provided \p executionContextId matches the one
@@ -82,12 +101,18 @@ class RuntimeDomainAgent : public DomainAgent {
       std::pair<uint32_t, uint32_t> frameAndScopeIndex,
       const std::string &objectGroup,
       const debugger::ProgramState &state,
-      bool generatePreview);
+      const ObjectSerializationOptions &serializationOptions);
   std::vector<m::runtime::PropertyDescriptor> makePropsFromValue(
       const jsi::Value &value,
       const std::string &objectGroup,
       bool onlyOwnProperties,
-      bool generatePreview);
+      bool accessorPropertiesOnly,
+      const ObjectSerializationOptions &serializationOptions);
+  std::vector<m::runtime::InternalPropertyDescriptor>
+  makeInternalPropsFromValue(
+      const jsi::Value &value,
+      const std::string &objectGroup,
+      const ObjectSerializationOptions &serializationOptions);
 
   HermesRuntime &runtime_;
   debugger::AsyncDebuggerAPI &asyncDebuggerAPI_;
@@ -104,6 +129,9 @@ class RuntimeDomainAgent : public DomainAgent {
 
   /// Console message subscription token, used to unsubscribe during shutdown.
   ConsoleMessageRegistration consoleMessageRegistration_;
+
+  /// Cached helper JS functions used by agent methods.
+  const Helpers helpers_;
 };
 
 } // namespace cdp

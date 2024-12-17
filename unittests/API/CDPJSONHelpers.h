@@ -23,6 +23,7 @@ struct JSONScope {
 
   JSONValue *parse(const std::string &str);
   JSONObject *parseObject(const std::string &str);
+  std::optional<JSONObject *> tryParseObject(const std::string &json);
   std::string getString(JSONObject *obj, std::vector<std::string> paths);
   long long getNumber(JSONObject *obj, std::vector<std::string> paths);
   bool getBoolean(JSONObject *obj, std::vector<std::string> paths);
@@ -71,6 +72,11 @@ struct FrameInfo {
     return *this;
   }
 
+  FrameInfo &setThisType(const std::string &type) {
+    thisType = type;
+    return *this;
+  }
+
   std::optional<std::string> callFrameId;
   std::string functionName;
   uint32_t lineNumberMin;
@@ -78,6 +84,10 @@ struct FrameInfo {
   uint32_t scopeCount;
   uint32_t columnNumber;
   std::string scriptId;
+  // If set, we optionally verify the type of the 'this' object. The 'this'
+  // object should always exist in Debugger.CallFrame, but it's not necessary to
+  // verify it with every test.
+  std::optional<std::string> thisType;
 };
 
 struct BreakpointLocation {
@@ -112,6 +122,8 @@ std::unique_ptr<T> getValue(
 struct PropInfo {
   PropInfo(const std::string &type) : type(type) {}
 
+  explicit PropInfo() : type("<ignored>"), accessor(true) {}
+
   PropInfo &setSubtype(const std::string &subtypeParam) {
     subtype = subtypeParam;
     return *this;
@@ -128,10 +140,37 @@ struct PropInfo {
     return *this;
   }
 
+  /// \note ignored for internal property descriptors.
+  PropInfo &setConfigurable(bool configurableParam) {
+    configurable = configurableParam;
+    return *this;
+  }
+
+  /// \note ignored for internal property descriptors.
+  PropInfo &setEnumerable(bool enumerableParam) {
+    enumerable = enumerableParam;
+    return *this;
+  }
+
+  /// \note ignored for internal property descriptors.
+  PropInfo &setWritable(bool writableParam) {
+    writable = writableParam;
+    return *this;
+  }
+
+  PropInfo &setAccessor(bool accessorParam) {
+    accessor = accessorParam;
+    return *this;
+  }
+
   std::string type;
   std::optional<std::string> subtype;
   std::optional<m::JSONBlob> value;
   std::optional<std::string> unserializableValue;
+  bool configurable{true};
+  bool enumerable{true};
+  bool writable{true};
+  bool accessor{false};
 };
 
 /// Ensure that \p message is a an error response with the given \p id,
@@ -177,14 +216,18 @@ m::debugger::BreakpointId ensureSetBreakpointByUrlResponse(
     int id,
     std::vector<BreakpointLocation> locations);
 
-std::unordered_map<std::string, std::string> ensureProps(
+m::runtime::GetPropertiesResponse ensureProps(
     const std::string &message,
-    const std::unordered_map<std::string, PropInfo> &infos);
+    const std::unordered_map<std::string, PropInfo> &infos,
+    const std::unordered_map<std::string, PropInfo> &internalInfos);
 
 std::string serializeRuntimeCallFunctionOnRequest(
     const m::runtime::CallFunctionOnRequest &req);
 m::runtime::GetPropertiesResponse parseRuntimeGetPropertiesResponse(
     const std::string &json);
+
+std::unordered_map<std::string, m::runtime::PropertyDescriptor> indexProps(
+    const std::vector<m::runtime::PropertyDescriptor> &props);
 
 } // namespace hermes
 } // namespace facebook

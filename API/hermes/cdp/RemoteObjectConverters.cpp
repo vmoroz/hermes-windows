@@ -18,6 +18,25 @@ namespace m = ::facebook::hermes::cdp::message;
 
 constexpr size_t kMaxPreviewProperties = 10;
 
+// Parity with V8. 13 Aug, 2024
+// https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/value-mirror.cc;l=191-201;drc=bdc48d1b1312cc40c00282efb1c9c5f41dcdca9a
+static std::string abbreviateString(const std::string &str) {
+  const std::string::size_type kMaxLength = 100;
+  const std::string kEllipsis = "…";
+  if (str.length() <= kMaxLength) {
+    return str;
+  }
+
+  return str.substr(0, kMaxLength - 1) + kEllipsis;
+}
+
+static bool isObjectInstanceOfError(
+    const jsi::Object &obj,
+    facebook::jsi::Runtime &runtime) {
+  return obj.instanceOf(
+      runtime, runtime.global().getPropertyAsFunction(runtime, "Error"));
+}
+
 static m::runtime::PropertyPreview generatePropertyPreview(
     facebook::jsi::Runtime &runtime,
     const std::string &name,
@@ -56,6 +75,11 @@ static m::runtime::PropertyPreview generatePropertyPreview(
       preview.subtype = "array";
       preview.value = "Array(" +
           std::to_string(obj.getArray(runtime).length(runtime)) + ")";
+    } else if (isObjectInstanceOfError(obj, runtime)) {
+      preview.type = "object";
+      preview.subtype = "error";
+      preview.value = abbreviateString(
+          obj.getProperty(runtime, "stack").toString(runtime).utf8(runtime));
     } else {
       preview.type = "object";
       preview.value = "Object";
@@ -81,7 +105,7 @@ static m::runtime::ObjectPreview generateArrayPreview(
     try {
       desc = generatePropertyPreview(
           runtime, indexString, obj.getValueAtIndex(runtime, i));
-    } catch (const jsi::JSError &err) {
+    } catch (const jsi::JSError &) {
       desc.name = indexString;
       desc.type = "string";
       desc.value = "<Exception>";
@@ -120,7 +144,7 @@ static m::runtime::ObjectPreview generateObjectPreview(
       // Chrome instead detects getters and makes you click to invoke.
       desc = generatePropertyPreview(
           runtime, propName.utf8(runtime), obj.getProperty(runtime, propName));
-    } catch (const jsi::JSError &err) {
+    } catch (const jsi::JSError &) {
       desc.name = propName.utf8(runtime);
       desc.type = "string";
       desc.value = "<Exception>";
@@ -183,10 +207,12 @@ m::debugger::CallFrame m::debugger::makeCallFrame(
     result.scopeChain.emplace_back(std::move(scope));
   }
 
-  result.thisObj.type = "object";
-  result.thisObj.objectId = objTable.addValue(
+  result.thisObj = runtime::makeRemoteObject(
+      runtime,
       state.getVariableInfoForThis(callFrameIndex).value,
-      cdp::BacktraceObjectGroup);
+      objTable,
+      cdp::BacktraceObjectGroup,
+      {});
 
   return result;
 }
@@ -234,8 +260,7 @@ m::runtime::RemoteObject m::runtime::makeRemoteObject(
     const facebook::jsi::Value &value,
     cdp::RemoteObjectsTable &objTable,
     const std::string &objectGroup,
-    bool byValue,
-    bool generatePreview) {
+    const cdp::ObjectSerializationOptions &options) {
   m::runtime::RemoteObject result;
   if (value.isUndefined()) {
     result.type = "undefined";
@@ -286,6 +311,17 @@ m::runtime::RemoteObject m::runtime::makeRemoteObject(
     if (obj.isFunction(runtime)) {
       result.type = "function";
       result.value = "\"\"";
+      /**
+       * @cdp Runtime.RemoteObject's description property is a string, but in
+       * the case of functions, V8 populates it with the result of toString [1]
+       * and Chrome DevTools uses a series of regexes [2] to extract structured
+       * information about the function.
+       * [1]
+       * https://source.chromium.org/chromium/chromium/src/+/main:v8/src/debug/debug-interface.cc;l=138-174;drc=42debe0b0e6bf90175dd0d121eb0e7dc11a6d29c
+       * [2]
+       * https://github.com/facebookexperimental/rn-chrome-devtools-frontend/blob/9a23d4c7c4c2d1a3d9e913af38d6965f474c4284/front_end/ui/legacy/components/object_ui/ObjectPropertiesSection.ts#L311-L391
+       */
+      result.description = value.toString(runtime).utf8(runtime);
     } else if (obj.isArray(runtime)) {
       auto array = obj.getArray(runtime);
       size_t arrayCount = array.length(runtime);
@@ -294,18 +330,28 @@ m::runtime::RemoteObject m::runtime::makeRemoteObject(
       result.subtype = "array";
       result.className = "Array";
       result.description = "Array(" + std::to_string(arrayCount) + ")";
-      if (generatePreview) {
+      if (options.generatePreview) {
         result.preview = generateArrayPreview(runtime, array);
+      }
+    } else if (isObjectInstanceOfError(obj, runtime)) {
+      result.type = "object";
+      result.subtype = "error";
+      // T198854404 we should report subclasses of Error here, e.g. TypeError
+      result.className = "Error";
+      result.description =
+          obj.getProperty(runtime, "stack").toString(runtime).utf8(runtime);
+      if (options.generatePreview) {
+        result.preview = generateObjectPreview(runtime, obj);
       }
     } else {
       result.type = "object";
       result.description = result.className = "Object";
-      if (generatePreview) {
+      if (options.generatePreview) {
         result.preview = generateObjectPreview(runtime, obj);
       }
     }
 
-    if (byValue) {
+    if (options.returnByValue) {
       // Use JSON.stringify to serialize this object.
       auto JSON = runtime.global().getPropertyAsObject(runtime, "JSON");
       auto stringify = JSON.getPropertyAsFunction(runtime, "stringify");
@@ -322,6 +368,60 @@ m::runtime::RemoteObject m::runtime::makeRemoteObject(
   }
 
   return result;
+}
+
+m::runtime::RemoteObject m::runtime::makeRemoteObjectForError(
+    jsi::Runtime &runtime,
+    const jsi::Value &value,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup) {
+  ObjectSerializationOptions errorSerializationOptions;
+  // NOTE: V8 omits the preview for actual Error objects, but we don't
+  // make this distinction here.
+  errorSerializationOptions.generatePreview = true;
+  return m::runtime::makeRemoteObject(
+      runtime, value, objTable, objectGroup, errorSerializationOptions);
+}
+
+m::runtime::ExceptionDetails m::runtime::makeExceptionDetails(
+    jsi::Runtime &runtime,
+    const jsi::JSError &error,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup) {
+  m::runtime::ExceptionDetails exceptionDetails;
+  exceptionDetails.text = error.getMessage() + "\n" + error.getStack();
+  exceptionDetails.exception = m::runtime::makeRemoteObjectForError(
+      runtime, error.value(), objTable, objectGroup);
+  return exceptionDetails;
+}
+
+m::runtime::ExceptionDetails m::runtime::makeExceptionDetails(
+    const jsi::JSIException &err) {
+  m::runtime::ExceptionDetails exceptionDetails;
+  exceptionDetails.text = err.what();
+  return exceptionDetails;
+}
+
+m::runtime::ExceptionDetails m::runtime::makeExceptionDetails(
+    facebook::jsi::Runtime &runtime,
+    const h::debugger::EvalResult &result,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup) {
+  assert(result.isException);
+  m::runtime::ExceptionDetails exceptionDetails;
+
+  exceptionDetails.text = result.exceptionDetails.text;
+  exceptionDetails.scriptId =
+      std::to_string(result.exceptionDetails.location.fileId);
+  exceptionDetails.url = result.exceptionDetails.location.fileName;
+  exceptionDetails.stackTrace = m::runtime::StackTrace();
+  exceptionDetails.stackTrace->callFrames =
+      makeCallFrames(result.exceptionDetails.getStackTrace());
+  m::setChromeLocation(exceptionDetails, result.exceptionDetails.location);
+  exceptionDetails.exception = m::runtime::makeRemoteObjectForError(
+      runtime, result.value, objTable, objectGroup);
+
+  return exceptionDetails;
 }
 
 } // namespace cdp
