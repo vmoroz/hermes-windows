@@ -73,6 +73,11 @@ class RemoteObjectsTable {
       ::facebook::jsi::Value value,
       const std::string &objectGroup);
 
+  /// /param objId The object ID.
+  /// /return true if object ID represents a scope in the scope chain of a call
+  /// frame.
+  bool isScopeId(const std::string &objId) const;
+
   /**
    * Retrieves the (frameIndex, scopeIndex) associated with this object id, or
    * nullptr if no mapping exists. The pointer stays valid as long as you only
@@ -96,9 +101,9 @@ class RemoteObjectsTable {
 
   /**
    * Removes the scope or JSI value backed by the provided object ID from the
-   * table.
+   * table. \return true if the object was removed, false if it was not found.
    */
-  void releaseObject(const std::string &objId);
+  bool releaseObject(const std::string &objId);
 
   /**
    * Removes all objects that are part of the provided object group from the
@@ -107,7 +112,7 @@ class RemoteObjectsTable {
   void releaseObjectGroup(const std::string &objectGroup);
 
  private:
-  void releaseObject(int64_t id);
+  bool releaseObject(int64_t id);
 
   int64_t scopeId_ = -1;
   int64_t valueId_ = 1;

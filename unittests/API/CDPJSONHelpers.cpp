@@ -37,7 +37,7 @@ void ensureOkResponse(const std::string &message, long long id) {
   EXPECT_EQ(response.id, id);
 }
 
-const JSONValue *getJSONValue(
+static const JSONValue *getJSONValue(
     const JSONValue *value,
     std::vector<std::string> paths) {
   int numPaths = paths.size();
@@ -65,7 +65,7 @@ std::unique_ptr<T> getValue(
   return target;
 }
 
-const JSONObject *getJSONObject(
+static const JSONObject *getJSONObject(
     const JSONValue *value,
     std::vector<std::string> paths) {
   value = getJSONValue(value, paths);
@@ -73,7 +73,7 @@ const JSONObject *getJSONObject(
   return static_cast<const JSONObject *>(value);
 }
 
-const JSONArray *getJSONArray(
+static const JSONArray *getJSONArray(
     const JSONValue *value,
     std::vector<std::string> paths) {
   value = getJSONValue(value, paths);
@@ -105,7 +105,7 @@ void ensureNotification(
   EXPECT_EQ(*getValue<std::string>(obj, {"method"}), expectedMethod);
 }
 
-void expectCallFrames(
+static void expectCallFrames(
     const std::vector<m::debugger::CallFrame> &frames,
     const std::vector<FrameInfo> &infos) {
   EXPECT_EQ(frames.size(), infos.size());
@@ -143,6 +143,10 @@ void expectCallFrames(
       }
     }
 
+    if (info.thisType.has_value()) {
+      EXPECT_EQ(frame.thisObj.type, info.thisType.value());
+    }
+
     i++;
   }
 }
@@ -160,17 +164,25 @@ m::debugger::PausedNotification ensurePaused(
   return notification;
 }
 
-std::unordered_map<std::string, std::string> ensureProps(
+m::runtime::GetPropertiesResponse ensureProps(
     const std::string &message,
-    const std::unordered_map<std::string, PropInfo> &infos) {
+    const std::unordered_map<std::string, PropInfo> &infos,
+    const std::unordered_map<std::string, PropInfo> &internalInfos) {
   JSLexer::Allocator allocator;
   JSONFactory factory(allocator);
   auto resp = mustMake<m::runtime::GetPropertiesResponse>(
       mustParseStrAsJsonObj(message, factory));
 
-  std::unordered_map<std::string, std::string> objectIds;
-
   EXPECT_EQ(resp.result.size(), infos.size());
+
+  if (internalInfos.size() > 0) {
+    EXPECT_TRUE(resp.internalProperties.has_value());
+    EXPECT_EQ(resp.internalProperties.value().size(), internalInfos.size());
+  } else {
+    EXPECT_TRUE(
+        !resp.internalProperties.has_value() ||
+        resp.internalProperties.value().size() == 0);
+  }
 
   for (size_t i = 0; i < resp.result.size(); i++) {
     m::runtime::PropertyDescriptor &desc = resp.result[i];
@@ -181,41 +193,106 @@ std::unordered_map<std::string, std::string> ensureProps(
     if (infoIt != infos.end()) {
       const PropInfo &info = infoIt->second;
 
-      EXPECT_TRUE(desc.value.has_value());
+      if (!info.accessor) {
+        EXPECT_TRUE(desc.value.has_value());
 
-      m::runtime::RemoteObject &remoteObj = desc.value.value();
-      EXPECT_EQ(remoteObj.type, info.type);
+        m::runtime::RemoteObject &remoteObj = desc.value.value();
+        EXPECT_EQ(remoteObj.type, info.type);
 
-      if (info.subtype.has_value()) {
-        EXPECT_TRUE(remoteObj.subtype.has_value());
-        EXPECT_EQ(remoteObj.subtype.value(), info.subtype.value());
+        if (info.subtype.has_value()) {
+          EXPECT_TRUE(remoteObj.subtype.has_value());
+          EXPECT_EQ(remoteObj.subtype.value(), info.subtype.value());
+        }
+
+        if (info.value.has_value()) {
+          EXPECT_TRUE(remoteObj.value.has_value());
+          JSLexer::Allocator jsonAlloc;
+          JSONFactory factory(jsonAlloc);
+          EXPECT_TRUE(jsonValsEQ(
+              mustParseStr(remoteObj.value.value(), factory),
+              mustParseStr(info.value.value(), factory)));
+        }
+
+        if (info.unserializableValue.has_value()) {
+          EXPECT_TRUE(remoteObj.unserializableValue.has_value());
+          EXPECT_EQ(
+              remoteObj.unserializableValue.value(),
+              info.unserializableValue.value());
+        }
+
+        if ((info.type == "object" && info.subtype != "null") ||
+            info.type == "function") {
+          EXPECT_TRUE(remoteObj.objectId.has_value());
+        }
       }
 
-      if (info.value.has_value()) {
-        EXPECT_TRUE(remoteObj.value.has_value());
-        JSLexer::Allocator jsonAlloc;
-        JSONFactory factory(jsonAlloc);
-        EXPECT_TRUE(jsonValsEQ(
-            mustParseStr(remoteObj.value.value(), factory),
-            mustParseStr(info.value.value(), factory)));
-      }
-
-      if (info.unserializableValue.has_value()) {
-        EXPECT_TRUE(remoteObj.unserializableValue.has_value());
-        EXPECT_EQ(
-            remoteObj.unserializableValue.value(),
-            info.unserializableValue.value());
-      }
-
-      if ((info.type == "object" && info.subtype != "null") ||
-          info.type == "function") {
-        EXPECT_TRUE(remoteObj.objectId.has_value());
-        objectIds[desc.name] = remoteObj.objectId.value();
+      EXPECT_EQ(desc.configurable, info.configurable);
+      EXPECT_EQ(desc.enumerable, info.enumerable);
+      if (info.accessor) {
+        EXPECT_EQ(desc.writable, std::nullopt);
+      } else {
+        EXPECT_EQ(desc.writable, info.writable);
       }
     }
   }
 
-  return objectIds;
+  if (resp.internalProperties.has_value()) {
+    for (size_t i = 0; i < resp.internalProperties->size(); i++) {
+      m::runtime::InternalPropertyDescriptor &desc =
+          resp.internalProperties.value()[i];
+
+      auto infoIt = internalInfos.find(desc.name);
+      EXPECT_FALSE(infoIt == internalInfos.end()) << desc.name;
+
+      if (infoIt != internalInfos.end()) {
+        const PropInfo &info = infoIt->second;
+
+        EXPECT_FALSE(info.accessor)
+            << "internal properties can't have accessor descriptors";
+
+        EXPECT_TRUE(desc.value.has_value());
+
+        m::runtime::RemoteObject &remoteObj = desc.value.value();
+        EXPECT_EQ(remoteObj.type, info.type);
+
+        if (info.subtype.has_value()) {
+          EXPECT_TRUE(remoteObj.subtype.has_value());
+          EXPECT_EQ(remoteObj.subtype.value(), info.subtype.value());
+        }
+
+        if (info.value.has_value()) {
+          EXPECT_TRUE(remoteObj.value.has_value());
+          JSLexer::Allocator jsonAlloc;
+          JSONFactory factory(jsonAlloc);
+          EXPECT_TRUE(jsonValsEQ(
+              mustParseStr(remoteObj.value.value(), factory),
+              mustParseStr(info.value.value(), factory)));
+        }
+
+        if (info.unserializableValue.has_value()) {
+          EXPECT_TRUE(remoteObj.unserializableValue.has_value());
+          EXPECT_EQ(
+              remoteObj.unserializableValue.value(),
+              info.unserializableValue.value());
+        }
+      }
+    }
+  }
+
+  return resp;
+}
+
+std::unordered_map<std::string, m::runtime::PropertyDescriptor> indexProps(
+    const std::vector<m::runtime::PropertyDescriptor> &props) {
+  JSLexer::Allocator allocator;
+  JSONFactory factory(allocator);
+  std::unordered_map<std::string, m::runtime::PropertyDescriptor> indexedProps;
+  for (const auto &prop : props) {
+    EXPECT_FALSE(indexedProps.count(prop.name))
+        << "Duplicate property name: " << prop.name;
+    indexedProps[prop.name] = clone(prop, factory);
+  }
+  return indexedProps;
 }
 
 void ensureEvalResponse(
@@ -293,10 +370,13 @@ void ensureEvalException(
       mustParseStrAsJsonObj(message, factory));
 
   EXPECT_EQ(resp.id, id);
-  EXPECT_TRUE(resp.exceptionDetails.has_value());
+  ASSERT_TRUE(resp.exceptionDetails.has_value());
 
   m::runtime::ExceptionDetails &details = resp.exceptionDetails.value();
   EXPECT_EQ(details.text, exceptionText);
+
+  ASSERT_TRUE(details.exception.has_value());
+  EXPECT_TRUE(details.exception->objectId.has_value());
 
   // TODO: Hermes doesn't seem to populate the line number for the exception?
   EXPECT_EQ(details.lineNumber, 0);
@@ -316,6 +396,8 @@ void ensureEvalException(
 
     i++;
   }
+
+  EXPECT_TRUE(resp.result.objectId.has_value());
 }
 
 m::debugger::BreakpointId ensureSetBreakpointResponse(
@@ -396,6 +478,10 @@ JSONValue *JSONScope::parse(const std::string &json) {
 
 JSONObject *JSONScope::parseObject(const std::string &json) {
   return mustParseStrAsJsonObj(json, private_->factory);
+}
+
+std::optional<JSONObject *> JSONScope::tryParseObject(const std::string &json) {
+  return parseStrAsJsonObj(json, private_->factory);
 }
 
 std::string JSONScope::getString(

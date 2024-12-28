@@ -65,15 +65,19 @@ export function parseForSnapshot(
     babel,
     preserveRange,
     enableExperimentalComponentSyntax,
+    enableExperimentalFlowMatchSyntax,
   }: {
     preserveRange?: boolean,
     babel?: boolean,
     enableExperimentalComponentSyntax?: boolean,
+    enableExperimentalFlowMatchSyntax?: boolean,
   } = {},
 ): mixed {
   const parseOpts = {
     enableExperimentalComponentSyntax:
       enableExperimentalComponentSyntax ?? true,
+    enableExperimentalFlowMatchSyntax:
+      enableExperimentalFlowMatchSyntax ?? false,
   };
   if (babel === true) {
     return cleanASTForSnapshot(
@@ -97,8 +101,14 @@ export function printForSnapshotESTree(code: string): Promise<string> {
 export function parseForSnapshotESTree(code: string): mixed {
   return parseForSnapshot(code);
 }
-export function printForSnapshotBabel(code: string): Promise<string> {
-  return printForSnapshot(code, {babel: true});
+export function printForSnapshotBabel(
+  code: string,
+  options?: {reactRuntimeTarget?: ParserOptions['reactRuntimeTarget']},
+): Promise<string> {
+  return printForSnapshot(code, {
+    babel: true,
+    reactRuntimeTarget: options?.reactRuntimeTarget,
+  });
 }
 export function parseForSnapshotBabel(code: string): mixed {
   return parseForSnapshot(code, {babel: true});
@@ -109,14 +119,21 @@ export async function printForSnapshot(
   {
     babel,
     enableExperimentalComponentSyntax,
+    enableExperimentalFlowMatchSyntax,
+    reactRuntimeTarget,
   }: {
     babel?: boolean,
     enableExperimentalComponentSyntax?: boolean,
+    enableExperimentalFlowMatchSyntax?: boolean,
+    reactRuntimeTarget?: ParserOptions['reactRuntimeTarget'],
   } = {},
 ): Promise<string> {
   const parseOpts = {
     enableExperimentalComponentSyntax:
       enableExperimentalComponentSyntax ?? true,
+    enableExperimentalFlowMatchSyntax:
+      enableExperimentalFlowMatchSyntax ?? false,
+    reactRuntimeTarget,
   };
   if (babel === true) {
     const ast = parse(source, {

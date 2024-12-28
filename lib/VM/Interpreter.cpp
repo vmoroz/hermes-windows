@@ -715,20 +715,6 @@ static void printDebugInfo(
   dbgs() << "\n";
 }
 
-/// \return whether \p opcode is a call opcode (Call, CallDirect, Construct,
-/// CallLongIndex, etc). Note CallBuiltin is not really a Call.
-LLVM_ATTRIBUTE_UNUSED
-static bool isCallType(OpCode opcode) {
-  switch (opcode) {
-#define DEFINE_RET_TARGET(name) \
-  case OpCode::name:            \
-    return true;
-#include "hermes/BCGen/HBC/BytecodeList.def"
-    default:
-      return false;
-  }
-}
-
 #endif
 
 /// \return the address of the next instruction after \p ip, which must be a
@@ -1087,6 +1073,9 @@ tailCall:
   }                                             \
   goto *opcodeDispatch[(unsigned)ip->opCode]
 
+// Do nothing if we're not in a switch.
+#define INTERPRETER_FALLTHROUGH
+
 #else // HERMESVM_INDIRECT_THREADING
 
 #define CASE(name) case OpCode::name:
@@ -1098,6 +1087,9 @@ tailCall:
     return HermesValue::encodeUndefinedValue(); \
   }                                             \
   continue
+
+// Fallthrough if we're in a switch.
+#define INTERPRETER_FALLTHROUGH [[fallthrough]]
 
 #endif // HERMESVM_INDIRECT_THREADING
 
@@ -1181,6 +1173,7 @@ tailCall:
   CASE(name) {                                                           \
     if (LLVM_LIKELY(O2REG(name).isNumber() && O3REG(name).isNumber())) { \
       /* Fast-path. */                                                   \
+      INTERPRETER_FALLTHROUGH;                                           \
       CASE(name##N) {                                                    \
         O1REG(name) = HermesValue::encodeTrustedNumberValue(             \
             do##name(O2REG(name).getNumber(), O3REG(name).getNumber())); \
@@ -1312,6 +1305,7 @@ tailCall:
             O2REG(name##suffix).isNumber() &&                             \
             O3REG(name##suffix).isNumber())) {                            \
       /* Fast-path. */                                                    \
+      INTERPRETER_FALLTHROUGH;                                            \
       CASE(name##N##suffix) {                                             \
         if (O2REG(name##N##suffix)                                        \
                 .getNumber() oper O3REG(name##N##suffix)                  \
@@ -1810,7 +1804,23 @@ tailCall:
 
         INIT_STATE_FOR_CODEBLOCK(curCodeBlock);
         O1REG(Call) = res.getValue();
+
+#ifdef HERMES_ENABLE_DEBUGGER
+        // Only do the more expensive check for breakpoint location (in
+        // getRealOpCode) if there are breakpoints installed in the function
+        // we're returning into.
+        if (LLVM_UNLIKELY(curCodeBlock->getNumInstalledBreakpoints() > 0)) {
+          ip = IPADD(inst::getInstSize(
+              runtime.debugger_.getRealOpCode(curCodeBlock, CUROFFSET)));
+        } else {
+          // No breakpoints in the function being returned to, just use
+          // nextInstCall().
+          ip = nextInstCall(ip);
+        }
+#else
         ip = nextInstCall(ip);
+#endif
+
         DISPATCH;
       }
 
@@ -1875,35 +1885,23 @@ tailCall:
               goto exception;
             }
           }
-          auto breakpointOpt = runtime.debugger_.getBreakpointLocation(ip);
-          if (breakpointOpt.hasValue()) {
-            // We're on a breakpoint but we're supposed to continue.
-            curCodeBlock->uninstallBreakpointAtOffset(
-                CUROFFSET, breakpointOpt->opCode);
-            if (ip->opCode == OpCode::Debugger) {
-              // Breakpointed a debugger instruction, so move past it
-              // since we've already called the debugger on this instruction.
-              ip = NEXTINST(Debugger);
-            } else {
-              InterpreterState newState{curCodeBlock, (uint32_t)CUROFFSET};
-              CAPTURE_IP_ASSIGN(
-                  ExecutionStatus status, runtime.stepFunction(newState));
-              curCodeBlock->installBreakpointAtOffset(CUROFFSET);
-              if (status == ExecutionStatus::EXCEPTION) {
-                goto exception;
-              }
+          InterpreterState newState{curCodeBlock, (uint32_t)CUROFFSET};
+          ExecutionStatus status =
+              runtime.debugger_.processInstUnderDebuggerOpCode(newState);
+          if (status == ExecutionStatus::EXCEPTION) {
+            goto exception;
+          }
+
+          if (newState.codeBlock != curCodeBlock ||
+              newState.offset != (uint32_t)CUROFFSET) {
+            ip = newState.codeBlock->getOffsetPtr(newState.offset);
+
+            if (newState.codeBlock != curCodeBlock) {
               curCodeBlock = newState.codeBlock;
-              ip = newState.codeBlock->getOffsetPtr(newState.offset);
               INIT_STATE_FOR_CODEBLOCK(curCodeBlock);
               // Single-stepping should handle call stack management for us.
               frameRegs = &runtime.getCurrentFrame().getFirstLocalRef();
             }
-          } else if (ip->opCode == OpCode::Debugger) {
-            // No breakpoint here and we've already run the debugger,
-            // just continue on.
-            // If the current instruction is no longer a debugger instruction,
-            // we're just going to keep executing from the current IP.
-            ip = NEXTINST(Debugger);
           }
           gcScope.flushToSmallCount(KEEP_HANDLES);
         }
@@ -2770,6 +2768,7 @@ tailCall:
         if (LLVM_LIKELY(
                 O2REG(Add).isNumber() &&
                 O3REG(Add).isNumber())) { /* Fast-path. */
+          INTERPRETER_FALLTHROUGH;
           CASE(AddN) {
             O1REG(Add) = HermesValue::encodeTrustedNumberValue(
                 O2REG(Add).getNumber() + O3REG(Add).getNumber());

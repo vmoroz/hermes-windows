@@ -383,6 +383,21 @@
                 }
             }
         },
+        "ComponentDeclaration": {
+            "fields": {
+                "id": {
+                    "type": "Identifier"
+                },
+                "body":{
+                    "type": "BlockStatement"
+                },
+                "type_parameters": {
+                    "type": "Option<TypeParameterInstantiation>",
+                    "optional": true,
+                    "rename": "typeParameters"
+                }
+            }
+        },
         "ClassDeclaration": {
             "skip_hermes_codegen": true,
             "fields": {
@@ -648,6 +663,16 @@
                 "is_delegate": {
                     "type": "bool",
                     "rename": "delegate"
+                }
+            }
+        },
+        "AsExpression": {
+             "fields": {
+                "expression": {
+                    "type": "Expression"
+                },
+                "typeAnnotation": {
+                    "type": "TypeAnnotationEnum"
                 }
             }
         },
@@ -1229,6 +1254,25 @@
                 }
             }
         },
+        "OpaqueType": {
+            "fields": {
+                "id": {
+                    "type": "Identifier"
+                },
+                "type_parameters": {
+                    "type": "Option<TypeParameterInstantiation>",
+                    "optional": true,
+                    "rename": "typeParameters"
+                },
+                "impltype": {
+                    "type": "FlowTypeAnnotation"
+                },
+                "supertype": {
+                    "type": "Option<FlowTypeAnnotation>",
+                    "optional": true
+                }
+            }
+        },
         "NullableTypeAnnotation": {
             "fields": {
                 "type_annotation": {
@@ -1386,6 +1430,47 @@
                     "type": "FlowTypeAnnotation"
                 }
             }
+        },
+        "UnionTypeAnnotation": {
+            "fields": {
+                "types": {
+                    "type": "Vec<FlowTypeAnnotation>"
+                }
+            }
+        },
+        "IntersectionTypeAnnotation": {
+            "fields": {
+                "types": {
+                    "type": "Vec<FlowTypeAnnotation>"
+                }
+            }
+        },
+        "IndexedAccessType": {
+            "fields": {
+                "objectType": {
+                    "type": "FlowTypeAnnotation"
+                },
+                "indexType": {
+                    "type": "FlowTypeAnnotation"
+                }
+            }
+        },
+        "OptionalIndexedAccessType": {
+            "fields": {
+                "objectType": {
+                    "type": "FlowTypeAnnotation"
+                },
+                "indexType": {
+                    "type": "FlowTypeAnnotation"
+                }
+            }
+        },
+        "TupleTypeAnnotation": {
+            "fields": {
+                "types": {
+                    "type": "Vec<FlowTypeAnnotation>"
+                }
+            }
         }
     },
     "enums": {
@@ -1449,7 +1534,8 @@
             "ThisExpression",
             "UnaryExpression",
             "UpdateExpression",
-            "YieldExpression"
+            "YieldExpression",
+            "AsExpression"
         ],
         "_Literal": [
             "Literal",
@@ -1463,7 +1549,8 @@
             "FunctionDeclaration",
             "VariableDeclaration",
             "TSTypeAliasDeclaration",
-            "TypeAlias"
+            "TypeAlias",
+            "OpaqueType"
         ],
         "ImportDeclarationSpecifier": [
             "ImportSpecifier",
@@ -1472,7 +1559,8 @@
         ],
         "ModuleItem": [
             "ImportOrExportDeclaration",
-            "Statement"
+            "Statement",
+            "ComponentDeclaration"
         ],
         "ImportOrExportDeclaration": [
             "ImportDeclaration",
@@ -1602,7 +1690,12 @@
             "KeyofTypeAnnotation",
             "QualifiedTypeofIdentifier",
             "ObjectTypeAnnotation",
-            "ObjectTypeProperty"
+            "ObjectTypeProperty",
+            "UnionTypeAnnotation",
+            "IntersectionTypeAnnotation",
+            "IndexedAccessType",
+            "OptionalIndexedAccessType",
+            "TupleTypeAnnotation"
         ],
         "ObjectTypePropertyType": [
             "ObjectTypeProperty",

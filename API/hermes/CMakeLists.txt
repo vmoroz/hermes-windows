@@ -7,10 +7,6 @@
 add_hermes_library(compileJS CompileJS.cpp LINK_LIBS hermesPublic hermesHBCBackend)
 
 if(HERMES_ENABLE_DEBUGGER)
-  if(HERMES_ENABLE_TOOLS AND NOT WIN32)
-    add_subdirectory(inspector/chrome/cli)
-  endif()
-
   # Some inspector sources need to be built without RTTI because they consume
   # internal data structures compiled without RTTI.
   set(INSPECTOR_NO_EH_RTTI_SOURCES
@@ -39,6 +35,7 @@ if(HERMES_ENABLE_DEBUGGER)
     cdp/CallbackOStream.cpp
     cdp/ConsoleMessage.cpp
     cdp/DebuggerDomainAgent.cpp
+    cdp/HeapProfilerDomainAgent.cpp
     cdp/ProfilerDomainAgent.cpp
     cdp/RemoteObjectConverters.cpp
     cdp/RemoteObjectsTable.cpp
@@ -146,6 +143,10 @@ if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)
     add_custom_command(TARGET libhermes POST_BUILD
       COMMAND /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Info.plist
     )
+  elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "appletv")
+    add_custom_command(TARGET libhermes POST_BUILD
+      COMMAND /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Info.plist
+    )
   elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "catalyst")
     add_custom_command(TARGET libhermes POST_BUILD
       COMMAND /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Resources/Info.plist
@@ -153,6 +154,14 @@ if(APPLE AND HERMES_BUILD_APPLE_FRAMEWORK)
   elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "macos")
     add_custom_command(TARGET libhermes POST_BUILD
       COMMAND /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Resources/Info.plist
+    )
+  elseif(HERMES_APPLE_TARGET_PLATFORM MATCHES "xr")
+    if(CMAKE_VERSION VERSION_LESS 3.28.4)
+      message("VisionOS Simulator requires CMake version >= 3.28.4")
+    endif()
+
+    add_custom_command(TARGET libhermes POST_BUILD
+      COMMAND /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string ${CMAKE_OSX_DEPLOYMENT_TARGET}" $<TARGET_FILE_DIR:libhermes>/Info.plist
     )
   endif()
 endif()

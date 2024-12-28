@@ -750,6 +750,7 @@ function mapTypeofTypeAnnotation(
 ): TypeofTypeAnnotation {
   // $FlowExpectedError[cannot-write]
   delete node.typeArguments;
+  // $FlowFixMe[incompatible-type]
   if (node.argument.type !== 'GenericTypeAnnotation') {
     return nodeWith(node, {
       // $FlowExpectedError[incompatible-call] Special override for Babel
@@ -916,6 +917,7 @@ function transformNode(node: ESNodeOrBabelNode): ESNodeOrBabelNode | null {
   switch (node.type) {
     case 'Program': {
       // Check if we have already processed this node.
+      // $FlowFixMe[incompatible-type]
       if (node.parent?.type === 'File') {
         return node;
       }
@@ -1031,6 +1033,12 @@ function transformNode(node: ESNodeOrBabelNode): ESNodeOrBabelNode | null {
       delete node.raw;
       return node;
     }
+    case 'TupleTypeAnnotation': {
+      // $FlowExpectedError[cannot-write]
+      delete node.inexact;
+      return node;
+    }
+
     case 'JSXText': {
       // $FlowExpectedError[prop-missing]
       node.extra = {
@@ -1240,6 +1248,7 @@ export function transformProgram(
     visitorKeys: FlowESTreeAndBabelVisitorKeys,
   });
 
+  // $FlowFixMe[incompatible-type]
   if (resultNode?.type === 'File') {
     return resultNode;
   }

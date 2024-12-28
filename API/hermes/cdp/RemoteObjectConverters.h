@@ -16,6 +16,12 @@
 namespace facebook {
 namespace hermes {
 namespace cdp {
+
+struct ObjectSerializationOptions {
+  bool returnByValue = false;
+  bool generatePreview = false;
+};
+
 namespace message {
 
 namespace debugger {
@@ -42,8 +48,27 @@ RemoteObject makeRemoteObject(
     const facebook::jsi::Value &value,
     cdp::RemoteObjectsTable &objTable,
     const std::string &objectGroup,
-    bool byValue = false,
-    bool generatePreview = false);
+    const cdp::ObjectSerializationOptions &serializationOptions);
+
+RemoteObject makeRemoteObjectForError(
+    facebook::jsi::Runtime &runtime,
+    const facebook::jsi::Value &value,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup);
+
+ExceptionDetails makeExceptionDetails(
+    jsi::Runtime &runtime,
+    const jsi::JSError &error,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup);
+
+ExceptionDetails makeExceptionDetails(const jsi::JSIException &err);
+
+ExceptionDetails makeExceptionDetails(
+    facebook::jsi::Runtime &runtime,
+    const facebook::hermes::debugger::EvalResult &result,
+    cdp::RemoteObjectsTable &objTable,
+    const std::string &objectGroup);
 
 } // namespace runtime
 

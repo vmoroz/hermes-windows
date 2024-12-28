@@ -1,3 +1,75 @@
+## 0.26.0
+
+### `hermes-parser`
+* Support for class static blocks.
+* Forbid `await`/`yield`/`arguments` in class field inits.
+* Support for `const` type parameters in Flow (also in `hermes-estree`, `prettier-plugin-hermes-parser`).
+* Experimental support for Flow pattern matching (also in `hermes-estree`, `hermes-eslint`, `hermes-transform`, `prettier-plugin-hermes-parser`).
+
+## 0.25.1
+
+### `babel-plugin-syntax-hermes-parser`
+* Add `parseLangTypes` option to enable skipping plugin for non-Flow files
+
+## 0.25.0
+
+### `flow-api-translator`
+* Support `React.RefSetter` translation and remove support for incorrect `React.Ref` translation.
+
+## 0.24.0
+
+### `hermes-parser`
+* Allow trailing comma after rest param in component declaration
+* Allow trailing comma after rest param for component types
+* Don't allow newline after async in method proper
+
+## 0.23.1
+
+### `hermes-transform`
+* Fixed an issue that caused an error when trying to print a `Program` with an empty `body` array and a docblock comment.
+
+### `flow-api-translator`
+* Added support for `as` expressions in parent classes like `class A extends (Foo as Bar)`.
+
+## 0.23.0
+
+### `hermes-estree`
+* Adopted one-sided type guards in predicate functions (`implies x is T`)
+
+### `hermes-parser`
+* Added `reactRuntimeTarget` config option (defaulting to `'18'`) that when set to `'19'` no longer adds the forwardRef wrapper as React 19 treats refs on function components as regular props.
+
+### `hermes-transform`
+* Allow `context.modifyInPlace` API to modify the Program node. Previously, this relied upon `context.replaceNode` internally which meant modifications to the Program node itself were not possible.
+
+### `flow-api-translator`
+* Added support for parsing member expressions in parent classes like `class A extends Foo.Bar` and type casts such as `class A extends (Foo: Bar)`.
+* Added support for the `StringPrefix` and `StringSuffix` Flow types, turning them into a TS string literal type. For example, `StringPrefix<foo>` is turned into `foo${string}` and `StringPrefix<foo, T> is turned into foo${T}`.
+* Added support for inexact tuple types in TS by spreading an array of unknown (mixed) to the end of the array. This will allow for additional arbitrary elements in the tuple.
+
+## 0.22.0
+
+### `hermes-eslint`
+* Fixed analysis of mapped types' scopes
+
+### `prettier-plugin-hermes-parser`
+* Added support for printing inexact tuple type annotations `[...]`
+* Added support for printing Flow Enums with bigint members
+* Added support for printing the one-sided variant of type guards `implies x is T`
+
+## 0.21.1
+
+### `flow-api-translator`
+* Added support for translating `React.AbstractComponent` with 3 type arguments into TS. The third type argument containing render type information will be ignored.
+
+## 0.21.0
+
+### `hermes-parser`
+* Added support for `as const` expressions
+* Added support for inexact tuple type annotations `[...]`
+* Added support for parsing Flow Enums with bigint members
+* Added support for a one-sided variant to type guards `implies x is T`
+
 ## 0.20.1
 
 ### `hermes-eslint`

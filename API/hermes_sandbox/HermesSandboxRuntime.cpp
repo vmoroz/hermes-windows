@@ -16,6 +16,13 @@
 #include <deque>
 #include <random>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #if __has_builtin(__builtin_unreachable)
 #define BUILTIN_UNREACHABLE __builtin_unreachable()
 #elif defined(_MSC_VER)
@@ -633,6 +640,13 @@ class Ptr {
     // the module's memory.
     if (((u64)ptr + sizeof(T) * (u64)n) > mod_->w2c_memory.size)
       abort();
+
+    // Check for null-dereferences: ensure that the pointer must be non-null if
+    // the size is non-zero. This is to prevent writes at the zero address
+    // which, given that zero is valid address in WASM linear memory, could be
+    // abused to tamper with the Hermes VM internal state.
+    if (ptr == 0 && n != 0)
+      abort();
   }
 
   /// Constructor to create a Ptr and defer initializing it. This is used by
@@ -690,6 +704,32 @@ class SaveAndRestore {
   }
 };
 
+#if WASM_RT_USE_MMAP
+
+/// Get the page size of the system.
+static uintptr_t os_native_pagesize() {
+#if defined(_WIN32)
+  SYSTEM_INFO systemInfo;
+  GetSystemInfo(&systemInfo);
+  uintptr_t pageSize = systemInfo.dwPageSize;
+#else
+  uintptr_t pageSize = sysconf(_SC_PAGESIZE);
+#endif
+  return pageSize;
+}
+
+/// Remove read/write/execute access to the page containing the given address.
+/// Any accesses to the page will result in a bad memory access.
+static int os_guardpage(void *addr) {
+#if defined(_WIN32)
+  return VirtualFree(addr, os_native_pagesize(), MEM_DECOMMIT) ? 0 : -1;
+#else
+  return mprotect(addr, os_native_pagesize(), PROT_NONE);
+#endif
+}
+
+#endif // WASM_RT_USE_MMAP
+
 /// Define a simple wrapper class that manages the lifetime of the w2c_hermes
 /// instance. This lets us maintain the order of the destructor relative to
 /// other fields in HermesSandboxRuntimeImpl, which may need to be destroyed
@@ -703,6 +743,34 @@ class W2CHermesRAII : public w2c_hermes {
         (w2c_hermes__import *)this,
         (w2c_wasi__snapshot__preview1 *)this);
     w2c_hermes_0x5Finitialize(this);
+
+#if WASM_RT_USE_MMAP
+
+    // When the sandbox memory is allocated with mmap, and the
+    // lowest used address is larger than the page size, mprotect
+    // the first page so we trap on null accesses.
+    const uintptr_t pageSize = os_native_pagesize();
+    const uintptr_t global_base = w2c_hermes_get_global_base(this);
+    if (pageSize <= global_base) {
+      // Add a guard page based at NULL (address 0)
+      os_guardpage(this->w2c_memory.data);
+    }
+
+    // Move stack end to the next page boundary and make room for the guard
+    // page.
+    uintptr_t stackEndPageAligned =
+        (this->w2c_0x5F_stack_end + pageSize - 1) & ~(pageSize - 1);
+
+    // Add a guard page to the bottom of the stack.
+    // Ensure that there are at least 2 pages in stack
+    // before the guard page.
+    if (stackEndPageAligned + 3 * pageSize <= this->w2c_0x5F_stack_pointer &&
+        !os_guardpage((void *)(this->w2c_memory.data + stackEndPageAligned))) {
+      // Adjust the stack end to after the guard page.
+      this->w2c_0x5F_stack_end = stackEndPageAligned + pageSize;
+    }
+
+#endif // WASM_RT_USE_MMAP
   }
   ~W2CHermesRAII() {
     wasm2c_hermes_free(this);
@@ -871,6 +939,10 @@ class HermesSandboxRuntimeImpl : public facebook::hermes::HermesSandboxRuntime,
   /// Allocate an array of \p n elements of type T in the sandbox heap.
   template <typename T>
   sb::Ptr<T> sbAlloc(size_t n = 1) {
+    // Check for integer overflows
+    static constexpr size_t maxN = UINT32_MAX / sizeof(T);
+    if (n > maxN)
+      abort();
     auto ptr = w2c_hermes_malloc(this, sizeof(T) * n);
     return sb::Ptr<T>(this, ptr, n);
   }
@@ -976,11 +1048,11 @@ class HermesSandboxRuntimeImpl : public facebook::hermes::HermesSandboxRuntime,
       return managedPointer_;
     }
 
-    void invalidate() override {
+    void invalidate() noexcept override {
       dec();
     }
 
-    void inc() {
+    void inc() noexcept {
       // See comments in hermes_vtable.cpp for why we use relaxed operations
       // here.
       auto oldCount = refCount_.fetch_add(1, std::memory_order_relaxed);
@@ -989,7 +1061,7 @@ class HermesSandboxRuntimeImpl : public facebook::hermes::HermesSandboxRuntime,
       (void)oldCount;
     }
 
-    void dec() {
+    void dec() noexcept {
       // See comments in hermes_vtable.cpp for why we use relaxed operations
       // here, and why TSAN requires different ordering.
 
@@ -1068,9 +1140,10 @@ class HermesSandboxRuntimeImpl : public facebook::hermes::HermesSandboxRuntime,
       sb::Ptr<GrowableBufferImpl> self{mod, buf};
       if (sz < self->size)
         return;
-      u32 newData = w2c_hermes_realloc(mod, self->data, sz);
-      self->data = newData;
-      self->size = sz;
+      if (u32 newData = w2c_hermes_realloc(mod, self->data, sz)) {
+        self->data = newData;
+        self->size = sz;
+      }
     }
 
     /// Copy the contents of this GrowableBuffer into an std::string and return
@@ -1198,10 +1271,21 @@ class HermesSandboxRuntimeImpl : public facebook::hermes::HermesSandboxRuntime,
           alignof(PropNameIDListWrapper) == alignof(SandboxPropNameID),
           "Alignment must match to create a single allocation.");
 
-      /// Allocate the wrapper and the array of props in a single allocation.
+      // Allocate the wrapper and the array of props in a single allocation.
+      static constexpr size_t maxSize =
+          (UINT32_MAX - sizeof(PropNameIDListWrapper)) /
+          sizeof(SandboxPropNameID);
+
+      // Check for integer overflows
+      if (sz > maxSize) {
+        abort();
+      }
       auto alloc = w2c_hermes_malloc(
           &runtime,
           sizeof(PropNameIDListWrapper) + sizeof(SandboxPropNameID) * sz);
+      if (!alloc) {
+        abort();
+      }
 
       sb::Ptr<PropNameIDListWrapper> self(&runtime, alloc);
       self->vtable = runtime.propNameIDListVTable_;

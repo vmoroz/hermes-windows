@@ -516,6 +516,13 @@ static opt<bool> ParseFlowComponentSyntax(
     init(false),
     Hidden,
     cat(CompilerCategory));
+
+static opt<bool> ParseFlowMatch(
+    "Xparse-flow-match",
+    desc("Parse Flow match statements and expressions"),
+    init(false),
+    Hidden,
+    cat(CompilerCategory));
 #endif
 
 #if HERMES_PARSE_TS
@@ -1210,6 +1217,7 @@ std::shared_ptr<Context> createContext(
     context->setParseFlow(ParseFlowSetting::ALL);
   }
   context->setParseFlowComponentSyntax(cl::ParseFlowComponentSyntax);
+  context->setParseFlowMatch(cl::ParseFlowMatch);
 #endif
 
 #if HERMES_PARSE_TS
@@ -2184,6 +2192,9 @@ void printHermesVersion(
 #endif
 #ifdef HERMESVM_CONTIGUOUS_HEAP
       << "    Contiguous Heap\n"
+#endif
+#ifdef HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES
+      << "    Unicode RegExp Property Escapes\n"
 #endif
       << "    Zip file input\n";
   }

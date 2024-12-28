@@ -16,6 +16,8 @@ Debugger.setPauseOnExceptions
 Debugger.stepInto
 Debugger.stepOut
 Debugger.stepOver
+Debugger.setBlackboxedRanges
+Debugger.setBlackboxPatterns
 HeapProfiler.addHeapSnapshotChunk
 HeapProfiler.collectGarbage
 HeapProfiler.reportHeapSnapshotProgress
@@ -33,6 +35,7 @@ Profiler.stop
 Runtime.callFunctionOn
 Runtime.consoleAPICalled
 Runtime.disable
+Runtime.discardConsoleEntries
 Runtime.enable
 Runtime.evaluate
 Runtime.executionContextCreated
@@ -41,3 +44,6 @@ Runtime.getProperties
 Runtime.runIfWaitingForDebugger
 Runtime.globalLexicalScopeNames
 Runtime.compileScript
+Runtime.inspectRequested
+Runtime.releaseObject
+Runtime.releaseObjectGroup

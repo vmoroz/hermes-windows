@@ -82,7 +82,7 @@ static m::runtime::ObjectPreview generateArrayPreview(
     try {
       desc = generatePropertyPreview(
           runtime, indexString, obj.getValueAtIndex(runtime, i));
-    } catch (const jsi::JSError &err) {
+    } catch (const jsi::JSError &) {
       desc.name = indexString;
       desc.type = "string";
       desc.value = "<Exception>";
@@ -121,7 +121,7 @@ static m::runtime::ObjectPreview generateObjectPreview(
       // Chrome instead detects getters and makes you click to invoke.
       desc = generatePropertyPreview(
           runtime, propName.utf8(runtime), obj.getProperty(runtime, propName));
-    } catch (const jsi::JSError &err) {
+    } catch (const jsi::JSError &) {
       desc.name = propName.utf8(runtime);
       desc.type = "string";
       desc.value = "<Exception>";
@@ -245,9 +245,15 @@ m::runtime::RemoteObject m::runtime::makeRemoteObject(
     }
   } else if (value.isString()) {
     result.type = "string";
-    // result.value is a blob of well-formed JSON. Therefore, we need to add
-    // surrounding quotes to this string in order for it to be valid JSON.
-    result.value = "\"" + value.getString(runtime).utf8(runtime) + "\"";
+
+    // result.value is a blob of well-formed JSON. Therefore, we need to encode
+    // the string as JSON.
+    std::string encodedValue;
+    llvh::raw_string_ostream stream{encodedValue};
+    ::hermes::JSONEmitter json{stream};
+    json.emitValue(value.getString(runtime).utf8(runtime));
+    stream.flush();
+    result.value = std::move(encodedValue);
   } else if (value.isSymbol()) {
     result.type = "symbol";
     auto sym = value.getSymbol(runtime);
