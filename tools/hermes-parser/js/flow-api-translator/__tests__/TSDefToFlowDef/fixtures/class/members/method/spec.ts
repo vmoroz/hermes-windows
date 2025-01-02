@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
@@ -7,22 +7,6 @@
  * @format
  */
 
-<<<<<<<< HEAD:API/hermes_shared/hermes_win.h
-#ifndef HERMES_HERMES_WIN_H
-#define HERMES_HERMES_WIN_H
-
-//#include "hermes.h"
-#include "hermes_api.h"
-
-#endif // HERMES_HERMES_WIN_H
-|||||||| 49794cfc7:test/hermes/cjs/subdir-external-ids/cjs-subdir-2.js
-// RUN: true
-
-print('2: init');
-
-exports.alpha = 144;
-========
 declare class Foo {
   prop(): string;
 }
->>>>>>>> facebook/main:tools/hermes-parser/js/flow-api-translator/__tests__/TSDefToFlowDef/fixtures/class/members/method/spec.ts

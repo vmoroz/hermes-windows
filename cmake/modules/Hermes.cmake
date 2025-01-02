@@ -40,7 +40,7 @@ endif ()
 
 if (MSVC)
   # FastDebug Flavor
-  # 1. Optmize for speed.
+  # 1. Optimize for speed.
   # 2. Enable full Inlining
   # 3. Link against debug flavored VCRT
   # Note: /O2 and RTC1 are incompatible

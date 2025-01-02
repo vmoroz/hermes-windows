@@ -19,7 +19,7 @@
 // These macros must be defined in jsi.h, but define them here too
 // in case if this code is used with unmodified jsi.h.
 #ifndef JSI_VERSION
-#define JSI_VERSION 10
+#define JSI_VERSION 12
 #endif
 
 #ifndef JSI_NO_CONST_3

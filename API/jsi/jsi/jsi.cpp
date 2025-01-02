@@ -32,10 +32,8 @@ std::string kindToString(const Value& v, Runtime* rt = nullptr) {
     return "a string";
   } else if (v.isSymbol()) {
     return "a symbol";
-#if JSI_VERSION >= 6
   } else if (v.isBigInt()) {
     return "a bigint";
-#endif
   } else {
     assert(v.isObject() && "Expecting object.");
     return rt != nullptr && v.getObject(*rt).isFunction(*rt) ? "a function"
@@ -169,9 +167,7 @@ std::u16string convertUTF8ToUTF16(const std::string& utf8) {
 
 Buffer::~Buffer() = default;
 
-#if JSI_VERSION >= 9
 MutableBuffer::~MutableBuffer() = default;
-#endif
 
 PreparedJavaScript::~PreparedJavaScript() = default;
 
@@ -188,9 +184,7 @@ void HostObject::set(Runtime& rt, const PropNameID& name, const Value&) {
 
 HostObject::~HostObject() {}
 
-#if JSI_VERSION >= 7
 NativeState::~NativeState() {}
-#endif
 
 Runtime::~Runtime() {}
 
@@ -247,24 +241,12 @@ Instrumentation& Runtime::instrumentation() {
   return sharedInstance;
 }
 
-#if JSI_VERSION >= 2
 Value Runtime::createValueFromJsonUtf8(const uint8_t* json, size_t length) {
   Function parseJson = global()
                            .getPropertyAsObject(*this, "JSON")
                            .getPropertyAsFunction(*this, "parse");
   return parseJson.call(*this, String::createFromUtf8(*this, json, length));
 }
-#else
-Value Value::createFromJsonUtf8(
-    Runtime& runtime,
-    const uint8_t* json,
-    size_t length) {
-  Function parseJson = runtime.global()
-                           .getPropertyAsObject(runtime, "JSON")
-                           .getPropertyAsFunction(runtime, "parse");
-  return parseJson.call(runtime, String::createFromUtf8(runtime, json, length));
-}
-#endif
 
 std::u16string Runtime::utf16(const PropNameID& sym) {
   auto utf8Str = utf8(sym);
@@ -410,10 +392,8 @@ Value::Value(Runtime& runtime, const Value& other) : Value(other.kind_) {
     data_.number = other.data_.number;
   } else if (kind_ == SymbolKind) {
     new (&data_.pointer) Pointer(runtime.cloneSymbol(other.data_.pointer.ptr_));
-#if JSI_VERSION >= 6
   } else if (kind_ == BigIntKind) {
     new (&data_.pointer) Pointer(runtime.cloneBigInt(other.data_.pointer.ptr_));
-#endif
   } else if (kind_ == StringKind) {
     new (&data_.pointer) Pointer(runtime.cloneString(other.data_.pointer.ptr_));
   } else if (kind_ >= ObjectKind) {
@@ -443,12 +423,10 @@ bool Value::strictEquals(Runtime& runtime, const Value& a, const Value& b) {
       return runtime.strictEquals(
           static_cast<const Symbol&>(a.data_.pointer),
           static_cast<const Symbol&>(b.data_.pointer));
-#if JSI_VERSION >= 6
     case BigIntKind:
       return runtime.strictEquals(
           static_cast<const BigInt&>(a.data_.pointer),
           static_cast<const BigInt&>(b.data_.pointer));
-#endif
     case StringKind:
       return runtime.strictEquals(
           static_cast<const String&>(a.data_.pointer),
@@ -516,7 +494,6 @@ Symbol Value::asSymbol(Runtime& rt) && {
   return std::move(*this).getSymbol(rt);
 }
 
-#if JSI_VERSION >= 6
 BigInt Value::asBigInt(Runtime& rt) const& {
   if (!isBigInt()) {
     throw JSError(
@@ -534,7 +511,6 @@ BigInt Value::asBigInt(Runtime& rt) && {
 
   return std::move(*this).getBigInt(rt);
 }
-#endif
 
 String Value::asString(Runtime& rt) const& {
   if (!isString()) {
@@ -559,7 +535,6 @@ String Value::toString(Runtime& runtime) const {
   return toString.call(runtime, *this).getString(runtime);
 }
 
-#if JSI_VERSION >= 8
 uint64_t BigInt::asUint64(Runtime& runtime) const {
   if (!isUint64(runtime)) {
     throw JSError(runtime, "Lossy truncation in BigInt64::asUint64");
@@ -573,7 +548,6 @@ int64_t BigInt::asInt64(Runtime& runtime) const {
   }
   return getInt64(runtime);
 }
-#endif
 
 Array Array::createWithElements(
     Runtime& rt,

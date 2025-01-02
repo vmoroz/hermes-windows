@@ -502,7 +502,6 @@
         "loc":{"source":null,"start":{"line":26,"column":24},"end":{"line":26,"column":34}},
         "range":[597,607],
         "params":[],
-        "this":null,
         "returnType":{
           "type":"VoidTypeAnnotation",
           "loc":{"source":null,"start":{"line":26,"column":30},"end":{"line":26,"column":34}},
@@ -539,7 +538,6 @@
         "loc":{"source":null,"start":{"line":27,"column":23},"end":{"line":27,"column":33}},
         "range":[645,655],
         "params":[],
-        "this":null,
         "returnType":{
           "type":"VoidTypeAnnotation",
           "trailingComments":[
