@@ -298,12 +298,16 @@ class JSParserImpl {
 
   UniqueString *checksIdent_;
   UniqueString *assertsIdent_;
+  UniqueString *impliesIdent_;
 
   UniqueString *componentIdent_;
   UniqueString *hookIdent_;
   UniqueString *rendersIdent_;
   UniqueString *rendersMaybeOperator_;
   UniqueString *rendersStarOperator_;
+
+  UniqueString *matchIdent_;
+  UniqueString *underscoreIdent_;
 #endif
 
 #if HERMES_PARSE_TS
@@ -317,6 +321,7 @@ class JSParserImpl {
   UniqueString *namespaceIdent_;
   UniqueString *isIdent_;
   UniqueString *inferIdent_;
+  UniqueString *constIdent_;
 #endif
 
   /// String representation of all tokens.
@@ -511,12 +516,22 @@ class JSParserImpl {
   /// Check whether the current token begins a Declaration.
   bool checkDeclaration() {
     if (checkN(
-            TokenKind::rw_function,
-            letIdent_,
-            TokenKind::rw_const,
-            TokenKind::rw_class) ||
+            TokenKind::rw_function, TokenKind::rw_const, TokenKind::rw_class) ||
         (check(asyncIdent_) && checkAsyncFunction())) {
       return true;
+    }
+
+    if (check(letIdent_)) {
+      if (isStrictMode()) {
+        return true;
+      }
+      // In loose mode, 'let' requires more work to check.
+      // let Identifier
+      // let [
+      // let {
+      // are all starts of 'let' declarations.
+      // But 'let' can also be an Identifier in loose mode.
+      return lexer_.isLetFollowedByDeclStart();
     }
 
 #if HERMES_PARSE_FLOW
@@ -889,6 +904,11 @@ class JSParserImpl {
   Optional<ESTree::Node *> parseNewExpressionOrOptionalExpression(
       IsConstructorCall isConstructorCall);
   Optional<ESTree::Node *> parseLeftHandSideExpression();
+  /// Parse the remainder of a LHS expression after parsing a "new or optional
+  /// expression". Includes parsing the type args and call args.
+  Optional<ESTree::Node *> parseLeftHandSideExpressionTail(
+      SMLoc startLoc,
+      ESTree::Node *expr);
   Optional<ESTree::Node *> parsePostfixExpression();
   Optional<ESTree::Node *> parseUnaryExpression();
 
@@ -1178,6 +1198,41 @@ class JSParserImpl {
   Optional<ESTree::Node *> parseComponentTypeRestParameterFlow(Param param);
   Optional<ESTree::Node *> parseComponentTypeParameterFlow(Param param);
 
+  /// Checks if we are *maybe* at the start of a Flow match expression or
+  /// statement: `match` [no LineTerminator here]  `(`
+  bool checkMaybeFlowMatch() {
+    if (!check(matchIdent_))
+      return false;
+    return checkMaybeFlowMatchSlowPath();
+  }
+  bool checkMaybeFlowMatchSlowPath();
+  /// Validate and process an argument list into a sequence expression for
+  /// use as the argument to a match statement or expression.
+  ESTree::Node *reparseArgumentsAsMatchArgumentFlow(
+      SMRange range,
+      ESTree::NodeList &&argList);
+  /// Attempt to parse a 'match' statement. Rollback if not successful.
+  /// \pre `checkMaybeFlowMatch()` is true, meaning the current token and
+  /// following token are: `match` [no LineTerminator here]  `(`
+  /// \return nullptr if there was no error but attempting to parse the match
+  /// statement is not possible as `match` followed by Arguments, `match (...)`,
+  /// was not followed by a curly brace: [no LineTerminator here]  `{`.
+  /// None on error.
+  Optional<ESTree::Node *> tryParseMatchStatementFlow(Param param);
+  /// Parse either a 'match' expression, or a call to an identifier
+  /// of the name 'match'.
+  Optional<ESTree::Node *> parseMatchCallOrMatchExpressionFlow();
+  Optional<ESTree::Node *> parseMatchExpressionFlow(
+      SMLoc start,
+      ESTree::Node *argument);
+  Optional<ESTree::Node *> parseMatchPatternFlow();
+  Optional<ESTree::Node *> parseMatchSubpatternFlow();
+  Optional<ESTree::IdentifierNode *> parseMatchBindingIdentifierFlow();
+  Optional<ESTree::MatchBindingPatternNode *> parseMatchBindingPatternFlow();
+  Optional<ESTree::Node *> parseMatchRestPatternFlow();
+  Optional<ESTree::Node *> parseMatchObjectPatternFlow();
+  Optional<ESTree::Node *> parseMatchArrayPatternFlow();
+
   enum class TypeAliasKind { None, Declare, Opaque, DeclareOpaque };
   Optional<ESTree::Node *> parseTypeAliasFlow(SMLoc start, TypeAliasKind kind);
 
@@ -1215,7 +1270,10 @@ class JSParserImpl {
   Optional<ESTree::Node *> parsePrimaryTypeAnnotationFlow();
   Optional<ESTree::Node *> parseTypeofTypeAnnotationFlow();
   Optional<ESTree::Node *> parseTupleTypeAnnotationFlow();
-  Optional<ESTree::Node *> parseTupleElementFlow();
+  // \param startsWithDotDotDot whether the element started with '...'
+  Optional<ESTree::Node *> parseTupleElementFlow(
+      SMLoc startLoc,
+      bool startsWithDotDotDot);
   Optional<ESTree::Node *> parseFunctionTypeAnnotationFlow();
   Optional<ESTree::Node *> parseHookTypeAnnotationFlow();
   Optional<ESTree::Node *> parseFunctionOrHookTypeAnnotationFlow(bool hook);
@@ -1331,6 +1389,7 @@ class JSParserImpl {
   enum class EnumKind {
     String,
     Number,
+    BigInt,
     Boolean,
     Symbol,
   };
@@ -1341,6 +1400,8 @@ class JSParserImpl {
         return "string";
       case EnumKind::Number:
         return "number";
+      case EnumKind::BigInt:
+        return "bigint";
       case EnumKind::Boolean:
         return "boolean";
       case EnumKind::Symbol:
@@ -1355,6 +1416,8 @@ class JSParserImpl {
         return EnumKind::String;
       case ESTree::NodeKind::EnumNumberMember:
         return EnumKind::Number;
+      case ESTree::NodeKind::EnumBigIntMember:
+        return EnumKind::BigInt;
       case ESTree::NodeKind::EnumBooleanMember:
         return EnumKind::Boolean;
       default:

@@ -284,6 +284,9 @@ set(EMSCRIPTEN_FASTCOMP OFF CACHE BOOL
 set(HERMES_ENABLE_INTL OFF CACHE BOOL
   "Enable JS Intl support (WIP)")
 
+set(HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES ON CACHE BOOL
+  "Enable RegExp Unicode Property Escapes support")
+
 set(HERMES_ENABLE_TEST_SUITE ON CACHE BOOL
   "Enable the test suite")
 
@@ -346,6 +349,7 @@ if (HERMES_STATIC_LINK)
   set(BUILD_SHARED_LIBS OFF)
 endif()
 
+# Check if the linker supports deleting unused sections and ICF.
 if (NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "MSVC")
   # Check if the linker supports deleting unused sections and ICF.
   # We can't simply CHECK_CXX_COMPILER_FLAG("-Wl,--gc-sections" ..) because CMake
@@ -489,6 +493,10 @@ endif()
 
 if (HERMES_ENABLE_INTL)
   add_definitions(-DHERMES_ENABLE_INTL)
+endif()
+
+if (HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES)
+  add_definitions(-DHERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES)
 endif()
 
 if (HERMES_ENABLE_WERROR)
@@ -791,6 +799,7 @@ if(HERMES_ENABLE_TEST_SUITE)
     unittests_dir=${CMAKE_CURRENT_BINARY_DIR}/unittests
     debugger_enabled=${HERMES_ENABLE_DEBUGGER}
     intl_enabled=${HERMES_ENABLE_INTL}
+    regexp_unicode_properties_enabled=${HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES}
     use_flowparser=${HERMES_USE_FLOWPARSER}
     hbc_deltaprep=${HERMES_TOOLS_OUTPUT_DIR}/hbc-deltaprep
     dependency_extractor=${HERMES_TOOLS_OUTPUT_DIR}/dependency-extractor

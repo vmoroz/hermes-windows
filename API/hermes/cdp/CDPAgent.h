@@ -8,12 +8,15 @@
 #ifndef HERMES_CDP_CDPAGENT_H
 #define HERMES_CDP_CDPAGENT_H
 
+#include <atomic>
 #include <string>
 
 #include <hermes/AsyncDebuggerAPI.h>
 #include <hermes/Public/HermesExport.h>
 #include <hermes/RuntimeTaskRunner.h>
 #include <hermes/hermes.h>
+
+class CDPAgentTest;
 
 namespace facebook {
 namespace hermes {
@@ -22,6 +25,43 @@ namespace cdp {
 using OutboundMessageFunc = std::function<void(const std::string &)>;
 
 class CDPAgentImpl;
+class CDPDebugAPI;
+
+/// Public-facing wrapper for internal CDP state that can be preserved across
+/// reloads.
+struct HERMES_EXPORT State {
+  /// Incomplete type that stores the actual state.
+  struct Private;
+
+  /// Create a new empty wrapper.
+  State();
+  /// Create a new wrapper with the provided \p privateState.
+  explicit State(std::unique_ptr<Private> privateState);
+
+  State(const State &other) = delete;
+  State &operator=(const State &other) = delete;
+  State(State &&other) noexcept;
+  State &operator=(State &&other) noexcept;
+  ~State();
+
+  inline operator bool() const {
+    return privateState_ != nullptr;
+  }
+
+  /// Get the wrapped state.
+  inline Private &operator*() {
+    return *privateState_.get();
+  }
+
+  /// Get the wrapped state.
+  inline Private *operator->() {
+    return privateState_.get();
+  }
+
+ private:
+  /// Pointer to the actual stored state, hidden from users of this wrapper.
+  std::unique_ptr<Private> privateState_;
+};
 
 /// An agent for interacting with the provided \p runtime and
 /// \p asyncDebuggerAPI via CDP messages in the Debugger, Runtime, Profiler,
@@ -36,33 +76,49 @@ class CDPAgentImpl;
 /// be delivered to the integrator via the provided \p messageCallback.
 /// Both callbacks may be invoked from arbitrary threads.
 class HERMES_EXPORT CDPAgent {
+  friend class ::CDPAgentTest;
+
   /// Hide the constructor so users can only construct via static create
   /// methods.
   CDPAgent(
       int32_t executionContextID,
-      HermesRuntime &runtime,
-      debugger::AsyncDebuggerAPI &asyncDebuggerAPI,
+      CDPDebugAPI &cdpDebugAPI,
       debugger::EnqueueRuntimeTaskFunc enqueueRuntimeTaskCallback,
-      OutboundMessageFunc messageCallback);
+      OutboundMessageFunc messageCallback,
+      State state,
+      std::shared_ptr<std::atomic_bool> destroyedDomainAgents);
 
  public:
   /// Create a new CDP Agent. This can be done on an arbitrary thread; the
   /// runtime will not be accessed during execution of this function.
   static std::unique_ptr<CDPAgent> create(
       int32_t executionContextID,
-      HermesRuntime &runtime,
-      debugger::AsyncDebuggerAPI &asyncDebuggerAPI,
+      CDPDebugAPI &cdpDebugAPI,
       debugger::EnqueueRuntimeTaskFunc enqueueRuntimeTaskCallback,
-      OutboundMessageFunc messageCallback);
+      OutboundMessageFunc messageCallback,
+      State state = {});
 
   /// Destroy the CDP Agent. This can be done on an arbitrary thread.
   /// It's expected that the integrator will continue to process any runtime
   /// tasks enqueued during destruction.
   ~CDPAgent();
 
-  /// Process a CDP command encoded in \p json. This can be called from
-  /// arbitrary threads.
+  /// This function can be called from arbitrary threads. It processes a CDP
+  /// command encoded in \p json as UTF-8 in accordance with RFC-8259. See:
+  // https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/public/devtools_protocol/#wire-format_strings-and-binary-values
   void handleCommand(std::string json);
+
+  /// Enable the Runtime domain without processing a CDP command or sending a
+  /// CDP response. This can be called from arbitrary threads.
+  void enableRuntimeDomain();
+
+  /// Enable the Debugger domain without processing a CDP command or sending a
+  /// CDP response. This can be called from arbitrary threads.
+  void enableDebuggerDomain();
+
+  /// Extract state to be persisted across reloads. This can be called from
+  /// arbitrary threads.
+  State getState();
 
  private:
   /// This should be a unique_ptr to provide predictable destruction time lined

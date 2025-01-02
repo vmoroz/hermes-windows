@@ -17,7 +17,7 @@
 
 // lint directives to let us do some basic validation of generated files
 /* eslint no-undef: 'error', no-unused-vars: ['error', {vars: "local"}], no-redeclare: 'error' */
-/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray */
+/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray, $FlowFixMe */
 
 'use strict';
 
@@ -34,6 +34,7 @@ module.exports = {
     'returnType',
     'predicate',
   ],
+  AsConstExpression: ['expression'],
   AsExpression: ['expression', 'typeAnnotation'],
   AssignmentExpression: ['left', 'right'],
   AssignmentPattern: ['left', 'right'],
@@ -112,6 +113,8 @@ module.exports = {
   DoWhileStatement: ['body', 'test'],
   EmptyStatement: [],
   EmptyTypeAnnotation: [],
+  EnumBigIntBody: ['members'],
+  EnumBigIntMember: ['id', 'init'],
   EnumBooleanBody: ['members'],
   EnumBooleanMember: ['id', 'init'],
   EnumDeclaration: ['id', 'body'],
@@ -190,6 +193,22 @@ module.exports = {
   KeyofTypeAnnotation: ['argument'],
   LabeledStatement: ['label', 'body'],
   LogicalExpression: ['left', 'right'],
+  MatchArrayPattern: ['elements', 'rest'],
+  MatchAsPattern: ['pattern', 'target'],
+  MatchBindingPattern: ['id'],
+  MatchExpression: ['argument', 'cases'],
+  MatchExpressionCase: ['pattern', 'body', 'guard'],
+  MatchIdentifierPattern: ['id'],
+  MatchLiteralPattern: ['literal'],
+  MatchMemberPattern: ['base', 'property'],
+  MatchObjectPattern: ['properties', 'rest'],
+  MatchObjectPatternProperty: ['key', 'pattern'],
+  MatchOrPattern: ['patterns'],
+  MatchRestPattern: ['argument'],
+  MatchStatement: ['argument', 'cases'],
+  MatchStatementCase: ['pattern', 'body', 'guard'],
+  MatchUnaryPattern: ['argument'],
+  MatchWildcardPattern: [],
   MemberExpression: ['object', 'property'],
   MetaProperty: ['meta', 'property'],
   MethodDefinition: ['key', 'value'],
@@ -230,6 +249,7 @@ module.exports = {
   ReturnStatement: ['argument'],
   SequenceExpression: ['expressions'],
   SpreadElement: ['argument'],
+  StaticBlock: ['body'],
   StringLiteralTypeAnnotation: [],
   StringTypeAnnotation: [],
   Super: [],

@@ -271,50 +271,6 @@ ResolvedLocale resolveLocale(
   return result;
 }
 
-/// https://402.ecma-international.org/8.0/#sec-lookupsupportedlocales
-std::vector<std::u16string> lookupSupportedLocales(
-    const std::vector<std::u16string> &availableLocales,
-    const std::vector<std::u16string> &requestedLocales) {
-  // 1. Let subset be a new empty List.
-  std::vector<std::u16string> subset;
-  // 2. For each element locale of requestedLocales in List order, do
-  for (const std::u16string &locale : requestedLocales) {
-    // a. Let noExtensionsLocale be the String value that is locale with all
-    // Unicode locale extension sequences removed.
-    // We can skip this step, see the comment in lookupMatcher.
-    // b. Let availableLocale be BestAvailableLocale(availableLocales,
-    // noExtensionsLocale).
-    std::optional<std::u16string> availableLocale =
-        bestAvailableLocale(availableLocales, locale);
-    // c. If availableLocale is not undefined, append locale to the end of
-    // subset.
-    if (availableLocale) {
-      subset.push_back(locale);
-    }
-  }
-  // 3. Return subset.
-  return subset;
-}
-
-/// https://402.ecma-international.org/8.0/#sec-supportedlocales
-std::vector<std::u16string> supportedLocales(
-    const std::vector<std::u16string> &availableLocales,
-    const std::vector<std::u16string> &requestedLocales) {
-  // 1. Set options to ? CoerceOptionsToObject(options).
-  // 2. Let matcher be ? GetOption(options, "localeMatcher", "string", «
-  //    "lookup", "best fit" », "best fit").
-  // 3. If matcher is "best fit", then
-  //   a. Let supportedLocales be BestFitSupportedLocales(availableLocales,
-  //      requestedLocales).
-  // 4. Else,
-  //   a. Let supportedLocales be LookupSupportedLocales(availableLocales,
-  //      requestedLocales).
-  // 5. Return CreateArrayFromList(supportedLocales).
-
-  // We do not implement a BestFitMatcher, so we can just use LookupMatcher.
-  return lookupSupportedLocales(availableLocales, requestedLocales);
-}
-
 /// https://402.ecma-international.org/8.0/#sec-canonicalizelocalelist
 vm::CallResult<std::vector<std::u16string>> canonicalizeLocaleList(
     vm::Runtime &runtime,
@@ -480,6 +436,60 @@ vm::CallResult<std::optional<uint8_t>> getNumberOption(
     return vm::ExecutionStatus::EXCEPTION;
   }
   return std::optional<uint8_t>(defaultNumber.getValue());
+}
+
+/// https://402.ecma-international.org/8.0/#sec-lookupsupportedlocales
+std::vector<std::u16string> lookupSupportedLocales(
+    const std::vector<std::u16string> &availableLocales,
+    const std::vector<std::u16string> &requestedLocales) {
+  // 1. Let subset be a new empty List.
+  std::vector<std::u16string> subset;
+  // 2. For each element locale of requestedLocales in List order, do
+  for (const std::u16string &locale : requestedLocales) {
+    // a. Let noExtensionsLocale be the String value that is locale with all
+    // Unicode locale extension sequences removed.
+    // We can skip this step, see the comment in lookupMatcher.
+    // b. Let availableLocale be BestAvailableLocale(availableLocales,
+    // noExtensionsLocale).
+    std::optional<std::u16string> availableLocale =
+        bestAvailableLocale(availableLocales, locale);
+    // c. If availableLocale is not undefined, append locale to the end of
+    // subset.
+    if (availableLocale) {
+      subset.push_back(locale);
+    }
+  }
+  // 3. Return subset.
+  return subset;
+}
+
+/// https://402.ecma-international.org/8.0/#sec-supportedlocales
+vm::CallResult<std::vector<std::u16string>> supportedLocales(
+    vm::Runtime &runtime,
+    const std::vector<std::u16string> &availableLocales,
+    const std::vector<std::u16string> &requestedLocales,
+    const Options &options) {
+  // 1. Set options to ? CoerceOptionsToObject(options).
+  // 2. Let matcher be ? GetOption(options, "localeMatcher", "string", «
+  //    "lookup", "best fit" », "best fit").
+  auto matcherRes = getOptionString(
+      runtime,
+      options,
+      u"localeMatcher",
+      {u"lookup", u"best fit"},
+      u"best fit");
+  if (LLVM_UNLIKELY(matcherRes == vm::ExecutionStatus::EXCEPTION))
+    return vm::ExecutionStatus::EXCEPTION;
+  // 3. If matcher is "best fit", then
+  //   a. Let supportedLocales be BestFitSupportedLocales(availableLocales,
+  //      requestedLocales).
+  // 4. Else,
+  //   a. Let supportedLocales be LookupSupportedLocales(availableLocales,
+  //      requestedLocales).
+  // 5. Return CreateArrayFromList(supportedLocales).
+
+  // We do not implement a BestFitMatcher, so we can just use LookupMatcher.
+  return lookupSupportedLocales(availableLocales, requestedLocales);
 }
 
 // Implementation of
@@ -788,64 +798,63 @@ bool isWellFormedUnitIdentifier(std::u16string_view unitIdentifier) {
 /// supported built-in NSUnit types provided by Foundation.
 NSUnit *unitIdentifierToNSUnit(const std::u16string &unitId) {
   static const std::pair<std::u16string_view, NSUnit *> units[] = {
-    {u"acre", NSUnitArea.acres},
+      {u"acre", NSUnitArea.acres},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"bit", NSUnitInformationStorage.bits},
-    {u"byte", NSUnitInformationStorage.bytes},
+      {u"bit", NSUnitInformationStorage.bits},
+      {u"byte", NSUnitInformationStorage.bytes},
 #endif
-    {u"celsius", NSUnitTemperature.celsius},
-    {u"centimeter", NSUnitLength.centimeters},
-    {u"degree", NSUnitAngle.degrees},
-    {u"fahrenheit", NSUnitTemperature.fahrenheit},
-    {u"fluid-ounce", NSUnitVolume.fluidOunces},
-    {u"foot", NSUnitLength.feet},
-    {u"gallon", NSUnitVolume.gallons},
+      {u"celsius", NSUnitTemperature.celsius},
+      {u"centimeter", NSUnitLength.centimeters},
+      {u"degree", NSUnitAngle.degrees},
+      {u"fahrenheit", NSUnitTemperature.fahrenheit},
+      {u"fluid-ounce", NSUnitVolume.fluidOunces},
+      {u"foot", NSUnitLength.feet},
+      {u"gallon", NSUnitVolume.gallons},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"gigabit", NSUnitInformationStorage.gigabits},
-    {u"gigabyte", NSUnitInformationStorage.gigabytes},
+      {u"gigabit", NSUnitInformationStorage.gigabits},
+      {u"gigabyte", NSUnitInformationStorage.gigabytes},
 #endif
-    {u"gram", NSUnitMass.grams},
-    {u"gram-per-liter", NSUnitConcentrationMass.gramsPerLiter},
-    {u"hectare", NSUnitArea.hectares},
-    {u"hour", NSUnitDuration.hours},
-    {u"inch", NSUnitLength.inches},
+      {u"gram", NSUnitMass.grams},
+      {u"gram-per-liter", NSUnitConcentrationMass.gramsPerLiter},
+      {u"hectare", NSUnitArea.hectares},
+      {u"hour", NSUnitDuration.hours},
+      {u"inch", NSUnitLength.inches},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"kilobit", NSUnitInformationStorage.kilobits},
-    {u"kilobyte", NSUnitInformationStorage.kilobytes},
+      {u"kilobit", NSUnitInformationStorage.kilobits},
+      {u"kilobyte", NSUnitInformationStorage.kilobytes},
 #endif
-    {u"kilogram", NSUnitMass.kilograms},
-    {u"kilometer", NSUnitLength.kilometers},
-    {u"kilometer-per-hour", NSUnitSpeed.kilometersPerHour},
-    {u"liter", NSUnitVolume.liters},
+      {u"kilogram", NSUnitMass.kilograms},
+      {u"kilometer", NSUnitLength.kilometers},
+      {u"kilometer-per-hour", NSUnitSpeed.kilometersPerHour},
+      {u"liter", NSUnitVolume.liters},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"megabit", NSUnitInformationStorage.megabits},
-    {u"megabyte", NSUnitInformationStorage.megabytes},
+      {u"megabit", NSUnitInformationStorage.megabits},
+      {u"megabyte", NSUnitInformationStorage.megabytes},
 #endif
-    {u"meter", NSUnitLength.meters},
-    {u"meter-per-second", NSUnitSpeed.metersPerSecond},
-    {u"mile", NSUnitLength.miles},
-    {u"mile-per-gallon", NSUnitFuelEfficiency.milesPerGallon},
-    {u"mile-per-hour", NSUnitSpeed.milesPerHour},
-    {u"mile-scandinavian", NSUnitLength.scandinavianMiles},
-    {u"milliliter", NSUnitVolume.milliliters},
-    {u"millimeter", NSUnitLength.millimeters},
+      {u"meter", NSUnitLength.meters},
+      {u"meter-per-second", NSUnitSpeed.metersPerSecond},
+      {u"mile", NSUnitLength.miles},
+      {u"mile-per-gallon", NSUnitFuelEfficiency.milesPerGallon},
+      {u"mile-per-hour", NSUnitSpeed.milesPerHour},
+      {u"mile-scandinavian", NSUnitLength.scandinavianMiles},
+      {u"milliliter", NSUnitVolume.milliliters},
+      {u"millimeter", NSUnitLength.millimeters},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"millisecond", NSUnitDuration.milliseconds},
+      {u"millisecond", NSUnitDuration.milliseconds},
 #endif
-    {u"minute", NSUnitDuration.minutes},
-    {u"ounce", NSUnitMass.ounces},
+      {u"minute", NSUnitDuration.minutes},
+      {u"ounce", NSUnitMass.ounces},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"petabyte", NSUnitInformationStorage.petabytes},
+      {u"petabyte", NSUnitInformationStorage.petabytes},
 #endif
-    {u"pound", NSUnitMass.poundsMass},
-    {u"second", NSUnitDuration.seconds},
-    {u"stone", NSUnitMass.stones},
+      {u"pound", NSUnitMass.poundsMass},
+      {u"second", NSUnitDuration.seconds},
+      {u"stone", NSUnitMass.stones},
 #if __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_13_0
-    {u"terabit", NSUnitInformationStorage.terabits},
-    {u"terabyte", NSUnitInformationStorage.terabytes},
+      {u"terabit", NSUnitInformationStorage.terabits},
+      {u"terabyte", NSUnitInformationStorage.terabytes},
 #endif
-    {u"yard", NSUnitLength.yards}
-  };
+      {u"yard", NSUnitLength.yards}};
   if (auto nsUnitOpt = pairMapLookup(units, std::u16string_view(unitId)))
     return *nsUnitOpt;
   return [[NSUnit alloc] initWithSymbol:u16StringToNSString(unitId)];
@@ -883,7 +892,7 @@ uint8_t getCurrencyDigits(std::u16string_view code) {
     return *digitsOpt;
   return 2;
 }
-}
+} // namespace
 
 /// https://402.ecma-international.org/8.0/#sec-intl.getcanonicallocales
 vm::CallResult<std::vector<std::u16string>> getCanonicalLocales(
@@ -986,7 +995,8 @@ vm::CallResult<std::vector<std::u16string>> Collator::supportedLocalesOf(
   if (LLVM_UNLIKELY(requestedLocalesRes == vm::ExecutionStatus::EXCEPTION))
     return vm::ExecutionStatus::EXCEPTION;
   // 3. Return ? SupportedLocales(availableLocales, requestedLocales, options)
-  return supportedLocales(availableLocales, *requestedLocalesRes);
+  return supportedLocales(
+      runtime, availableLocales, *requestedLocalesRes, options);
 }
 
 /// https://402.ecma-international.org/8.0/#sec-initializecollator
@@ -1062,21 +1072,43 @@ vm::ExecutionStatus CollatorApple::initialize(
     opt.emplace(u"kf", *caseFirstOpt);
   // 18. Let relevantExtensionKeys be %Collator%.[[RelevantExtensionKeys]].
   static constexpr std::u16string_view relevantExtensionKeys[] = {
-      u"co", u"kn", u"kf"};
+      u"co", u"kf", u"kn"};
+  static_assert(
+      isSorted(relevantExtensionKeys),
+      "keep relevantExtensionKeys sorted for canonical form");
   // 19. Let r be ResolveLocale(%Collator%.[[AvailableLocales]],
   // requestedLocales, opt,relevantExtensionKeys, localeData).
   auto r = resolveLocale(
       getAvailableLocales(), *requestedLocalesRes, opt, relevantExtensionKeys);
   // 20. Set collator.[[Locale]] to r.[[locale]].
   locale_ = std::move(r.locale);
-  // 21. Let collation be r.[[co]].
-  auto coIt = r.extensions.find(u"co");
-  // 22. If collation is null, let collation be "default".
-  // 23. Set collator.[[Collation]] to collation.
-  if (coIt == r.extensions.end())
+  // If usage is search, any specified collation option is dropped
+  // because in spec steps 5 - 6, when usage is search, the [[SearchLocaleData]]
+  // is to be used. The only way to specify to the collator that it should
+  // use the search collation rule is through the collation unicode extension
+  // in the data locale. Since only one collation unicode extension value can be
+  // specified in a locale, any specifiec collation option then needs to be
+  // dropped in favour of search.
+  if (usage_ == u"search") {
     collation_ = u"default";
-  else
-    collation_ = std::move(coIt->second);
+    // If locale_ has a collation unicode extension, remove it.
+    auto parsed = ParsedLocaleIdentifier::parse(locale_);
+    if (parsed.has_value()) {
+      auto nodeHandle = parsed->unicodeExtensionKeywords.extract(u"co");
+      if (!nodeHandle.empty()) {
+        locale_ = parsed->canonicalize();
+      }
+    }
+  } else {
+    // 21. Let collation be r.[[co]].
+    auto coIt = r.extensions.find(u"co");
+    // 22. If collation is null, let collation be "default".
+    // 23. Set collator.[[Collation]] to collation.
+    if (coIt == r.extensions.end())
+      collation_ = u"default";
+    else
+      collation_ = std::move(coIt->second);
+  }
   // 24. If relevantExtensionKeys contains "kn", then
   // a. Set collator.[[Numeric]] to ! SameValue(r.[[kn]], "true").
   auto knIt = r.extensions.find(u"kn");
@@ -1233,7 +1265,7 @@ class DateTimeFormatApple : public DateTimeFormat {
   std::vector<Part> formatToParts(double x) noexcept;
 
  private:
-  void initializeNSDateFormatter() noexcept;
+  void initializeNSDateFormatter(NSLocale *nsLocale) noexcept;
 
   // https://402.ecma-international.org/8.0/#sec-properties-of-intl-datetimeformat-instances
   // Intl.DateTimeFormat instances have an [[InitializedDateTimeFormat]]
@@ -1311,7 +1343,8 @@ vm::CallResult<std::vector<std::u16string>> DateTimeFormat::supportedLocalesOf(
   auto requestedLocales = getCanonicalLocales(runtime, locales);
   const std::vector<std::u16string> &availableLocales = getAvailableLocales();
   // 3. Return ? (availableLocales, requestedLocales, options).
-  return supportedLocales(availableLocales, requestedLocales.getValue());
+  return supportedLocales(
+      runtime, availableLocales, requestedLocales.getValue(), options);
 }
 
 // Implementation of
@@ -1391,13 +1424,15 @@ vm::ExecutionStatus DateTimeFormatApple::initialize(
     opt.emplace(u"hc", *hourCycleOpt);
   // 16. Let localeData be %DateTimeFormat%.[[LocaleData]].
   // NOTE: We don't actually have access to the underlying locale data, so we
-  // will use NSLocale.currentLocale instance as a substitute
-  auto localeData = NSLocale.currentLocale;
+  // will construct an NSLocale as needed instead.
   // 17. Let r be ResolveLocale(%DateTimeFormat%.[[AvailableLocales]],
   // requestedLocales, opt, %DateTimeFormat%.[[RelevantExtensionKeys]],
   // localeData).
   static constexpr std::u16string_view relevantExtensionKeys[] = {
-      u"ca", u"nu", u"hc"};
+      u"ca", u"hc", u"nu"};
+  static_assert(
+      isSorted(relevantExtensionKeys),
+      "keep relevantExtensionKeys sorted for canonical form");
   auto r = resolveLocale(
       getAvailableLocales(), *requestedLocalesRes, opt, relevantExtensionKeys);
   // 18. Set dateTimeFormat.[[Locale]] to r.[[locale]].
@@ -1584,6 +1619,8 @@ vm::ExecutionStatus DateTimeFormatApple::initialize(
   // ii. Set dateTimeFormat's internal slot whose name is the Internal
   // Slot column of the row to p.
   // 39. If dateTimeFormat.[[Hour]] is undefined, then
+  NSLocale *nsLocale =
+      [NSLocale localeWithLocaleIdentifier:u16StringToNSString(locale_)];
   if (!hour_.has_value()) {
     // a. Set dateTimeFormat.[[HourCycle]] to undefined.
     hourCycle_ = std::nullopt;
@@ -1592,7 +1629,7 @@ vm::ExecutionStatus DateTimeFormatApple::initialize(
     // 40. Else,
   } else {
     // a. Let hcDefault be dataLocaleData.[[hourCycle]].
-    auto hcDefault = getDefaultHourCycle(localeData);
+    auto hcDefault = getDefaultHourCycle(nsLocale);
     // b. Let hc be dateTimeFormat.[[HourCycle]].
     auto hc = hourCycle_;
     // c. If hc is null, then
@@ -1638,7 +1675,7 @@ vm::ExecutionStatus DateTimeFormatApple::initialize(
   // 41. Set dateTimeFormat.[[Pattern]] to pattern.
   // 42. Set dateTimeFormat.[[RangePatterns]] to rangePatterns.
   // 43. Return dateTimeFormat.
-  initializeNSDateFormatter();
+  initializeNSDateFormatter(nsLocale);
   return vm::ExecutionStatus::RETURNED;
 }
 
@@ -1696,7 +1733,8 @@ Options DateTimeFormat::resolvedOptions() noexcept {
   return static_cast<DateTimeFormatApple *>(this)->resolvedOptions();
 }
 
-void DateTimeFormatApple::initializeNSDateFormatter() noexcept {
+void DateTimeFormatApple::initializeNSDateFormatter(
+    NSLocale *nsLocale) noexcept {
   static constexpr std::u16string_view kLong = u"long", kShort = u"short",
                                        kNarrow = u"narrow", kMedium = u"medium",
                                        kFull = u"full", kNumeric = u"numeric",
@@ -1733,8 +1771,7 @@ void DateTimeFormatApple::initializeNSDateFormatter() noexcept {
   }
   nsDateFormatter_.timeZone =
       [[NSTimeZone alloc] initWithName:u16StringToNSString(timeZone_)];
-  nsDateFormatter_.locale =
-      [[NSLocale alloc] initWithLocaleIdentifier:u16StringToNSString(locale_)];
+  nsDateFormatter_.locale = nsLocale;
   if (calendar_)
     nsDateFormatter_.calendar = [[NSCalendar alloc]
         initWithCalendarIdentifier:u16StringToNSString(*calendar_)];
@@ -2113,7 +2150,8 @@ vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
   // 2. Let requestedLocales be ? CanonicalizeLocaleList(locales).
   auto requestedLocales = getCanonicalLocales(runtime, locales);
   // 3. Return ? (availableLocales, requestedLocales, options).
-  return supportedLocales(availableLocales, requestedLocales.getValue());
+  return supportedLocales(
+      runtime, availableLocales, requestedLocales.getValue(), options);
 }
 
 // https://402.ecma-international.org/8.0/#sec-setnumberformatunitoptions
@@ -2366,6 +2404,9 @@ vm::ExecutionStatus NumberFormatApple::initialize(
   // requestedLocales, opt, %NumberFormat%.[[RelevantExtensionKeys]],
   // localeData).
   static constexpr std::u16string_view relevantExtensionKeys[] = {u"nu"};
+  static_assert(
+      isSorted(relevantExtensionKeys),
+      "keep relevantExtensionKeys sorted for canonical form");
   auto r = resolveLocale(
       getAvailableLocales(), *requestedLocales, opt, relevantExtensionKeys);
   // 11. Set numberFormat.[[Locale]] to r.[[locale]].

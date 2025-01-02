@@ -173,7 +173,8 @@
               },
               "typeParameters":null
             }
-          ]
+          ],
+          "inexact":false
         },
         "rest":null,
         "typeParameters":{
@@ -187,6 +188,7 @@
               "range":[113,114],
               "name":"T",
               "bound":null,
+              "const":false,
               "variance":null,
               "default":null
             },
@@ -214,6 +216,7 @@
                   "typeParameters":null
                 }
               },
+              "const":false,
               "variance":null,
               "default":{
                 "type":"GenericTypeAnnotation",

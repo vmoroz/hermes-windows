@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include "hermes/Support/StackOverflowGuard.h"
 #define DEBUG_TYPE "vm"
 #include "hermes/VM/Runtime.h"
 
@@ -265,9 +266,12 @@ Runtime::Runtime(
       stackPointer_(),
       crashMgr_(runtimeConfig.getCrashMgr()),
 #ifdef HERMES_CHECK_NATIVE_STACK
-      nativeStackGap_(std::max(
+      overflowGuard_(StackOverflowGuard::nativeStackGuard(std::max(
           runtimeConfig.getNativeStackGap(),
-          kMinSupportedNativeStackGap)),
+          kMinSupportedNativeStackGap))),
+#else
+      overflowGuard_(StackOverflowGuard::depthCounterGuard(
+          Runtime::MAX_NATIVE_CALL_FRAME_DEPTH)),
 #endif
       crashCallbackKey_(
           crashMgr_->registerCallback([this](int fd) { crashCallback(fd); })),
@@ -417,6 +421,16 @@ Runtime::~Runtime() {
 #endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
 
   getHeap().finalizeAll();
+  // Remove inter-module dependencies so we can delete them in any order.
+  for (auto &module : runtimeModuleList_) {
+    module.prepareForDestruction();
+  }
+  // All RuntimeModules must be destroyed before the next assertion, to untrack
+  // all native IDs related to it (e.g., CodeBlock).
+  while (!runtimeModuleList_.empty()) {
+    // Calling delete will automatically remove it from the list.
+    delete &runtimeModuleList_.back();
+  }
   // Now that all objects are finalized, there shouldn't be any native memory
   // keys left in the ID tracker for memory profiling. Assert that the only IDs
   // left are JS heap pointers.
@@ -430,19 +444,10 @@ Runtime::~Runtime() {
     oscompat::vm_free(
         registerStackAllocation_.data(), registerStackAllocation_.size());
   }
-  // Remove inter-module dependencies so we can delete them in any order.
-  for (auto &module : runtimeModuleList_) {
-    module.prepareForRuntimeShutdown();
-  }
 
   assert(
       !formattingStackTrace_ &&
       "Runtime is being destroyed while exception is being formatted");
-
-  while (!runtimeModuleList_.empty()) {
-    // Calling delete will automatically remove it from the list.
-    delete &runtimeModuleList_.back();
-  }
 
   // Unwatch the runtime from the time limit monitor in case the latter still
   // has any references to this.
@@ -653,6 +658,9 @@ void Runtime::markRoots(
 void Runtime::markWeakRoots(WeakRootAcceptor &acceptor, bool markLongLived) {
   MarkRootsPhaseTimer timer(*this, RootAcceptor::Section::WeakRefs);
   acceptor.beginRootSection(RootAcceptor::Section::WeakRefs);
+  // Call this first so that it can remove RuntimeModules whose owning Domain is
+  // dead from runtimeModuleList_, before marking long-lived WeakRoots in them.
+  markDomainRefInRuntimeModules(acceptor);
   if (markLongLived) {
     for (auto &entry : fixedPropCache_) {
       acceptor.acceptWeak(entry.clazz);
@@ -660,11 +668,34 @@ void Runtime::markWeakRoots(WeakRootAcceptor &acceptor, bool markLongLived) {
     for (auto &rm : runtimeModuleList_)
       rm.markLongLivedWeakRoots(acceptor);
   }
-  for (auto &rm : runtimeModuleList_)
-    rm.markDomainRef(acceptor);
   for (auto &fn : customMarkWeakRootFuncs_)
     fn(&getHeap(), acceptor);
   acceptor.endRootSection();
+}
+
+void Runtime::markDomainRefInRuntimeModules(WeakRootAcceptor &acceptor) {
+  std::vector<RuntimeModule *> modulesToDelete;
+  for (auto &rm : runtimeModuleList_) {
+    rm.markDomainRef(acceptor);
+    // If the owning domain is dead, store the RuntimeModule pointer for
+    // destruction later.
+    if (LLVM_UNLIKELY(rm.isOwningDomainDead())) {
+      // Prepare these RuntimeModules for destruction so that we don't rely on
+      // their relative order in runtimeModuleList_.
+      rm.prepareForDestruction();
+      modulesToDelete.push_back(&rm);
+    }
+  }
+
+  // We need to destroy these RuntimeModules after we call
+  // prepareForDestruction() on all of them, otherwise, it may cause
+  // use-after-free when checking the ownership of a CodeBlock in the destructor
+  // of a RuntimeModule (which may refer a CodeBlock that is owned and deleted
+  // by another RuntimeModule).
+  for (auto *rm : modulesToDelete) {
+    // Calling delete will automatically remove it from the list.
+    delete rm;
+  }
 }
 
 void Runtime::markRootsForCompleteMarking(
@@ -1250,7 +1281,6 @@ uint32_t Runtime::getCurrentFrameOffset() const {
 static ExecutionStatus
 raisePlaceholder(Runtime &runtime, Handle<JSError> errorObj, Handle<> message) {
   JSError::recordStackTrace(errorObj, runtime);
-  JSError::setupStack(errorObj, runtime);
   JSError::setMessage(errorObj, runtime, message);
   return runtime.setThrownValue(errorObj.getHermesValue());
 }
@@ -1949,32 +1979,6 @@ llvh::raw_ostream &operator<<(
   return OS << "\")";
 }
 
-template <typename T>
-static std::string &llvmStreamableToString(const T &v) {
-  // Use a static string to back this function to avoid allocations. We should
-  // only be calling this from the crash dumper so not have to worry about
-  // multi-threaded usage.
-  static std::string buf;
-  buf.clear();
-  llvh::raw_string_ostream strstrm(buf);
-  strstrm << v;
-  strstrm.flush();
-  return buf;
-}
-
-bool Runtime::isNativeStackOverflowingSlowPath() {
-#ifdef HERMES_CHECK_NATIVE_STACK
-  auto [highPtr, size] = oscompat::thread_stack_bounds(nativeStackGap_);
-  nativeStackHigh_ = (const char *)highPtr;
-  nativeStackSize_ = size;
-  return LLVM_UNLIKELY(
-      (uintptr_t)nativeStackHigh_ - (uintptr_t)__builtin_frame_address(0) >
-      nativeStackSize_);
-#else
-  return false;
-#endif
-}
-
 /****************************************************************************
  * WARNING: This code is run after a crash. Avoid walking data structures,
  *          doing memory allocation, or using libc etc. as much as possible
@@ -1982,25 +1986,25 @@ bool Runtime::isNativeStackOverflowingSlowPath() {
 void Runtime::crashCallback(int fd) {
   llvh::raw_fd_ostream jsonStream(fd, false);
   JSONEmitter json(jsonStream);
+
+  // Temporary buffer for pointers converted to strings. 20 bytes is enough,
+  // since an 8 byte pointer is 16 characters, plus the "0x" and the null
+  // terminator.
+  char hexBuf[20];
+  auto writeHex = [&hexBuf](void *ptr) {
+    unsigned len = snprintf(hexBuf, sizeof(hexBuf), "%p", ptr);
+    assert(len < sizeof(hexBuf) && "Need more chars than expected");
+    return llvh::StringRef{hexBuf, len};
+  };
+
   json.openDict();
   json.emitKeyValue("type", "runtime");
+  json.emitKeyValue("address", writeHex(this));
   json.emitKeyValue(
-      "address", llvmStreamableToString(llvh::format_hex((uintptr_t)this, 10)));
-  json.emitKeyValue(
-      "registerStackAllocation",
-      llvmStreamableToString(
-          llvh::format_hex((uintptr_t)registerStackAllocation_.data(), 10)));
-  json.emitKeyValue(
-      "registerStackStart",
-      llvmStreamableToString(
-          llvh::format_hex((uintptr_t)registerStackStart_, 10)));
-  json.emitKeyValue(
-      "registerStackPointer",
-      llvmStreamableToString(llvh::format_hex((uintptr_t)stackPointer_, 10)));
-  json.emitKeyValue(
-      "registerStackEnd",
-      llvmStreamableToString(
-          llvh::format_hex((uintptr_t)registerStackEnd_, 10)));
+      "registerStackAllocation", writeHex(registerStackAllocation_.data()));
+  json.emitKeyValue("registerStackStart", writeHex(registerStackStart_));
+  json.emitKeyValue("registerStackPointer", writeHex(stackPointer_));
+  json.emitKeyValue("registerStackEnd", writeHex(registerStackEnd_));
   json.emitKey("callstack");
   crashWriteCallStack(json);
   json.closeDict();
@@ -2029,13 +2033,18 @@ void Runtime::crashWriteCallStack(JSONEmitter &json) {
             blockSourceCode.getValue(), bytecodeOffs);
         if (sourceLocation) {
           auto file = debugInfo->getFilenameByID(sourceLocation->filenameId);
-          llvh::SmallString<256> srcLocStorage;
-          json.emitKeyValue(
-              "SourceLocation",
-              (llvh::Twine(file) + llvh::Twine(":") +
-               llvh::Twine(sourceLocation->line) + llvh::Twine(":") +
-               llvh::Twine(sourceLocation->column))
-                  .toStringRef(srcLocStorage));
+          char buf[256];
+          unsigned len = snprintf(
+              buf,
+              sizeof(buf),
+              "%s:%d:%d",
+              file.c_str(),
+              sourceLocation->line,
+              sourceLocation->column);
+          // The length is either the return value of snprintf, or the buffer
+          // size without the null terminator, whichever is smaller.
+          llvh::StringRef str{buf, std::min<size_t>(len, sizeof(buf) - 1)};
+          json.emitKeyValue("SourceLocation", str);
         }
       }
       uint32_t segmentID = runtimeModule->getBytecode()->getSegmentID();

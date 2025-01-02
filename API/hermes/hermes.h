@@ -25,6 +25,7 @@ struct HermesTestHelper;
 namespace hermes {
 namespace vm {
 class GCExecTrace;
+class Runtime;
 } // namespace vm
 } // namespace hermes
 
@@ -70,13 +71,16 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       size_t len);
 
   /// Enable sampling profiler.
-  static void __cdecl enableSamplingProfiler();
+  /// Starts a separate thread that polls VM state with \p meanHzFreq frequency.
+  /// Any subsequent call to \c enableSamplingProfiler() is ignored until
+  /// next call to \c disableSamplingProfiler()
+  static void enableSamplingProfiler(double meanHzFreq = 100);
 
   /// Disable the sampling profiler
-  static void __cdecl disableSamplingProfiler();
+  static void disableSamplingProfiler();
 
   /// Dump sampled stack trace to the given file name.
-  static void __cdecl dumpSampledTraceToFile(const std::string &fileName);
+  static void dumpSampledTraceToFile(const std::string &fileName);
 
   /// Dump sampled stack trace to the given stream.
   static void dumpSampledTraceToStream(std::ostream &stream);
@@ -120,9 +124,7 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
   /// static throughout that object's (or string's, or PropNameID's)
   /// lifetime.
   uint64_t getUniqueID(const jsi::Object &o) const;
-#if JSI_VERSION >= 8
   uint64_t getUniqueID(const jsi::BigInt &s) const;
-#endif
   uint64_t getUniqueID(const jsi::String &s) const;
   uint64_t getUniqueID(const jsi::PropNameID &pni) const;
   uint64_t getUniqueID(const jsi::Symbol &sym) const;
@@ -176,7 +178,10 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       const DebugFlags &debugFlags);
 #endif
 
-  /// Register this runtime for sampling profiler.
+  /// Register this runtime and thread for sampling profiler. Before using the
+  /// runtime on another thread, invoke this function again from the new thread
+  /// to make the sampling profiler target the new thread (and forget the old
+  /// thread).
   void registerForProfiling();
   /// Unregister this runtime for sampling profiler.
   void unregisterForProfiling();
@@ -210,6 +215,12 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
       const std::shared_ptr<const jsi::Buffer> &sourceMapBuf,
       const std::string &sourceURL);
 
+  /// Returns the underlying low level Hermes VM runtime instance.
+  /// This function is considered unsafe and unstable.
+  /// Direct use of a vm::Runtime should be avoided as the lower level APIs are
+  /// unsafe and they can change without notice.
+  ::hermes::vm::Runtime *getVMRuntimeUnsafe() const;
+
  private:
   // Only HermesRuntimeImpl can subclass this.
   HermesRuntime() = default;
@@ -234,7 +245,7 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
 ///   auto runtime = makeHermesRuntime(conf.build());
 HERMES_EXPORT ::hermes::vm::RuntimeConfig hardenedHermesRuntimeConfig();
 
-HERMES_EXPORT std::unique_ptr<HermesRuntime> __cdecl makeHermesRuntime(
+HERMES_EXPORT std::unique_ptr<HermesRuntime> makeHermesRuntime(
     const ::hermes::vm::RuntimeConfig &runtimeConfig =
         ::hermes::vm::RuntimeConfig());
 HERMES_EXPORT std::unique_ptr<jsi::ThreadSafeRuntime>

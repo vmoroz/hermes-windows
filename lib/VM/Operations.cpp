@@ -111,6 +111,12 @@ OptValue<uint32_t> toArrayIndex(StringView str) {
 }
 
 bool isSameValue(HermesValue x, HermesValue y) {
+  // Check for NaN before checking the tag. We have to do this because NaNs may
+  // differ in the sign bit, which may result in the tag comparison below
+  // incorrectly returning false.
+  if (LLVM_UNLIKELY(x.isNaN()) && y.isNaN())
+    return true;
+
   if (x.getTag() != y.getTag()) {
     // If the tags are different, they must be different.
     return false;
@@ -1902,13 +1908,6 @@ CallResult<bool> instanceOfOperator_RJS(
   if (LLVM_UNLIKELY(!constructor->isObject())) {
     return runtime.raiseTypeError(
         "right operand of 'instanceof' is not an object");
-  }
-
-  // Fast path: Function.prototype[Symbol.hasInstance] is non-configurable
-  // and non-writable (ES6.0 19.2.3.6), so we directly run its behavior here.
-  // Simply call through to ordinaryHasInstance.
-  if (vmisa<JSFunction>(*constructor)) {
-    return ordinaryHasInstance(runtime, constructor, object);
   }
 
   // 2. Let instOfHandler be GetMethod(C,@@hasInstance).

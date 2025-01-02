@@ -48,7 +48,7 @@ try {
 // CHECK-NEXT: Caught{{.*}}
 
 print(new Intl.DateTimeFormat('en-GB', { dateStyle: 'full', timeStyle: 'long' }).format(date));
-// CHECK-NEXT: Thursday, 2 January 2020 at 03:45:00 GMT
+// CHECK-NEXT: Thursday{{.+}}2 January 2020 at 03:45:00 GMT
 
 print(new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'medium' }).format(date));
 // CHECK-NEXT: 2020. 1. 2. 오전 3:45:00
@@ -100,6 +100,10 @@ numericOptions.forEach(element => print(new Intl.DateTimeFormat('en-GB', {second
 // CHECK-NEXT: 3
 // CHECK-NEXT: 3
 
+numericOptions.forEach(element => print(new Intl.DateTimeFormat('de-DE', {hour: element, minute: element}).format(date)));
+// CHECK-NEXT: 03:45
+// CHECK-NEXT: 03:45
+
 lengthOptions.concat(numericOptions).forEach(element => print(new Intl.DateTimeFormat('en-GB', {month: element}).format(date)));
 // CHECK-NEXT: J
 // CHECK-NEXT: Jan
@@ -108,6 +112,10 @@ lengthOptions.concat(numericOptions).forEach(element => print(new Intl.DateTimeF
 // CHECK-NEXT: 01
 
 numericOptions.forEach(element => print(new Intl.DateTimeFormat('ja-JP', {hour: element, minute: element}).format(date)));
+// CHECK-NEXT: 3:45
+// CHECK-NEXT: 3:45
+
+numericOptions.forEach(element => print(new Intl.DateTimeFormat('ja-JP', {hour: element, minute: element, hourCycle: "h12"}).format(date)));
 // CHECK-NEXT: 午前3:45
 // CHECK-NEXT: 午前3:45
 
@@ -159,7 +167,7 @@ print(JSON.stringify(new Intl.DateTimeFormat('en-US', {weekday: 'long',
   hour12: true,
   timeZone: 'UTC'
 }).formatToParts(new Date(Date.UTC(2020, 0, 2, 3, 45, 00, 30)))));
-// CHECK-NEXT: [{"value":"Thursday","type":"weekday"},{"value":",","type":"literal"},{"value":" ","type":"literal"},{"value":"1","type":"month"},{"value":"/","type":"literal"},{"value":"2","type":"day"},{"value":"/","type":"literal"},{"value":"2020","type":"year"},{"value":",","type":"literal"},{"value":" ","type":"literal"},{"value":"3","type":"hour"},{"value":":","type":"literal"},{"value":"45","type":"minute"},{"value":":","type":"literal"},{"value":"00","type":"second"},{"value":".","type":"literal"},{"value":"030","type":"fractionalSecond"},{"value":" ","type":"literal"},{"value":"AM","type":"dayPeriod"}]
+// CHECK-NEXT: [{"value":"Thursday","type":"weekday"},{"value":",","type":"literal"},{"value":" ","type":"literal"},{"value":"1","type":"month"},{"value":"/","type":"literal"},{"value":"2","type":"day"},{"value":"/","type":"literal"},{"value":"2020","type":"year"},{"value":",","type":"literal"},{"value":" ","type":"literal"},{"value":"3","type":"hour"},{"value":":","type":"literal"},{"value":"45","type":"minute"},{"value":":","type":"literal"},{"value":"00","type":"second"},{"value":".","type":"literal"},{"value":"030","type":"fractionalSecond"},{"value":" ","type":"literal"},{"value":"AM","type":"dayPeriod"}]
 
 print(new Date(Date.UTC(2020, 0, 2)).toLocaleString("en-US", {weekday: "short", timeZone: "UTC"}))
 // CHECK-NEXT: Thu

@@ -17,7 +17,7 @@
 
 // lint directives to let us do some basic validation of generated files
 /* eslint no-undef: 'error', no-unused-vars: ['error', {vars: "local"}], no-redeclare: 'error' */
-/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray */
+/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray, $FlowFixMe */
 
 'use strict';
 
@@ -42,6 +42,9 @@ export const HERMES_AST_VISITOR_KEYS = {
     typeParameters: 'Node',
     returnType: 'Node',
     predicate: 'Node',
+  },
+  AsConstExpression: {
+    expression: 'Node',
   },
   AsExpression: {
     expression: 'Node',
@@ -221,6 +224,13 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   EmptyStatement: {},
   EmptyTypeAnnotation: {},
+  EnumBigIntBody: {
+    members: 'NodeList',
+  },
+  EnumBigIntMember: {
+    id: 'Node',
+    init: 'Node',
+  },
   EnumBooleanBody: {
     members: 'NodeList',
   },
@@ -443,6 +453,63 @@ export const HERMES_AST_VISITOR_KEYS = {
     left: 'Node',
     right: 'Node',
   },
+  MatchArrayPattern: {
+    elements: 'NodeList',
+    rest: 'Node',
+  },
+  MatchAsPattern: {
+    pattern: 'Node',
+    target: 'Node',
+  },
+  MatchBindingPattern: {
+    id: 'Node',
+  },
+  MatchExpression: {
+    argument: 'Node',
+    cases: 'NodeList',
+  },
+  MatchExpressionCase: {
+    pattern: 'Node',
+    body: 'Node',
+    guard: 'Node',
+  },
+  MatchIdentifierPattern: {
+    id: 'Node',
+  },
+  MatchLiteralPattern: {
+    literal: 'Node',
+  },
+  MatchMemberPattern: {
+    base: 'Node',
+    property: 'Node',
+  },
+  MatchObjectPattern: {
+    properties: 'NodeList',
+    rest: 'Node',
+  },
+  MatchObjectPatternProperty: {
+    key: 'Node',
+    pattern: 'Node',
+  },
+  MatchOrPattern: {
+    patterns: 'NodeList',
+  },
+  MatchRestPattern: {
+    argument: 'Node',
+  },
+  MatchStatement: {
+    argument: 'Node',
+    cases: 'NodeList',
+  },
+  MatchStatementCase: {
+    pattern: 'Node',
+    body: 'Node',
+    guard: 'Node',
+  },
+  MatchUnaryPattern: {
+    argument: 'Node',
+  },
+  MatchWildcardPattern: {},
   MemberExpression: {
     object: 'Node',
     property: 'Node',
@@ -553,6 +620,9 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   SpreadElement: {
     argument: 'Node',
+  },
+  StaticBlock: {
+    body: 'NodeList',
   },
   StringLiteral: {},
   StringLiteralTypeAnnotation: {},

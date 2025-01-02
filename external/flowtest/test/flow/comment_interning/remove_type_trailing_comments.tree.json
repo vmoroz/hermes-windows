@@ -509,7 +509,8 @@
           "range":[603,607]
         },
         "rest":null,
-        "typeParameters":null
+        "typeParameters":null,
+        "this":null
       }
     },
     {
@@ -553,7 +554,8 @@
           "range":[651,655]
         },
         "rest":null,
-        "typeParameters":null
+        "typeParameters":null,
+        "this":null
       }
     },
     {
@@ -1365,7 +1367,8 @@
             "loc":{"source":null,"start":{"line":52,"column":24},"end":{"line":52,"column":27}},
             "range":[1518,1521]
           }
-        ]
+        ],
+        "inexact":false
       }
     },
     {
