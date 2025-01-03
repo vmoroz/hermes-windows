@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#define NAPI_EXPERIMENTAL
 #include "node_api_test.h"
 
 using namespace node_api_test;
