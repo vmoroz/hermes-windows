@@ -1,7 +1,5 @@
-#define NAPI_VERSION 9
 #include <js_native_api.h>
 #include "../common.h"
-#include "../entry_point.h"
 
 static double value_ = 1;
 
@@ -50,8 +48,7 @@ static napi_value HasNamedProperty(napi_env env, napi_callback_info info) {
   char buffer[128];
   size_t copied;
   NODE_API_CALL(env,
-                napi_get_value_string_utf8(
-                    env, args[1], buffer, sizeof(buffer), &copied));
+      napi_get_value_string_utf8(env, args[1], buffer, sizeof(buffer), &copied));
 
   // do the check and create the boolean return value
   bool value;
@@ -69,54 +66,33 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_value name_value;
   NODE_API_CALL(env,
-                napi_create_string_utf8(
-                    env, "NameKeyValue", NAPI_AUTO_LENGTH, &name_value));
+      napi_create_string_utf8(
+          env, "NameKeyValue", NAPI_AUTO_LENGTH, &name_value));
 
   napi_value symbol_description;
   napi_value name_symbol;
-  NODE_API_CALL(
-      env,
+  NODE_API_CALL(env,
       napi_create_string_utf8(
           env, "NameKeySymbol", NAPI_AUTO_LENGTH, &symbol_description));
-  NODE_API_CALL(env, napi_create_symbol(env, symbol_description, &name_symbol));
-
-  napi_value name_symbol_descriptionless;
   NODE_API_CALL(env,
-                napi_create_symbol(env, NULL, &name_symbol_descriptionless));
-
-  napi_value name_symbol_for;
-  NODE_API_CALL(
-      env,
-      node_api_symbol_for(
-          env, "NameKeySymbolFor", NAPI_AUTO_LENGTH, &name_symbol_for));
+      napi_create_symbol(env, symbol_description, &name_symbol));
 
   napi_property_descriptor properties[] = {
-      {"echo", 0, Echo, 0, 0, 0, napi_enumerable, 0},
-      {"readwriteValue",
-       0,
-       0,
-       0,
-       0,
-       number,
-       napi_enumerable | napi_writable,
-       0},
-      {"readonlyValue", 0, 0, 0, 0, number, napi_enumerable, 0},
-      {"hiddenValue", 0, 0, 0, 0, number, napi_default, 0},
-      {NULL, name_value, 0, 0, 0, number, napi_enumerable, 0},
-      {NULL, name_symbol, 0, 0, 0, number, napi_enumerable, 0},
-      {NULL, name_symbol_descriptionless, 0, 0, 0, number, napi_enumerable, 0},
-      {NULL, name_symbol_for, 0, 0, 0, number, napi_enumerable, 0},
-      {"readwriteAccessor1", 0, 0, GetValue, SetValue, 0, napi_default, 0},
-      {"readwriteAccessor2", 0, 0, GetValue, SetValue, 0, napi_writable, 0},
-      {"readonlyAccessor1", 0, 0, GetValue, NULL, 0, napi_default, 0},
-      {"readonlyAccessor2", 0, 0, GetValue, NULL, 0, napi_writable, 0},
-      {"hasNamedProperty", 0, HasNamedProperty, 0, 0, 0, napi_default, 0},
+    { "echo", 0, Echo, 0, 0, 0, napi_enumerable, 0 },
+    { "readwriteValue", 0, 0, 0, 0, number, napi_enumerable | napi_writable, 0 },
+    { "readonlyValue", 0, 0, 0, 0, number, napi_enumerable, 0},
+    { "hiddenValue", 0, 0, 0, 0, number, napi_default, 0},
+    { NULL, name_value, 0, 0, 0, number, napi_enumerable, 0},
+    { NULL, name_symbol, 0, 0, 0, number, napi_enumerable, 0},
+    { "readwriteAccessor1", 0, 0, GetValue, SetValue, 0, napi_default, 0},
+    { "readwriteAccessor2", 0, 0, GetValue, SetValue, 0, napi_writable, 0},
+    { "readonlyAccessor1", 0, 0, GetValue, NULL, 0, napi_default, 0},
+    { "readonlyAccessor2", 0, 0, GetValue, NULL, 0, napi_writable, 0},
+    { "hasNamedProperty", 0, HasNamedProperty, 0, 0, 0, napi_default, 0 },
   };
 
-  NODE_API_CALL(
-      env,
-      napi_define_properties(
-          env, exports, sizeof(properties) / sizeof(*properties), properties));
+  NODE_API_CALL(env, napi_define_properties(
+      env, exports, sizeof(properties) / sizeof(*properties), properties));
 
   return exports;
 }

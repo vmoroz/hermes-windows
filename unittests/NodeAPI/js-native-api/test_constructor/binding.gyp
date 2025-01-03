@@ -3,8 +3,9 @@
     {
       "target_name": "test_constructor",
       "sources": [
-        "test_constructor.c",
-        "test_null.c",
+        "../common.c",
+        "../entry_point.c",
+        "test_constructor.c"
       ]
     }
   ]

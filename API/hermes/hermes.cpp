@@ -1051,6 +1051,10 @@ class HermesRuntimeImpl final : public HermesRuntime,
   ::hermes::hbc::CompileFlags compileFlags_{};
 };
 
+::hermes::vm::Runtime &getVMRuntime(HermesRuntime &runtime) noexcept {
+  return static_cast<HermesRuntimeImpl &>(runtime).runtime_;
+}
+
 namespace {
 
 inline HermesRuntimeImpl *impl(HermesRuntime *rt) {

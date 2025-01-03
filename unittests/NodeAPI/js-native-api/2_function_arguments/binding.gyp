@@ -1,9 +1,10 @@
 {
   "targets": [
     {
-      "target_name": "2_function_arguments",
+      "target_name": "binding",
       "sources": [
-        "2_function_arguments.c"
+        "../entry_point.c",
+        "binding.c"
       ]
     }
   ]

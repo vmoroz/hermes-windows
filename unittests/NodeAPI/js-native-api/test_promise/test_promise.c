@@ -1,6 +1,5 @@
 #include <js_native_api.h>
 #include "../common.h"
-#include "../entry_point.h"
 
 napi_deferred deferred = NULL;
 
@@ -17,8 +16,8 @@ static napi_value createPromise(napi_env env, napi_callback_info info) {
   return promise;
 }
 
-static napi_value concludeCurrentPromise(napi_env env,
-                                         napi_callback_info info) {
+static napi_value
+concludeCurrentPromise(napi_env env, napi_callback_info info) {
   napi_value argv[2];
   size_t argc = 2;
   bool resolution;
@@ -51,18 +50,13 @@ static napi_value isPromise(napi_env env, napi_callback_info info) {
 EXTERN_C_START
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descriptors[] = {
-      DECLARE_NODE_API_PROPERTY("createPromise", createPromise),
-      DECLARE_NODE_API_PROPERTY("concludeCurrentPromise",
-                                concludeCurrentPromise),
-      DECLARE_NODE_API_PROPERTY("isPromise", isPromise),
+    DECLARE_NODE_API_PROPERTY("createPromise", createPromise),
+    DECLARE_NODE_API_PROPERTY("concludeCurrentPromise", concludeCurrentPromise),
+    DECLARE_NODE_API_PROPERTY("isPromise", isPromise),
   };
 
-  NODE_API_CALL(
-      env,
-      napi_define_properties(env,
-                             exports,
-                             sizeof(descriptors) / sizeof(*descriptors),
-                             descriptors));
+  NODE_API_CALL(env, napi_define_properties(
+      env, exports, sizeof(descriptors) / sizeof(*descriptors), descriptors));
 
   return exports;
 }

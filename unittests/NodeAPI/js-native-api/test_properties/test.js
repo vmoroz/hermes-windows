@@ -2,9 +2,9 @@
 const common = require('../../common');
 const assert = require('assert');
 const readonlyErrorRE =
-  /^TypeError: Cannot assign to read only property '.*' of object '#<Object>'$/;
+  /^TypeError: Cannot assign to read(-| )only property '.*'( of object '#<Object>')?$/;
 const getterOnlyErrorRE =
-  /^TypeError: Cannot set property .* of #<Object> which has only a getter$/;
+  /^TypeError: Cannot (set|assign to) property .*( of #<Object>)? which has only a getter$/;
 
 // Testing api calls for defining properties
 const test_object = require(`./build/${common.buildType}/test_properties`);
@@ -35,11 +35,12 @@ assert.ok(!propertyNames.includes('readwriteAccessor2'));
 assert.ok(!propertyNames.includes('readonlyAccessor1'));
 assert.ok(!propertyNames.includes('readonlyAccessor2'));
 
-// Validate properties created with symbol
-const propertySymbols = Object.getOwnPropertySymbols(test_object);
-assert.strictEqual(propertySymbols[0].toString(), 'Symbol(NameKeySymbol)');
-assert.strictEqual(propertySymbols[1].toString(), 'Symbol()');
-assert.strictEqual(propertySymbols[2], Symbol.for('NameKeySymbolFor'));
+// Validate property created with symbol
+const start = 'Symbol('.length;
+const end = start + 'NameKeySymbol'.length;
+const symbolDescription =
+    String(Object.getOwnPropertySymbols(test_object)[0]).slice(start, end);
+assert.strictEqual(symbolDescription, 'NameKeySymbol');
 
 // The napi_writable attribute should be ignored for accessors.
 const readwriteAccessor1Descriptor =

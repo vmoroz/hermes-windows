@@ -1,10 +1,11 @@
 {
   'targets': [
     {
-      'target_name': 'test_new_target',
+      'target_name': 'binding',
       'defines': [ 'V8_DEPRECATION_WARNINGS=1' ],
       'sources': [
-        'test_new_target.c'
+        '../entry_point.c',
+        'binding.c'
       ]
     }
   ]

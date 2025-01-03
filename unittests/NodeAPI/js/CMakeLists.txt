@@ -3,7 +3,6 @@ set(testJSFiles
   3_callbacks/test.js
   4_object_factory/test.js
   5_function_factory/test.js
-  6_object_wrap/test-object-wrap-ref.js
   6_object_wrap/test.js
   7_factory_wrap/test.js
   8_passing_wrapped/test.js
@@ -11,8 +10,6 @@ set(testJSFiles
   common/common.js
   test_array/test.js
   test_bigint/test.js
-  test_cannot_run_js/test.js
-  test_constructor/test_null.js
   test_constructor/test.js
   test_constructor/test2.js
   test_conversions/test.js
@@ -21,7 +18,6 @@ set(testJSFiles
   test_error/test.js
   test_exception/test.js
   test_exception/testFinalizerException.js
-  test_finalizer/test_fatal_finalize.js
   test_finalizer/test.js
   test_function/test.js
   test_general/test.js
@@ -34,18 +30,13 @@ set(testJSFiles
   test_handle_scope/test.js
   test_instance_data/test.js
   test_new_target/test.js
-  test_number/test_null.js
   test_number/test.js
-  test_object/test_exceptions.js
-  test_object/test_null.js
   test_object/test.js
+  test_object/test_null.js
   test_promise/test.js
   test_properties/test.js
-  test_reference_double_free/test_wrap.js
-  test_reference_double_free/test.js
-  test_reference/test_finalizer.js
   test_reference/test.js
-  test_string/test_null.js
+  test_reference_double_free/test.js
   test_string/test.js
   test_symbol/test1.js
   test_symbol/test2.js

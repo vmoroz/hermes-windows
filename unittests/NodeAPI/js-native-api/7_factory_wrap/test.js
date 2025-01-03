@@ -3,7 +3,7 @@
 
 const common = require('../../common');
 const assert = require('assert');
-const test = require(`./build/${common.buildType}/7_factory_wrap`);
+const test = require(`./build/${common.buildType}/binding`);
 
 assert.strictEqual(test.finalizeCount, 0);
 async function runGCTests() {

@@ -1,7 +1,6 @@
 #include <js_native_api.h>
 #include <string.h>
 #include "../common.h"
-#include "../entry_point.h"
 
 static napi_value TestGetElement(napi_env env, napi_callback_info info) {
   size_t argc = 2;
@@ -13,25 +12,20 @@ static napi_value TestGetElement(napi_env env, napi_callback_info info) {
   napi_valuetype valuetype0;
   NODE_API_CALL(env, napi_typeof(env, args[0], &valuetype0));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype0 == napi_object,
+  NODE_API_ASSERT(env, valuetype0 == napi_object,
       "Wrong type of arguments. Expects an array as first argument.");
 
   napi_valuetype valuetype1;
   NODE_API_CALL(env, napi_typeof(env, args[1], &valuetype1));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype1 == napi_number,
+  NODE_API_ASSERT(env, valuetype1 == napi_number,
       "Wrong type of arguments. Expects an integer as second argument.");
 
   napi_value array = args[0];
   int32_t index;
   NODE_API_CALL(env, napi_get_value_int32(env, args[1], &index));
 
-  NODE_API_ASSERT(
-      env, index >= 0, "Invalid index. Expects a positive integer.");
+  NODE_API_ASSERT(env, index >= 0, "Invalid index. Expects a positive integer.");
 
   bool isarray;
   NODE_API_CALL(env, napi_is_array(env, array, &isarray));
@@ -61,17 +55,13 @@ static napi_value TestHasElement(napi_env env, napi_callback_info info) {
   napi_valuetype valuetype0;
   NODE_API_CALL(env, napi_typeof(env, args[0], &valuetype0));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype0 == napi_object,
+  NODE_API_ASSERT(env, valuetype0 == napi_object,
       "Wrong type of arguments. Expects an array as first argument.");
 
   napi_valuetype valuetype1;
   NODE_API_CALL(env, napi_typeof(env, args[1], &valuetype1));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype1 == napi_number,
+  NODE_API_ASSERT(env, valuetype1 == napi_number,
       "Wrong type of arguments. Expects an integer as second argument.");
 
   napi_value array = args[0];
@@ -103,16 +93,12 @@ static napi_value TestDeleteElement(napi_env env, napi_callback_info info) {
 
   napi_valuetype valuetype0;
   NODE_API_CALL(env, napi_typeof(env, args[0], &valuetype0));
-  NODE_API_ASSERT(
-      env,
-      valuetype0 == napi_object,
+  NODE_API_ASSERT(env, valuetype0 == napi_object,
       "Wrong type of arguments. Expects an array as first argument.");
 
   napi_valuetype valuetype1;
   NODE_API_CALL(env, napi_typeof(env, args[1], &valuetype1));
-  NODE_API_ASSERT(
-      env,
-      valuetype1 == napi_number,
+  NODE_API_ASSERT(env, valuetype1 == napi_number,
       "Wrong type of arguments. Expects an integer as second argument.");
 
   napi_value array = args[0];
@@ -143,9 +129,7 @@ static napi_value New(napi_env env, napi_callback_info info) {
   napi_valuetype valuetype0;
   NODE_API_CALL(env, napi_typeof(env, args[0], &valuetype0));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype0 == napi_object,
+  NODE_API_ASSERT(env, valuetype0 == napi_object,
       "Wrong type of arguments. Expects an array as first argument.");
 
   napi_value ret;
@@ -173,9 +157,7 @@ static napi_value NewWithLength(napi_env env, napi_callback_info info) {
   napi_valuetype valuetype0;
   NODE_API_CALL(env, napi_typeof(env, args[0], &valuetype0));
 
-  NODE_API_ASSERT(
-      env,
-      valuetype0 == napi_number,
+  NODE_API_ASSERT(env, valuetype0 == napi_number,
       "Wrong type of arguments. Expects an integer the first argument.");
 
   int32_t array_length;
@@ -190,19 +172,15 @@ static napi_value NewWithLength(napi_env env, napi_callback_info info) {
 EXTERN_C_START
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descriptors[] = {
-      DECLARE_NODE_API_PROPERTY("TestGetElement", TestGetElement),
-      DECLARE_NODE_API_PROPERTY("TestHasElement", TestHasElement),
-      DECLARE_NODE_API_PROPERTY("TestDeleteElement", TestDeleteElement),
-      DECLARE_NODE_API_PROPERTY("New", New),
-      DECLARE_NODE_API_PROPERTY("NewWithLength", NewWithLength),
+    DECLARE_NODE_API_PROPERTY("TestGetElement", TestGetElement),
+    DECLARE_NODE_API_PROPERTY("TestHasElement", TestHasElement),
+    DECLARE_NODE_API_PROPERTY("TestDeleteElement", TestDeleteElement),
+    DECLARE_NODE_API_PROPERTY("New", New),
+    DECLARE_NODE_API_PROPERTY("NewWithLength", NewWithLength),
   };
 
-  NODE_API_CALL(
-      env,
-      napi_define_properties(env,
-                             exports,
-                             sizeof(descriptors) / sizeof(*descriptors),
-                             descriptors));
+  NODE_API_CALL(env, napi_define_properties(
+      env, exports, sizeof(descriptors) / sizeof(*descriptors), descriptors));
 
   return exports;
 }

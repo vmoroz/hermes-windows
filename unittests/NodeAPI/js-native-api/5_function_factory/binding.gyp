@@ -1,9 +1,10 @@
 {
   "targets": [
     {
-      "target_name": "5_function_factory",
+      "target_name": "binding",
       "sources": [
-        "5_function_factory.c"
+        "../entry_point.c",
+        "binding.c"
       ]
     }
   ]

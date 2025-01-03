@@ -1,43 +1,43 @@
 'use strict';
 // Flags: --expose-gc
 
-const common = require('../../common');
-const test_finalizer = require(`./build/${common.buildType}/test_finalizer`);
+const { gcUntil, buildType } = require('../../common');
 const assert = require('assert');
 
-// The goal of this test is to show that we can run "pure" finalizers in the
-// current JS loop tick. Thus, we do not use common.gcUntil function works
-// asynchronously using micro tasks.
-// We use IIFE for the obj scope instead of {} to be compatible with
-// non-V8 JS engines that do not support scoped variables.
-(() => {
-  const obj = {};
-  test_finalizer.addFinalizer(obj);
-})();
+const test_finalizer = require(`./build/${buildType}/test_finalizer`);
 
-for (let i = 0; i < 10; ++i) {
-  global.gc();
-  if (test_finalizer.getFinalizerCallCount() === 1) {
-    break;
+// This test script uses external values with finalizer callbacks
+// in order to track when values get garbage-collected. Each invocation
+// of a finalizer callback increments the finalizeCount property.
+assert.strictEqual(test_finalizer.finalizeCount, 0);
+
+let objects = [];
+
+function createObjects() {
+  objects = [];
+  for (let i = 0; i < 50000; i++) {
+    const obj = new Object();
+    test_finalizer.addPropertyWithFinalizer(obj);
+    objects.push(obj);
   }
 }
 
-assert.strictEqual(test_finalizer.getFinalizerCallCount(), 1);
+createObjects();
 
-// The finalizer that access JS cannot run synchronously. They are run in the
-// next JS loop tick. Thus, we must use common.gcUntil.
-async function runAsyncTests() {
-  // We do not use common.mustCall() because we want to see the finalizer
-  // called in response to GC and not as a part of env destruction.
-  let js_is_called = false;
-  // We use IIFE for the obj scope instead of {} to be compatible with
-  // non-V8 JS engines that do not support scoped variables.
-  (() => {
-    const obj = {};
-    test_finalizer.addFinalizerWithJS(obj, () => { js_is_called = true; });
-  })();
-  await common.gcUntil('ensure JS finalizer called',
-                       () => (test_finalizer.getFinalizerCallCount() === 2));
-  assert(js_is_called);
+function runNextTick() {
+  return new Promise((resolve, _) => {
+    setImmediate(() => {
+      resolve();
+    });
+  });
 }
-runAsyncTests();
+
+async function waitForBGGC() {
+  for (let i = 0; i < 2; ++i) {
+    await runNextTick();
+    createObjects();
+  }
+}
+
+waitForBGGC();
+

@@ -1,6 +1,5 @@
 #include <js_native_api.h>
 #include "../common.h"
-#include "../entry_point.h"
 #include "test_null.h"
 
 static napi_value AsBool(napi_env env, napi_callback_info info) {
@@ -79,13 +78,12 @@ static napi_value AsString(napi_env env, napi_callback_info info) {
   NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
 
   char value[100];
-  NODE_API_CALL(
-      env,
-      napi_get_value_string_utf8(env, args[0], value, sizeof(value), NULL));
+  NODE_API_CALL(env,
+    napi_get_value_string_utf8(env, args[0], value, sizeof(value), NULL));
 
   napi_value output;
-  NODE_API_CALL(env,
-                napi_create_string_utf8(env, value, NAPI_AUTO_LENGTH, &output));
+  NODE_API_CALL(env, napi_create_string_utf8(
+      env, value, NAPI_AUTO_LENGTH, &output));
 
   return output;
 }
@@ -137,24 +135,20 @@ static napi_value ToString(napi_env env, napi_callback_info info) {
 EXTERN_C_START
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descriptors[] = {
-      DECLARE_NODE_API_PROPERTY("asBool", AsBool),
-      DECLARE_NODE_API_PROPERTY("asInt32", AsInt32),
-      DECLARE_NODE_API_PROPERTY("asUInt32", AsUInt32),
-      DECLARE_NODE_API_PROPERTY("asInt64", AsInt64),
-      DECLARE_NODE_API_PROPERTY("asDouble", AsDouble),
-      DECLARE_NODE_API_PROPERTY("asString", AsString),
-      DECLARE_NODE_API_PROPERTY("toBool", ToBool),
-      DECLARE_NODE_API_PROPERTY("toNumber", ToNumber),
-      DECLARE_NODE_API_PROPERTY("toObject", ToObject),
-      DECLARE_NODE_API_PROPERTY("toString", ToString),
+    DECLARE_NODE_API_PROPERTY("asBool", AsBool),
+    DECLARE_NODE_API_PROPERTY("asInt32", AsInt32),
+    DECLARE_NODE_API_PROPERTY("asUInt32", AsUInt32),
+    DECLARE_NODE_API_PROPERTY("asInt64", AsInt64),
+    DECLARE_NODE_API_PROPERTY("asDouble", AsDouble),
+    DECLARE_NODE_API_PROPERTY("asString", AsString),
+    DECLARE_NODE_API_PROPERTY("toBool", ToBool),
+    DECLARE_NODE_API_PROPERTY("toNumber", ToNumber),
+    DECLARE_NODE_API_PROPERTY("toObject", ToObject),
+    DECLARE_NODE_API_PROPERTY("toString", ToString),
   };
 
-  NODE_API_CALL(
-      env,
-      napi_define_properties(env,
-                             exports,
-                             sizeof(descriptors) / sizeof(*descriptors),
-                             descriptors));
+  NODE_API_CALL(env, napi_define_properties(
+      env, exports, sizeof(descriptors) / sizeof(*descriptors), descriptors));
 
   init_test_null(env, exports);
 

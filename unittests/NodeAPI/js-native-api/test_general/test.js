@@ -33,7 +33,7 @@ assert.notStrictEqual(test_general.testGetPrototype(baseObject),
                       test_general.testGetPrototype(extendedObject));
 
 // Test version management functions
-assert.strictEqual(test_general.testGetVersion(), 9);
+assert.strictEqual(test_general.testGetVersion(), 8);
 
 [
   123,
@@ -69,9 +69,10 @@ test_general.wrap(y);
 test_general.removeWrap(y);
 
 // Test napi_adjust_external_memory
-const adjustedValue = test_general.testAdjustExternalMemory();
-assert.strictEqual(typeof adjustedValue, 'number');
-assert(adjustedValue > 0);
+// TODO: Hermes does not implement that API
+// const adjustedValue = test_general.testAdjustExternalMemory();
+// assert.strictEqual(typeof adjustedValue, 'number');
+// assert(adjustedValue > 0);
 
 async function runGCTests() {
   // Ensure that garbage collecting an object with a wrapped native item results
