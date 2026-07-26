@@ -121,7 +121,6 @@ Options:
   --msvc                  Use MSVC compiler instead of Clang (default: ${
     options.msvc.default
   })
-                          [Note: ARM64EC temporarily uses MSVC due to Clang 19.x issue]
   --uwp                   Build for UWP instead of Win32 (default: ${
     options.uwp.default
   })
@@ -231,10 +230,6 @@ function main() {
   ensureDir(args["output-path"]);
   args["output-path"] = path.resolve(args["output-path"]);
 
-  // Force MSVC for ARM64EC due to Clang 19.x linker issues (LLVM #113658)
-  // This must be removed when Clang 20 is available
-  const useMsvc = args.msvc || args.platform.includes("arm64ec");
-
   args.hostCpuArch = getHostCpuArch();
 
   console.log();
@@ -251,7 +246,6 @@ function main() {
   console.log(`          clean-tools: ${args["clean-tools"]}`);
   console.log(`            clean-pkg: ${args["clean-pkg"]}`);
   console.log(`                 msvc: ${args.msvc}`);
-  console.log(`              useMsvc: ${useMsvc}`);
   console.log(`                  uwp: ${args.uwp}`);
   console.log(`             platform: ${args.platform}`);
   console.log(`        configuration: ${args.configuration}`);
@@ -309,7 +303,7 @@ function main() {
       };
       const buildParams = {
         ...configParams,
-        msvc: useMsvc,
+        msvc: args.msvc,
         buildPath: getBuildPath(configParams),
         hasCustomTargets: args.targets.length > 0,
         targets: getTargets(args.targets, configParams),
@@ -478,8 +472,11 @@ function cmakeConfigure(buildParams) {
     genArgs.push(`-DHERMES_FILE_VERSION=${args["file-version"]}`);
   }
 
-  // Add cross-compilation target for non-host platforms when using Clang
-  if (platform !== hostCpuArch && !msvc) {
+  // Select the Clang target triple. This is needed whenever the target differs
+  // from the host, and additionally always for ARM64EC: even on an ARM64 host,
+  // Clang's default target is plain ARM64, so the EC target must be requested
+  // explicitly.
+  if (!msvc && (platform !== hostCpuArch || platform === "arm64ec")) {
     let targetTriple = "";
     if (platform === "x86") {
       targetTriple = "i686-pc-windows-msvc";
@@ -675,10 +672,13 @@ function cmakeBuildHermesCompiler(buildParams) {
 }
 
 function runCMakeCommand(command, buildParams) {
-  const { platform, buildPath } = buildParams;
+  const { platform, msvc, buildPath } = buildParams;
 
   const env = { ...process.env };
-  if (platform === "arm64ec") {
+  // MSVC needs an explicit switch to emit ARM64EC code; Clang selects it
+  // through the arm64ec-pc-windows-msvc target triple instead (see
+  // cmakeConfigure), and rejects the MSVC spelling.
+  if (platform === "arm64ec" && msvc) {
     env.CFLAGS = "-arm64EC";
     env.CXXFLAGS = "-arm64EC";
   }
@@ -929,6 +929,10 @@ function packNuGet(runParams) {
   execSync(fatNugetPackCmd, { stdio: "inherit" });
 }
 
+// Locate vcvarsall.bat from the installed Visual Studio.
+// Visual Studio 2026 (product version 18) is required: it provides the MSVC
+// 14.5x toolset and the Clang 22 that this repo builds with, and it is the
+// toolset installed on the CI images. VS 2022 is not supported.
 function getVCVarsAllBat() {
   const vsWhere = path.join(
     process.env["ProgramFiles(x86)"] || process.env["ProgramFiles"],
@@ -941,11 +945,11 @@ function getVCVarsAllBat() {
   }
 
   const versionJson = JSON.parse(
-    execSync(`"${vsWhere}" -format json -version 17`).toString(),
+    execSync(`"${vsWhere}" -format json -version 18`).toString(),
   );
   if (versionJson.length === 0) {
     throw new Error(
-      `No Visual Studio 2022 (version 17) installation found by vswhere: "${vsWhere}"`,
+      `No Visual Studio 2026 (version 18) installation found by vswhere: "${vsWhere}"`,
     );
   }
   if (versionJson.length > 1) {

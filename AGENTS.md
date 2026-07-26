@@ -87,7 +87,21 @@ script. Use the `.\dev` PowerShell wrapper from the repository root.
 - `x64` (default) — uses Clang
 - `x86` — uses Clang
 - `arm64` — uses Clang
-- `arm64ec` — uses MSVC (Clang not supported yet)
+- `arm64ec` — uses Clang
+
+All Windows targets build with the Clang that ships in Visual Studio 2026; pass
+`--msvc` to use MSVC instead. Visual Studio 2026 is required (the build script
+locates it with `vswhere -version 18`).
+
+ARM64EC has two toolchain quirks worth knowing:
+
+- It advertises the x64 predefined macros (`__x86_64__`, `_M_X64`, `__SSE2__`,
+  ...) so that x64-targeting source keeps compiling, but Clang generates AArch64
+  code and provides no x86 intrinsics. Code guarded on those macros must also
+  check `!defined(__arm64ec__)`; the NEON path is the right one there.
+- It links `softintrin.lib` (added in `HermesWindows.cmake`) for the x64
+  intrinsics the UCRT references. Without it every link fails with
+  `undefined symbol: _mm_getcsr (EC symbol)`.
 
 ### Build Options
 
