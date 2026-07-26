@@ -216,11 +216,12 @@ const externalIcuVersion = 78;
 
 // BinSkim security validation constants.
 // The CI pipeline uses the internal package (Microsoft.CodeAnalysis.BinSkim.Internal)
-// from a private ADO feed. For local builds we use the public nuget.org package
-// which contains the same analysis engine.
+// from a private ADO feed. For local builds we use the public ADO feed, which
+// serves the same analysis engine and keeps us off the public NuGet API.
 const binskimPackageName = "Microsoft.CodeAnalysis.BinSkim";
 const binskimVersion = "4.4.9";
-const binskimNuGetSource = "https://api.nuget.org/v3/index.json";
+const binskimNuGetSource =
+  "https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/nuget/v3/index.json";
 
 main();
 
@@ -549,12 +550,17 @@ function cmakeConfigure(buildParams) {
   // this via CMAKE_C_FLAGS, but shermes uses its own SHERMES_CC_SYSCFLAGS.
   // This applies regardless of the main compiler (Clang or MSVC) because
   // shermes always invokes clang to compile generated C code.
-  if (platform !== hostCpuArch) {
+  // ARM64EC always needs the triple, even on an ARM64 host: Clang's default
+  // target there is plain ARM64, and non-EC objects cannot link against
+  // ARM64EC output.
+  if (platform !== hostCpuArch || platform === "arm64ec") {
     let shermesTarget = "";
     if (platform === "x86") {
       shermesTarget = "i686-pc-windows-msvc";
     } else if (platform === "arm64") {
       shermesTarget = "aarch64-pc-windows-msvc";
+    } else if (platform === "arm64ec") {
+      shermesTarget = "arm64ec-pc-windows-msvc";
     }
     if (shermesTarget) {
       genArgs.push(`-DSHERMES_CC_SYSCFLAGS="-target ${shermesTarget}"`);
