@@ -44,12 +44,20 @@ parameters:
   - Name: win32_arm64
     TargetCPU: arm64
     BuildUWP: --no-uwp
+    CanRunTest: true
+    # On an x64 agent build.js can only cross-compile the shared libraries and
+    # skips the tests. Flag per cell, not per TargetCPU, to keep uwp_arm64 on x64.
+    UseArm64Pool: true
     # ARM64 "Emulation Compatible" is to run ARM64 Hermes DLL in a x64 app
     # on Windows ARM64 in emulation mode.
     # See: https://learn.microsoft.com/en-us/windows/arm/arm64ec
   - Name: win32_arm64ec
     TargetCPU: arm64ec
     BuildUWP: --no-uwp
+    # ARM64EC runs natively on Windows on ARM, so the test binaries are ARM64EC
+    # too and exercise the ARM64EC DLLs that ship.
+    CanRunTest: true
+    UseArm64Pool: true
 
 resources:
   repositories:
@@ -69,8 +77,11 @@ extends:
     settings:
       ${{ if eq(parameters.MustPublish, false) }}:
         skipBuildTagsForGitHubPullRequests: true
+      # fabric-internal-pool-large hosts several images, so the one with VS 2026
+      # must be named explicitly. See .ado/image/README.md.
     pool:
       name: fabric-internal-pool-large
+      demands: ImageOverride -equals windows-2025-1espt
     sdl:
       binskim:
         analyzeTarget: |
@@ -114,12 +125,6 @@ extends:
           value: ${{ parameters.MustPublish }}
 
         steps:
-          # Node.js version >= 22.x is required to handle args in JS scripts.
-        - task: UseNode@1
-          displayName: Use Node.js 22.x
-          inputs:
-            version: 22.x
-
           # Compute the semanticVersion and fileVersion, and then update the build title.
         - script: node .ado\scripts\setVersionNumber.js
           name: setVersions # For output variable prefix
@@ -136,6 +141,11 @@ extends:
           - Set_Versions
 
           timeoutInMinutes: 300
+
+          # Single-image pool, so no ImageOverride demand.
+          ${{ if eq(MatrixEntry.UseArm64Pool, true) }}:
+            pool:
+              name: windows-2025-1espt-arm64
 
           variables:
           - name: semanticVersion
@@ -162,11 +172,9 @@ extends:
               targetPath: $(Build.StagingDirectory)\out\pkg-staging
 
           steps:
-            # Node.js version >= 22.x is required to handle args in JS scripts.
-          - task: UseNode@1
-            displayName: Use Node.js 22.x
-            inputs:
-              version: 22.x
+            # Must run before anything else on the agent - see the template.
+          - ${{ if eq(MatrixEntry.UseArm64Pool, true) }}:
+            - template: /.ado/ensure-node10-shim.yml@self
 
             # Invoke the build specific for the target platform.
           - script: >
@@ -182,9 +190,10 @@ extends:
             displayName: Build binaries
 
             # Show all built files to help debug issues.
-          - script: |
-              ls -R $(Build.StagingDirectory)\out
-            displayName: Show all files in the $$(Build.StagingDirectory)\out directory
+          - pwsh: |
+              Get-ChildItem -LiteralPath "$(Build.StagingDirectory)\out" -Recurse |
+                Select-Object -ExpandProperty FullName
+            displayName: Show all staged files
 
             # Run unit tests after the build is finished.
           - ${{ if eq(MatrixEntry.CanRunTest, true) }}:
@@ -308,12 +317,6 @@ extends:
             artifactName: published-packages
 
         steps:
-          # Node.js version >= 22.x is required to handle args in JS scripts.
-        - task: UseNode@1
-          displayName: Use Node.js 22.x
-          inputs:
-            version: 22.x
-
           # The substitution tags in the nuspec require that we use at least NuGet 4.6.
         - task: NuGetToolInstaller@0
           displayName: Install NuGet tools

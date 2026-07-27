@@ -1,0 +1,30 @@
+# The mandatory 1ES "Retain Build Artifacts" post-job runs on the Node 10 task
+# handler, but recent agents no longer ship `externals\node10` (ARM64 agents
+# never did), so it fails with "This step requires a node version that does not
+# exist in the agent filesystem". Point node10 at the image's Node instead.
+#
+# Reference this BEFORE a job's work, so node10 exists when the post-job runs.
+steps:
+- pwsh: |
+    $ErrorActionPreference = 'Stop'
+    $ext = Join-Path $env:AGENT_HOMEDIRECTORY 'externals'
+    $node10Exe = Join-Path $ext 'node10\bin\node.exe'
+    if (Test-Path $node10Exe) {
+        Write-Host "node10 already present: $node10Exe"
+    } else {
+        $srcExe = @(
+            (Join-Path $env:ProgramFiles 'nodejs\node.exe'),
+            (Join-Path $ext 'node\bin\node.exe')
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $srcExe) { throw "No Node.js found to shim node10 (checked Program Files\nodejs and agent externals\node)." }
+        Write-Host "Shimming node10 -> $srcExe"
+        New-Item -ItemType Directory -Force -Path (Split-Path $node10Exe) | Out-Null
+        try {
+            New-Item -ItemType SymbolicLink -Path $node10Exe -Target $srcExe -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Warning "Symlink failed ($($_.Exception.Message)); copying instead."
+            Copy-Item $srcExe $node10Exe -Force
+        }
+        & $node10Exe --version
+    }
+  displayName: Shim node10 handler (agent lacks externals\node10)
