@@ -565,6 +565,15 @@ function cmakeConfigure(buildParams) {
     if (shermesTarget) {
       genArgs.push(`-DSHERMES_CC_SYSCFLAGS="-target ${shermesTarget}"`);
     }
+    // ARM64EC additionally needs softintrin.lib at link time. The C code that
+    // shermes generates and links pulls in the UCRT floating-point helpers
+    // (_fenvutils/ieee), which reference the x64 SSE intrinsics _mm_getcsr /
+    // _mm_setcsr; on ARM64EC those are provided by softintrin.lib. This goes in
+    // SHERMES_CC_SYSLDFLAGS (linker flags) rather than SHERMES_CC_SYSCFLAGS,
+    // since shermes only applies it when it links an executable/shared object.
+    if (platform === "arm64ec") {
+      genArgs.push('-DSHERMES_CC_SYSLDFLAGS="-lsoftintrin"');
+    }
   }
 
   // Toggle HERMESVM_SANITIZE_HANDLES. Set explicitly in both directions so a
