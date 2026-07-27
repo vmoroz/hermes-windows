@@ -69,8 +69,13 @@ extends:
     settings:
       ${{ if eq(parameters.MustPublish, false) }}:
         skipBuildTagsForGitHubPullRequests: true
+      # fabric-internal-pool-large hosts several images, so the image must be
+      # named explicitly. windows-2025-1espt provides the Visual Studio 2026 and
+      # Clang toolset the build requires. Jobs inherit this pool unless they
+      # declare their own. See .ado/image/README.md.
     pool:
       name: fabric-internal-pool-large
+      demands: ImageOverride -equals windows-2025-1espt
     sdl:
       binskim:
         analyzeTarget: |
