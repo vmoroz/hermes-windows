@@ -1,0 +1,22 @@
+# Authenticates npm to the ms/react-native-public Azure Artifacts feed using the
+# build's managed identity. The Node-API test toolchain (Babel) runs `npm install`
+# deep inside the CMake build; on network-isolated agents it must restore from the
+# approved feed instead of reaching registry.npmjs.org.
+#
+# Reference this BEFORE the build step in any job that compiles the tests. The
+# token is written to the user-level ~/.npmrc, which npm reads regardless of the
+# working directory the CMake custom command runs npm from.
+steps:
+- task: AzureCLI@2
+  displayName: Authenticate npm to the package feed
+  inputs:
+    azureSubscription: Office-Hermes-Windows-Bot
+    scriptType: pscore
+    scriptLocation: inlineScript
+    # 499b84ac-... is the well-known Azure DevOps resource ID.
+    inlineScript: |
+      $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken --output tsv
+      if ([string]::IsNullOrWhiteSpace($token)) { throw 'Failed to acquire a package feed access token.' }
+      Write-Host "##vso[task.setsecret]$token"
+      $reg = '//pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/'
+      Set-Content -Path (Join-Path $env:USERPROFILE '.npmrc') -Encoding ascii -Value "${reg}:_authToken=$token"

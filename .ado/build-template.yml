@@ -67,6 +67,17 @@ resources:
     name: 1ESPipelineTemplates/OfficePipelineTemplates
     ref: refs/tags/release
 
+# Route npm through the ms/react-native-public feed (npmjs.org upstream) so the
+# Node-API test toolchain restores from the approved feed on isolated agents.
+variables:
+- name: NPM_CONFIG_REGISTRY
+  value: https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/
+- name: NPM_CONFIG_CACHE
+  value: $(Agent.TempDirectory)/.npmCache
+  # Fail instead of letting npx silently fetch a networked tool.
+- name: NPM_CONFIG_YES
+  value: "false"
+
 extends:
   # Extend the Office compliant build pipeline template.
   ${{ if eq(parameters.MustPublish, true) }}:
@@ -175,6 +186,11 @@ extends:
             # Must run before anything else on the agent - see the template.
           - ${{ if eq(MatrixEntry.UseArm64Pool, true) }}:
             - template: /.ado/ensure-node10-shim.yml@self
+
+            # Test-capable jobs compile the Node-API tests, which run `npm
+            # install`; authenticate npm to the feed before the build.
+          - ${{ if eq(MatrixEntry.CanRunTest, true) }}:
+            - template: /.ado/auth-npm-feed.yml@self
 
             # Invoke the build specific for the target platform.
           - script: >
