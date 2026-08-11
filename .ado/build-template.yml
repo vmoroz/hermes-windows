@@ -111,6 +111,51 @@ extends:
       jobs:
 
         #=============================================================================
+        # POC (temporary): confirm a non-fork PR build can use the managed identity
+        # to warm an uncached package into the ms/react-native-public feed.
+        # PR builds only; remove after the experiment.
+        #=============================================================================
+      - ${{ if eq(parameters.MustPublish, false) }}:
+        - job: POC_Warm_Feed_Cache
+          displayName: 'POC: warm ADO feed with MI (non-fork PR)'
+          steps:
+          - task: AzureCLI@2
+            displayName: Acquire MI token and warm one feed package
+            inputs:
+              azureSubscription: Office-Hermes-Windows-Bot
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                $feed = 'https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/'
+                $pkg  = 'left-pad'
+                $ver  = '1.3.0'
+                $tgz  = "$feed$pkg/-/$pkg-$ver.tgz"
+
+                # 1) Can this (non-fork PR) build mint the cross-org feed token via MI?
+                $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
+                if ([string]::IsNullOrWhiteSpace($token)) { throw 'NO_MI_TOKEN - managed identity / service connection not available to this build.' }
+                Write-Host "##vso[task.setsecret]$token"
+                Write-Host 'RESULT_TOKEN_ACQUIRED=yes'
+
+                # 2) Anonymous probe BEFORE warm (expect 401 = cold/uncached).
+                $pre = (curl.exe -sSL -o "$env:TEMP\poc_pre.bin" -w '%{http_code}' "$tgz")
+                Write-Host "RESULT_PRE_WARM_ANON=$pre"
+
+                # 3) Warm the exact version with the MI token (same header npm sends).
+                $meta = (curl.exe -sS  -H "Authorization: Bearer $token" -o "$env:TEMP\poc_meta.json" -w '%{http_code}' "$feed$pkg")
+                $warm = (curl.exe -sSL -H "Authorization: Bearer $token" -o "$env:TEMP\poc_warm.tgz"  -w '%{http_code}' "$tgz")
+                Write-Host "RESULT_AUTH_META=$meta RESULT_AUTH_TARBALL=$warm"
+
+                # 4) Anonymous probe AFTER warm (expect 200 = now cached in the feed).
+                $post = (curl.exe -sSL -o "$env:TEMP\poc_post.bin" -w '%{http_code}' "$tgz")
+                Write-Host "RESULT_POST_WARM_ANON=$post"
+
+                Write-Host "POC SUMMARY: token=yes preWarmAnon=$pre authTarball=$warm postWarmAnon=$post"
+                if ($post -ne '200') { throw "WARM_NOT_VISIBLE - post-warm anonymous probe returned $post (expected 200)." }
+                Write-Host 'POC PASSED - non-fork PR has MI and warmed the feed (anonymous can now fetch the version).'
+
+        #=============================================================================
         # Set version numbers.
         #=============================================================================
       - job: Set_Versions
