@@ -1,0 +1,42 @@
+#
+# Rewrite npm lockfile "resolved" URLs from registry.npmjs.org to the
+# ms/react-native-public feed before an offline/anonymous npm ci.
+#
+# npm downloads each tarball from the exact "resolved" URL baked into
+# package-lock.json. Under network isolation the build may only reach the feed, so
+# any lockfile that still points at registry.npmjs.org (for example, one a
+# dependency-bump tool just regenerated) would cause an egress violation. This step
+# repins those URLs to the feed. It is a pure text rewrite with no credentials, so
+# it is safe to run in a PR validation build; an uncached version then fails as a
+# clean feed-host 401 instead of reaching npmjs.org.
+#
+parameters:
+  # Space- or comma-separated repo-relative lockfile paths to repin.
+- name: lockFiles
+  type: string
+  default: unittests/NodeApi/test/package-lock.json
+- name: workingDirectory
+  type: string
+  default: $(Build.SourcesDirectory)
+
+steps:
+- pwsh: |
+    $ErrorActionPreference = 'Stop'
+    $feed = 'https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/'
+    $files = '${{ parameters.lockFiles }}' -split '[,\s]+' | Where-Object { $_ }
+    foreach ($rel in $files) {
+      $path = Join-Path '${{ parameters.workingDirectory }}' $rel
+      if (-not (Test-Path -LiteralPath $path)) {
+        Write-Host "Lockfile not found, skipping: $path"
+        continue
+      }
+      $text = Get-Content -LiteralPath $path -Raw
+      $updated = $text -replace 'https://registry\.npmjs\.org/', $feed
+      if ($updated -ne $text) {
+        Set-Content -LiteralPath $path -Value $updated -NoNewline -Encoding utf8
+        Write-Host "Repinned npmjs.org URLs to the feed in $rel"
+      } else {
+        Write-Host "No npmjs.org URLs to repin in $rel"
+      }
+    }
+  displayName: Point npm lockfiles to the ADO feed

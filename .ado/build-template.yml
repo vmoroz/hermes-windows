@@ -111,73 +111,6 @@ extends:
       jobs:
 
         #=============================================================================
-        # POC (temporary): confirm whether a PR build (fork vs non-fork) can use the
-        # managed identity to warm an uncached package into the ms/react-native-public
-        # feed. PR builds only; remove after the experiment.
-        #=============================================================================
-      - ${{ if eq(parameters.MustPublish, false) }}:
-        - job: POC_Warm_Feed_Cache
-          displayName: 'POC: warm ADO feed with MI'
-          variables:
-          - name: pocFeed
-            value: https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/
-          - name: pocPkg
-            value: tiny-invariant
-          - name: pocVer
-            value: '1.0.0'
-          steps:
-            # Always runs (no service connection): records whether ADO treats this
-            # build as a fork and confirms the package is cold before any warm.
-          - pwsh: |
-              $feed = '$(pocFeed)'
-              $pkg  = '$(pocPkg)'
-              $ver  = '$(pocVer)'
-              $tgz  = "$feed$pkg/-/$pkg-$ver.tgz"
-              Write-Host "BUILD_REASON=$env:BUILD_REASON"
-              Write-Host "IS_FORK=$env:SYSTEM_PULLREQUEST_ISFORK"
-              Write-Host "PR_SOURCE_REPO=$env:SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI"
-              Write-Host "BASE_REPO=$env:BUILD_REPOSITORY_URI"
-              $pre = (curl.exe -sSL -o "$env:TEMP\poc_pre.bin" -w '%{http_code}' "$tgz")
-              Write-Host "RESULT_PRE_WARM_ANON=$pre"
-            displayName: 'POC context + pre-warm probe (no MI)'
-
-            # Needs the managed identity. On a fork PR the service connection is
-            # withheld, so this step is expected to fail there; continueOnError keeps
-            # the overall run green so the log can be read.
-          - task: AzureCLI@2
-            displayName: Acquire MI token and warm one feed package
-            continueOnError: true
-            inputs:
-              azureSubscription: Office-Hermes-Windows-Bot
-              scriptType: pscore
-              scriptLocation: inlineScript
-              inlineScript: |
-                $ErrorActionPreference = 'Stop'
-                $feed = '$(pocFeed)'
-                $pkg  = '$(pocPkg)'
-                $ver  = '$(pocVer)'
-                $tgz  = "$feed$pkg/-/$pkg-$ver.tgz"
-
-                # 1) Can this build mint the cross-org feed token via MI?
-                $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
-                if ([string]::IsNullOrWhiteSpace($token)) { throw 'NO_MI_TOKEN - managed identity / service connection not available to this build (expected on a fork PR).' }
-                Write-Host "##vso[task.setsecret]$token"
-                Write-Host 'RESULT_TOKEN_ACQUIRED=yes'
-
-                # 2) Warm the exact version with the MI token (same header npm sends).
-                $meta = (curl.exe -sS  -H "Authorization: Bearer $token" -o "$env:TEMP\poc_meta.json" -w '%{http_code}' "$feed$pkg")
-                $warm = (curl.exe -sSL -H "Authorization: Bearer $token" -o "$env:TEMP\poc_warm.tgz"  -w '%{http_code}' "$tgz")
-                Write-Host "RESULT_AUTH_META=$meta RESULT_AUTH_TARBALL=$warm"
-
-                # 3) Anonymous probe AFTER warm (expect 200 = now cached in the feed).
-                $post = (curl.exe -sSL -o "$env:TEMP\poc_post.bin" -w '%{http_code}' "$tgz")
-                Write-Host "RESULT_POST_WARM_ANON=$post"
-
-                Write-Host "POC SUMMARY: token=yes authTarball=$warm postWarmAnon=$post"
-                if ($post -ne '200') { throw "WARM_NOT_VISIBLE - post-warm anonymous probe returned $post (expected 200)." }
-                Write-Host 'POC PASSED - this build has MI and warmed the feed (anonymous can now fetch the version).'
-
-        #=============================================================================
         # Set version numbers.
         #=============================================================================
       - job: Set_Versions
@@ -251,6 +184,11 @@ extends:
             # Must run before anything else on the agent - see the template.
           - ${{ if eq(MatrixEntry.UseArm64Pool, true) }}:
             - template: /.ado/ensure-node10-shim.yml@self
+
+            # Repin the Node-API test lockfile to the feed before the CMake build
+            # runs npm, so the restore never reaches registry.npmjs.org.
+          - ${{ if eq(MatrixEntry.CanRunTest, true) }}:
+            - template: /.ado/point-npm-lock-to-feed.yml@self
 
             # Invoke the build specific for the target platform.
           - script: >

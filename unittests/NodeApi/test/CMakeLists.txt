@@ -26,14 +26,14 @@ add_custom_command(
 )
 add_custom_target(copyNodeApiJSToolsFiles)
 
-# run "npm install"
+# run "npm ci" for a deterministic install that fails on lockfile drift
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/node_modules.sha256
   DEPENDS
     ${CMAKE_CURRENT_BINARY_DIR}/.npmrc
     ${CMAKE_CURRENT_BINARY_DIR}/package.json
     ${CMAKE_CURRENT_BINARY_DIR}/package-lock.json
-  COMMAND ${npm} install
+  COMMAND ${npm} ci
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 add_custom_target(installNodeApiTestJsTools

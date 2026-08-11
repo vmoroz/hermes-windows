@@ -1,0 +1,129 @@
+#
+# On-demand pipeline that warms a specific set of npm versions into the
+# ms/react-native-public feed, then re-queues a PR's validation.
+#
+# This is how a maintainer clears a dependency-bump PR (fork or in-repo) whose new
+# versions are not cached yet: queue this pipeline with the PR's version delta, or
+# point it at a base-repo branch that carries the bump. It warms only that delta and
+# then re-runs the PR validation, which restores the freshly cached versions
+# anonymously.
+#
+# Authorization is the ADO "Queue builds" permission on this pipeline - the
+# equivalent of the write access that gates /azp run. Always queue it against main
+# so it runs trusted YAML with the managed identity; never wire it to a PR comment
+# trigger, which would run PR-controlled YAML with that identity.
+#
+
+name: Warm feed on demand $(Date:yyyyMMdd).$(Rev:r)
+
+trigger: none
+pr: none
+
+parameters:
+  # The PR's added versions, e.g. "@babel/core@7.29.0 @babel/cli@7.29.0".
+- name: packages
+  displayName: Versions to warm (space-separated name@version)
+  type: string
+  default: ' '
+  # A base-repo branch carrying the bump; its lockfile delta vs main is warmed.
+- name: branch
+  displayName: Base-repo branch to warm the lockfile delta from (optional)
+  type: string
+  default: ' '
+  # Re-queue PR validation for this branch after warming (defaults to 'branch').
+- name: requeueBranch
+  displayName: Branch whose PR validation to re-queue (optional)
+  type: string
+  default: ' '
+
+resources:
+  repositories:
+  - repository: OfficePipelineTemplates
+    type: git
+    name: 1ESPipelineTemplates/OfficePipelineTemplates
+    ref: refs/tags/release
+
+variables:
+- name: feedRegistry
+  value: https://pkgs.dev.azure.com/ms/react-native/_packaging/react-native-public/npm/registry/
+  # Definition id of the PR validation pipeline to re-queue. 0 warms without
+  # re-queuing.
+- name: prValidationPipelineId
+  value: 0
+
+extends:
+  # Non-production template: this pipeline caches packages, it does not publish.
+  template: v1/Office.Unofficial.PipelineTemplate.yml@OfficePipelineTemplates
+  parameters:
+    pool:
+      name: fabric-internal-pool-large
+      demands: ImageOverride -equals windows-2025-1espt
+    sdl:
+      eslint:
+        enableExclusions: true
+      bandit:
+        enabled: false
+      suppression:
+        suppressionFile: $(Build.SourcesDirectory)\.ado\guardian\sdl\.gdnsuppress
+
+    stages:
+    - stage: warm
+      displayName: Warm feed cache
+      jobs:
+      - job: warm_feed
+        displayName: Warm npm feed cache
+        timeoutInMinutes: 60
+        steps:
+        - checkout: self
+          fetchDepth: 1
+
+          # Defense in depth: refuse to run from any ref other than main, so the
+          # managed identity is only ever exposed to trusted YAML.
+        - pwsh: |
+            $ErrorActionPreference = 'Stop'
+            if ($env:BUILD_SOURCEBRANCH -ne 'refs/heads/main') {
+              throw "This pipeline must run from main (source ref was $env:BUILD_SOURCEBRANCH)."
+            }
+          displayName: Guard - run from main only
+
+        - task: AzureCLI@2
+          displayName: Warm feed with managed identity
+          inputs:
+            azureSubscription: Office-Hermes-Windows-Bot
+            visibleAzLogin: false
+            scriptType: pscore
+            scriptLocation: inlineScript
+            inlineScript: |
+              $ErrorActionPreference = 'Stop'
+
+              # Cross-organization feed token from the managed identity. Mask it
+              # immediately and never write it to a variable or the log.
+              $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
+              if ([string]::IsNullOrWhiteSpace($token)) { throw 'Managed identity token was not available.' }
+              Write-Host "##vso[task.setsecret]$token"
+
+              $scripts = Join-Path $env:BUILD_SOURCESDIRECTORY '.ado\scripts'
+              $packages = '${{ parameters.packages }}'.Trim()
+              $branch = '${{ parameters.branch }}'.Trim()
+              $requeue = '${{ parameters.requeueBranch }}'.Trim()
+
+              if (-not $packages -and -not $branch) {
+                throw 'Provide packages and/or a branch to warm.'
+              }
+
+              if ($packages) {
+                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -Packages $packages
+              }
+
+              if ($branch) {
+                git fetch origin --prune --depth=1 '+refs/heads/main:refs/remotes/origin/main' "+refs/heads/${branch}:refs/remotes/origin/${branch}" --quiet
+                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -Branch "origin/$branch" -BaseRef 'origin/main'
+                if (-not $requeue) { $requeue = $branch }
+              }
+
+              # Re-queue PR validation so warm-then-validate happens in order.
+              if ($requeue) {
+                & "$scripts\Queue-PrValidation.ps1" -SourceBranch "refs/heads/$requeue" -DefinitionId $(prValidationPipelineId)
+              }
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
