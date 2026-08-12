@@ -185,11 +185,6 @@ extends:
           - ${{ if eq(MatrixEntry.UseArm64Pool, true) }}:
             - template: /.ado/ensure-node10-shim.yml@self
 
-            # Repin the Node-API test lockfile to the feed before the CMake build
-            # runs npm, so the restore never reaches registry.npmjs.org.
-          - ${{ if eq(MatrixEntry.CanRunTest, true) }}:
-            - template: /.ado/point-npm-lock-to-feed.yml@self
-
             # Invoke the build specific for the target platform.
           - script: >
               node .ado\scripts\build.js

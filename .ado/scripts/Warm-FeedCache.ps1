@@ -23,8 +23,10 @@
   The npm registry URL of the feed to warm.
 
 .PARAMETER Token
-  A bearer token with Contributor rights on the feed. Required to warm. Obtain it
-  from the managed identity in the pipeline; do not pass it on a shared shell.
+  A bearer token with rights to save packages on the feed. Optional: when omitted,
+  the script acquires one from the current Azure CLI login (`az login` locally, or
+  the AzureCLI task's service connection in a pipeline). Do not pass it on a shared
+  shell.
 
 .PARAMETER Packages
   Explicit name@version specs to warm (space- or comma-separated when passed from a
@@ -160,8 +162,20 @@ function Invoke-Warm {
   return @{ Warmed = $warmed.ToArray(); Failed = $failed.ToArray() }
 }
 
+# Resolve the feed token. Use -Token when supplied; otherwise acquire one from the
+# ambient Azure CLI login, so the same script runs locally (after `az login`) and
+# in a pipeline (where the AzureCLI task logs in as the service connection first).
 if ([string]::IsNullOrWhiteSpace($Token)) {
-  throw 'A feed token is required to warm; none was provided.'
+  if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+    throw 'No -Token was provided and the Azure CLI (az) was not found. Install it and run "az login", or pass -Token.'
+  }
+  # 499b84ac-... is the Azure DevOps resource id; the token authorizes feed access.
+  $Token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv 2>$null
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Token)) {
+    throw 'Could not acquire a feed token from Azure CLI. Run "az login" (or pass -Token).'
+  }
+  # Mask the token in pipeline logs; harmless to skip when running locally.
+  if ($env:TF_BUILD -eq 'True') { Write-Host "##vso[task.setsecret]$Token" }
 }
 
 # Collect the target name@version set from whichever inputs were provided.

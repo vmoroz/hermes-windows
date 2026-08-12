@@ -96,12 +96,6 @@ extends:
             inlineScript: |
               $ErrorActionPreference = 'Stop'
 
-              # Cross-organization feed token from the managed identity. Mask it
-              # immediately and never write it to a variable or the log.
-              $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
-              if ([string]::IsNullOrWhiteSpace($token)) { throw 'Managed identity token was not available.' }
-              Write-Host "##vso[task.setsecret]$token"
-
               $scripts = Join-Path $env:BUILD_SOURCESDIRECTORY '.ado\scripts'
               $packages = '${{ parameters.packages }}'.Trim()
               $branch = '${{ parameters.branch }}'.Trim()
@@ -111,13 +105,15 @@ extends:
                 throw 'Provide packages and/or a branch to warm.'
               }
 
+              # Warm-FeedCache mints the feed token from the service-connection
+              # login this task established.
               if ($packages) {
-                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -Packages $packages
+                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Packages $packages
               }
 
               if ($branch) {
                 git fetch origin --prune --depth=1 '+refs/heads/main:refs/remotes/origin/main' "+refs/heads/${branch}:refs/remotes/origin/${branch}" --quiet
-                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -Branch "origin/$branch" -BaseRef 'origin/main'
+                & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Branch "origin/$branch" -BaseRef 'origin/main'
                 if (-not $requeue) { $requeue = $branch }
               }
 

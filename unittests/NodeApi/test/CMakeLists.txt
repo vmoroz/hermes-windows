@@ -8,7 +8,7 @@ else()
 endif()
 
 # copy JS Tools package files. The .npmrc pins the registry to the approved ADO
-# feed so `npm install` below does not reach registry.npmjs.org.
+# feed so `npm ci` below does not reach registry.npmjs.org.
 add_custom_command(
   OUTPUT
     ${CMAKE_CURRENT_BINARY_DIR}/.npmrc

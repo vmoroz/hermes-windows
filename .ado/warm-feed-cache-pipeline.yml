@@ -77,17 +77,12 @@ extends:
             inlineScript: |
               $ErrorActionPreference = 'Stop'
 
-              # Cross-organization feed token from the managed identity. Mask it
-              # immediately and never write it to a variable or the log.
-              $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
-              if ([string]::IsNullOrWhiteSpace($token)) { throw 'Managed identity token was not available.' }
-              Write-Host "##vso[task.setsecret]$token"
-
               $scripts = Join-Path $env:BUILD_SOURCESDIRECTORY '.ado\scripts'
               $lock = Join-Path $env:BUILD_SOURCESDIRECTORY 'unittests\NodeApi\test\package-lock.json'
 
-              # Keep main's committed closure warm.
-              & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -LockFile $lock
+              # Keep main's committed closure warm. Warm-FeedCache mints the feed
+              # token from the service-connection login this task established.
+              & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -LockFile $lock
 
               # Warm the delta of every open dependency-bump branch, then re-queue
               # its PR validation so warm-then-validate happens in order.
@@ -98,7 +93,7 @@ extends:
                 $branch = $ref -replace '^origin/', ''
                 try {
                   Write-Host "Warming delta for $branch"
-                  & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Token $token -Branch $ref -BaseRef 'origin/main'
+                  & "$scripts\Warm-FeedCache.ps1" -Feed '$(feedRegistry)' -Branch $ref -BaseRef 'origin/main'
                   & "$scripts\Queue-PrValidation.ps1" -SourceBranch "refs/heads/$branch" -DefinitionId $(prValidationPipelineId)
                 } catch {
                   Write-Host "##vso[task.logissue type=warning]Warming $branch failed: $($_.Exception.Message)"
